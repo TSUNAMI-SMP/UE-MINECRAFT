@@ -4,6 +4,17 @@
 腕・持ち物、UEへのアイテム使用、リアルな水、Chaos特殊破壊は次の段階です。
 従来の位置コピー方式も残し、明示コマンドで新モードへ切り替えます。
 
+## UE移動修正版0.5.2
+
+[UE移動修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-movement-fix-0.5.2.zip)。
+最初のジャンプ後に動けなくなる場合は、UEを閉じてZIPのSource/UEBridge内のファイルを
+使用中プロジェクトのSource/UEBridgeへ上書きし、再ビルドしてください。元のSource全体は削除しない。
+着地後のDefaultLandMovementModeをWalkingへ設定し、ジャンプ初速900cm/s・重力約3200cm/s²へ調整します。
+目安の頂点は約127cm、往復約0.56秒（実際は床・天井・衝突・フレーム刻みによる）。バニラの物理の完全再現ではありません。
+MOD0.5.0・素材はそのまま。UE終了で初期地形は消えるため、再起動後にimport startから実行する。
+移動の回帰確認をUE Automationへ追加しましたが、クラウドではUE実行できません。
+破壊・設置・アイテム使用はこの段階ではまだUE操作に接続していません。
+
 ## UEビルド修正版0.5.1
 
 0.5.0のUE ZIPにはBridgeWorld.cppのC4458/C2064を起こす不具合があります。

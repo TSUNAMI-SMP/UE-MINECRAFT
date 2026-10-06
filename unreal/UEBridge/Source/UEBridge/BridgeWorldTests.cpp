@@ -1,5 +1,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 #include "BridgeWorld.h"
+#include "BridgeCharacter.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Engine/World.h"
 #include "Misc/AutomationTest.h"
 
@@ -7,6 +9,18 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeWorldSealTest,"UEBridge.World.ImportComm
 bool FBridgeWorldSealTest::RunTest(const FString& Parameters) {
     UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
     if(!TestNotNull(TEXT("Test world"),World)) return false;
+    auto* Character=World->SpawnActor<ABridgeCharacter>();
+    if(TestNotNull(TEXT("Character"),Character)) {
+        Character->SetAuthorityEnabled(true);
+        auto* Movement=Character->GetCharacterMovement();
+        TestTrue(TEXT("Landing retains walking authority"),Movement->DefaultLandMovementMode==MOVE_Walking);
+        TestEqual(TEXT("Jump launch speed"),Movement->JumpZVelocity,900.f);
+        TestTrue(TEXT("Gravity is approximately 3200cm/s2"),FMath::IsNearlyEqual(FMath::Abs(Movement->GetGravityZ()),3200.f,1.f));
+        Character->SetAuthorityEnabled(false);
+        TestTrue(TEXT("Controller off freezes movement"),Movement->MovementMode==MOVE_None);
+        Character->SetAuthorityEnabled(true);
+        TestTrue(TEXT("Resume restores walking on next landing"),Movement->DefaultLandMovementMode==MOVE_Walking);
+    }
     auto* Bridge=World->SpawnActor<ABridgeWorld>();
     if(!TestNotNull(TEXT("World bridge"),Bridge)) { World->DestroyWorld(false); return false; }
     FBridgePacket Begin; Begin.Kind=EBridgeKind::WorldBegin;Begin.Sequence=1;Begin.ImportId=TEXT("first");

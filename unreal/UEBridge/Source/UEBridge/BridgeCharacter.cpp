@@ -2,6 +2,7 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Engine/World.h"
 
 ABridgeCharacter::ABridgeCharacter() {
     GetCapsuleComponent()->InitCapsuleSize(30.f, 90.f);
@@ -13,7 +14,7 @@ ABridgeCharacter::ABridgeCharacter() {
     GetCharacterMovement()->GravityScale = 0;
     GetCharacterMovement()->MaxWalkSpeed=430;
     GetCharacterMovement()->MaxWalkSpeedCrouched=130;
-    GetCharacterMovement()->JumpZVelocity=420;
+    GetCharacterMovement()->JumpZVelocity=900;
     GetCharacterMovement()->MaxStepHeight=50;
     GetCharacterMovement()->SetCrouchedHalfHeight(75);
     GetCharacterMovement()->GetNavAgentPropertiesRef().bCanCrouch=true;
@@ -30,7 +31,11 @@ void ABridgeCharacter::SetAuthorityEnabled(bool Enabled) {
     if(UEAuthority==Enabled) return;
     UEAuthority=Enabled; PreviousJump=false; StopJumping();
     auto* Movement=GetCharacterMovement(); Movement->StopMovementImmediately();
-    Movement->GravityScale=Enabled ? 1.f : 0.f;
+    // Landing uses DefaultLandMovementMode, not just the current movement mode.
+    Movement->DefaultLandMovementMode=Enabled ? MOVE_Walking : MOVE_None;
+    Movement->JumpZVelocity=900.f;
+    const float WorldGravity=GetWorld() ? FMath::Abs(GetWorld()->GetGravityZ()) : 980.f;
+    Movement->GravityScale=Enabled ? 3200.f/FMath::Max(1.f,WorldGravity) : 0.f;
     Movement->SetMovementMode(Enabled ? MOVE_Walking : MOVE_None);
 }
 void ABridgeCharacter::ApplyUEInput(float Forward,float Right,bool JumpHeld,bool Sneak) {

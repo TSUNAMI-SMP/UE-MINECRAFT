@@ -1,5 +1,7 @@
 # ダウンロード
 
+[UE移動修正ZIP 0.5.2](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-movement-fix-0.5.2.zip)：初回着地後の移動停止とジャンプ速度を修正。ファイルを上書きしUE再ビルド。MOD0.5.0は維持。
+
 ## UEビルド修正 0.5.1
 
 [UEビルド修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-build-fix-0.5.1.zip)

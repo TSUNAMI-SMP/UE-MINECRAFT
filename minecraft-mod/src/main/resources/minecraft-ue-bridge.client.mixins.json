@@ -4,7 +4,8 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "RenderMixin",
-    "BowMixin"
+    "BowMixin",
+    "WorldUpdateMixin"
   ],
   "injectors": {
     "defaultRequire": 1

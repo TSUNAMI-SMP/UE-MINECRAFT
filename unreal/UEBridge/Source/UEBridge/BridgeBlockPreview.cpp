@@ -33,6 +33,7 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Blocks, const FVec
             Group->RegisterComponent(); Groups.Add(Group);
         }
         // UE's built-in cube has side 100 cm, matching one Minecraft block.
-        Group->AddInstance(FTransform(FQuat::Identity, BridgeProtocol::ToUnreal(Block.Position, Anchor), FVector(1)), true);
+        Group->AddInstance(FTransform(FQuat::Identity, BridgeProtocol::ToUnreal(Block.Position, Anchor),
+            FVector(Block.Size.Z, Block.Size.X, Block.Size.Y)), true);
     }
 }

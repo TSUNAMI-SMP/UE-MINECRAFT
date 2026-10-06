@@ -1,5 +1,7 @@
 # 起動・テスト
 
+0.3.0のワールド・映像・しゃがみの導入/実機テストは [UPGRADE_0.3.0.md](UPGRADE_0.3.0.md)。
+
 ## 先に必要なこと
 
 - JDK 21でMODをビルドし、1.21.11用のFabric Loader/APIとともに専用Launcher環境へ配置。
@@ -8,7 +10,7 @@
 
 ## 最初の成功条件
 
-1. UE Playを開始。Output Logに `Bridge 0.2.0 listening on 127.0.0.1:7779` が出ること。
+1. UE Playを開始。Output Logに `Bridge 0.3.0 listening on 127.0.0.1:7779` が出ること。
    `ExplosionSystem is unset` やTargetCharacter不在のエラーを解消する。
 2. Minecraftの新しいクリエイティブワールドへ入る。
 3. Minecraftのマウスで左右・上下を向く。UEカメラが同方向へ追従すること。

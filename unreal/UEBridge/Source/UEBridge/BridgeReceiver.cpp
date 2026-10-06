@@ -1,6 +1,9 @@
 #include "BridgeReceiver.h"
 #include "BridgeBlockPreview.h"
 #include "BridgeArrow.h"
+#include "BridgeCharacter.h"
+#include "BridgeWorld.h"
+#include "BridgeVideo.h"
 #include "Sockets.h"
 #include "SocketSubsystem.h"
 #include "IPAddress.h"
@@ -19,7 +22,10 @@
 #include "Field/FieldSystemObjects.h"
 #include "EngineUtils.h"
 
-ABridgeReceiver::ABridgeReceiver() { PrimaryActorTick.bCanEverTick = true; }
+ABridgeReceiver::ABridgeReceiver() {
+    PrimaryActorTick.bCanEverTick = true;
+    Video=CreateDefaultSubobject<UBridgeVideo>(TEXT("Video"));
+}
 void ABridgeReceiver::AcquireTarget() {
     if (!IsValid(TargetCharacter)) { TargetCharacter = Cast<ACharacter>(UGameplayStatics::GetPlayerPawn(this, 0)); Anchored = false; }
     if (TargetCharacter && !Anchored) {
@@ -31,6 +37,7 @@ void ABridgeReceiver::AcquireTarget() {
 }
 void ABridgeReceiver::BeginPlay() {
     Super::BeginPlay(); AcquireTarget();
+    InstanceId=FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
     ISocketSubsystem* S = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
     if (Port < 1024 || Port > 65535 || !S) { UE_LOG(LogTemp, Error, TEXT("Bridge: invalid port/socket subsystem")); return; }
     Socket = S->CreateSocket(NAME_DGram, TEXT("MinecraftBridge"), false);
@@ -42,12 +49,14 @@ void ABridgeReceiver::BeginPlay() {
         return;
     }
     int32 ActualBuffer; Socket->SetReceiveBufferSize(256 * 1024, ActualBuffer);
-    UE_LOG(LogTemp, Display, TEXT("Bridge 0.2.0 listening on 127.0.0.1:%d"), Port);
+    UE_LOG(LogTemp, Display, TEXT("Bridge 0.3.0 listening on 127.0.0.1:%d"), Port);
+    Video->Start(VideoPort);
     if (!TargetCharacter) UE_LOG(LogTemp, Warning, TEXT("Bridge: waiting for player Character; will retry every tick"));
     if (!ExplosionSystem) UE_LOG(LogTemp, Warning, TEXT("Bridge: ExplosionSystem is unset; Niagara will not play"));
 }
 void ABridgeReceiver::EndPlay(const EEndPlayReason::Type Reason) {
     if (IsValid(Preview)) Preview->Destroy();
+    if (IsValid(SyncedWorld)) SyncedWorld->Destroy();
     for (auto& Arrow : Arrows) if (IsValid(Arrow)) Arrow->Destroy();
     if (Socket) { Socket->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Socket); Socket = nullptr; }
     Super::EndPlay(Reason);
@@ -72,6 +81,12 @@ void ABridgeReceiver::Tick(float DeltaSeconds) {
     }
     // Drain first, apply only the newest pose once per UE frame; no backlog of teleports.
     if (HasNewInput && TargetCharacter) {
+        if (auto* Bridge=Cast<ABridgeCharacter>(TargetCharacter)) Bridge->ApplyMinecraftPose(LatestInput.BodyHeight,LatestInput.EyeHeight,LatestInput.Sneak);
+        else {
+            const float HalfHeight=float(LatestInput.BodyHeight*50);
+            TargetCharacter->GetCapsuleComponent()->SetCapsuleSize(FMath::Min(30.f,HalfHeight),HalfHeight,false);
+            if (auto* Camera=TargetCharacter->FindComponentByClass<UCameraComponent>()) Camera->SetRelativeLocation(FVector(0,0,LatestInput.EyeHeight*100-HalfHeight));
+        }
         const FVector Capsule(0, 0, TargetCharacter->GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
         TargetCharacter->SetActorLocation(BridgeProtocol::ToUnreal(LatestInput.Position, Anchor) + Capsule, false, nullptr, ETeleportType::TeleportPhysics);
         TargetCharacter->SetActorRotation(BridgeProtocol::ToRotation(LatestInput.Yaw, 0));
@@ -80,6 +95,7 @@ void ABridgeReceiver::Tick(float DeltaSeconds) {
     HasNewInput = false;
     const double Now = FPlatformTime::Seconds(); Connected = !Session.IsEmpty() && LastSequence > 0 && Now - LastInput <= 0.25;
     if (!Connected) { ForwardInput = RightInput = 0; JumpHeld = false; }
+    Video->TickStream(TargetCharacter ? TargetCharacter->FindComponentByClass<UCameraComponent>() : nullptr, Connected ? Session : FString());
     for (auto It = SeenEvents.CreateIterator(); It; ++It) if (Now - It.Value() > 10) It.RemoveCurrent();
     if (!StagedBatches.IsEmpty() && Now > StagingDeadline) {
         StagedBatches.Empty(); StagingId.Empty(); ExpectedBatches = 0;
@@ -92,13 +108,15 @@ void ABridgeReceiver::Process(const FBridgePacket& P, const TSharedRef<FInternet
         if (!Session.IsEmpty() && Now - LastPacket < 0.5) return;
         Session = P.Session; PeerPort = Sender->GetPort(); PeerAddress = SenderIp;
         LastSequence = 0; LastInput = 0; LastStatus = -1; SeenEvents.Empty(); HasNewInput = false;
-        JumpHeld = false; ForwardInput = RightInput = 0; ClearPreview(0);
+        JumpHeld = SneakHeld = false; ForwardInput = RightInput = 0; ClearPreview(0);
+        if (IsValid(SyncedWorld)) SyncedWorld->Clear();
     }
     if (P.Kind == EBridgeKind::Input) {
         if (P.Sequence <= LastSequence) return;
         LastSequence = P.Sequence; LastInput = LastPacket = Now;
         ForwardInput = P.Forward; RightInput = P.Right;
         if (P.Jump && !JumpHeld) OnJumpPressed(); JumpHeld = P.Jump;
+        SneakHeld=P.Sneak;
         LatestInput = P; HasNewInput = true;
         if (LastStatus < 0 || Now - LastStatus >= 0.25) { LastStatus = Now; SendStatus(Sender); }
         return;
@@ -122,6 +140,12 @@ void ABridgeReceiver::Process(const FBridgePacket& P, const TSharedRef<FInternet
             }
             case EBridgeKind::Snapshot: if (!HandleSnapshot(P)) return; break;
             case EBridgeKind::ClearPreview: if (P.Sequence >= PreviewGeneration) ClearPreview(P.Sequence); break;
+            case EBridgeKind::WorldCell:
+            case EBridgeKind::WorldScope:
+            case EBridgeKind::WorldClear:
+                if (!IsValid(SyncedWorld)) SyncedWorld=GetWorld()->SpawnActor<ABridgeWorld>();
+                if (!SyncedWorld || !SyncedWorld->Handle(P,Anchor,PreviewMaterial)) return;
+                break;
             default: return;
         }
         SeenEvents.Add(P.EventId, Now);
@@ -147,7 +171,13 @@ void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
     Reply->SetStringField(TEXT("receiver"), TEXT("ue"));
     Reply->SetBoolField(TEXT("cameraReady"), Camera && Camera->IsActive() && TargetCharacter->GetController());
     Reply->SetBoolField(TEXT("vfxReady"), IsValid(ExplosionSystem)); Reply->SetNumberField(TEXT("walls"), Walls);
-    Reply->SetNumberField(TEXT("previewBlocks"), PreviewBlocks); SendJson(Reply, Sender);
+    Reply->SetNumberField(TEXT("previewBlocks"), PreviewBlocks);
+    Reply->SetStringField(TEXT("build"),TEXT("0.3.0"));
+    Reply->SetStringField(TEXT("receiverId"),InstanceId);
+    Reply->SetBoolField(TEXT("worldV1"),true); Reply->SetBoolField(TEXT("videoV1"),true);
+    Reply->SetNumberField(TEXT("worldCells"),SyncedWorld ? SyncedWorld->CellCount() : 0);
+    Reply->SetNumberField(TEXT("worldShapes"),SyncedWorld ? SyncedWorld->ShapeCount() : 0);
+    Reply->SetBoolField(TEXT("videoReady"),Video->Streaming); SendJson(Reply, Sender);
 }
 void ABridgeReceiver::ClearPreview(uint64 Generation) {
     PreviewGeneration = Generation; SnapshotCompleted = false; StagingId.Empty(); ExpectedBatches = 0; StagedBatches.Empty();

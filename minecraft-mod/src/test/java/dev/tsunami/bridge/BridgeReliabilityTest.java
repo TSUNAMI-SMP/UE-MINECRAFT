@@ -58,6 +58,7 @@ public class BridgeReliabilityTest {
             status.addProperty("walls", 2); time.addAndGet(30_000_000L); reply(ue, input, status); pumpReplies(mc);
             assertTrue(mc.diagnostics().connected()); assertTrue(mc.diagnostics().cameraReady()); assertFalse(mc.diagnostics().vfxReady());
             assertEquals(2, mc.diagnostics().walls()); assertEquals(30.0, mc.diagnostics().rttMillis(), 0.001);
+            assertFalse("Old receiver must not enable world traffic",mc.diagnostics().worldSupported());
             time.addAndGet(1_000_000_001L); assertFalse(mc.diagnostics().connected());
             reply(ue, input, status); pumpReplies(mc); assertFalse("Replay must not renew readiness", mc.diagnostics().connected());
         }
@@ -72,6 +73,21 @@ public class BridgeReliabilityTest {
             ack.addProperty("v", 1); reply(ue, input, ack); pumpReplies(mc);
             assertEquals(0, mc.diagnostics().pending()); assertEquals(1, mc.diagnostics().acknowledged());
             reply(ue, input, ack); pumpReplies(mc); assertEquals("Duplicate ACK counted twice", 1, mc.diagnostics().acknowledged());
+        }
+    }
+    @Test public void receiverBuildCapabilitiesAndRestartIdAreVisible() throws Exception {
+        try (DatagramSocket ue=new DatagramSocket(0,InetAddress.getLoopbackAddress()); BridgeTransport mc=new BridgeTransport(ue.getLocalPort())) {
+            ue.setSoTimeout(500);
+            for (String id:new String[]{"00000000-0000-4000-8000-000000000010","00000000-0000-4000-8000-000000000011"}) {
+                mc.input(mc.packet("input")); var input=receive(ue); var data=json(input);
+                JsonObject status=new JsonObject(); status.addProperty("v",1); status.addProperty("kind","status");
+                status.add("session",data.get("session")); status.add("seq",data.get("seq"));
+                status.addProperty("cameraReady",true); status.addProperty("vfxReady",false); status.addProperty("walls",0);
+                status.addProperty("build","0.3.0"); status.addProperty("receiverId",id); status.addProperty("worldV1",true); status.addProperty("videoV1",true);
+                reply(ue,input,status); pumpReplies(mc);
+                assertEquals("0.3.0",mc.diagnostics().build()); assertEquals(id,mc.diagnostics().receiverId());
+                assertTrue(mc.diagnostics().worldSupported()); assertTrue(mc.diagnostics().videoSupported());
+            }
         }
     }
 }

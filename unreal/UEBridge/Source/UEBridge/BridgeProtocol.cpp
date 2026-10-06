@@ -33,6 +33,9 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
         if (!Number(P, TEXT("yaw"), -1e9, 1e9, R.Yaw) || !Number(P, TEXT("pitch"), -90, 90, R.Pitch)
             || !Number(P, TEXT("forward"), -1, 1, R.Forward) || !Number(P, TEXT("right"), -1, 1, R.Right)
             || !P->HasTypedField<EJson::Boolean>(TEXT("jump")) || !P->TryGetBoolField(TEXT("jump"), R.Jump)) return false;
+        if (P->HasField(TEXT("sneak")) && (!P->HasTypedField<EJson::Boolean>(TEXT("sneak")) || !P->TryGetBoolField(TEXT("sneak"), R.Sneak))) return false;
+        if (P->HasField(TEXT("eyeHeight")) && !Number(P,TEXT("eyeHeight"),0.1,2.5,R.EyeHeight)) return false;
+        if (P->HasField(TEXT("bodyHeight")) && !Number(P,TEXT("bodyHeight"),0.2,3,R.BodyHeight)) return false;
     } else if (Kind == TEXT("event")) {
         FString Event;
         if (!Guid(P, TEXT("eventId"), R.EventId) || !P->TryGetStringField(TEXT("event"), Event)) return false;
@@ -43,25 +46,46 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
                 || !Number(P, TEXT("pull"), 0.1, 1, R.Pull)
                 || !FMath::IsNearlyEqual(R.Direction.SizeSquared(), 1.0, 0.02)) return false;
         } else if (Event == TEXT("block_preview_clear")) R.Kind = EBridgeKind::ClearPreview;
-        else if (Event == TEXT("block_snapshot")) {
-            R.Kind = EBridgeKind::Snapshot; uint64 Index, Total;
+        else if (Event == TEXT("world_clear")) R.Kind = EBridgeKind::WorldClear;
+        else if (Event == TEXT("world_scope")) {
+            R.Kind = EBridgeKind::WorldScope; double X,Y,Z; uint64 Radius,Height;
+            if (!Number(P,TEXT("cellX"),-4000000,4000000,X) || !Number(P,TEXT("cellY"),-4000000,4000000,Y)
+                || !Number(P,TEXT("cellZ"),-4000000,4000000,Z) || FMath::FloorToDouble(X)!=X || FMath::FloorToDouble(Y)!=Y || FMath::FloorToDouble(Z)!=Z
+                || !Integer(P,TEXT("radius"),1,3,Radius) || !Integer(P,TEXT("halfHeight"),1,2,Height)) return false;
+            R.Cell = FIntVector(int32(X),int32(Y),int32(Z)); R.Radius=int32(Radius); R.HalfHeight=int32(Height);
+        }
+        else if (Event == TEXT("block_snapshot") || Event == TEXT("world_cell")) {
+            const bool WorldCell = Event == TEXT("world_cell");
+            R.Kind = WorldCell ? EBridgeKind::WorldCell : EBridgeKind::Snapshot; uint64 Index, Total;
+            if (WorldCell) {
+                double X,Y,Z;
+                if (!Number(P,TEXT("cellX"),-4000000,4000000,X) || !Number(P,TEXT("cellY"),-4000000,4000000,Y)
+                    || !Number(P,TEXT("cellZ"),-4000000,4000000,Z) || FMath::FloorToDouble(X)!=X || FMath::FloorToDouble(Y)!=Y || FMath::FloorToDouble(Z)!=Z) return false;
+                R.Cell=FIntVector(int32(X),int32(Y),int32(Z));
+            }
             const TArray<TSharedPtr<FJsonValue>>* Rows;
             if (!Guid(P, TEXT("snapshotId"), R.SnapshotId)
                 || !Integer(P, TEXT("snapshotSeq"), 1, 9007199254740991.0, R.SnapshotSequence)
                 || R.SnapshotSequence > R.Sequence
-                || !Integer(P, TEXT("batchIndex"), 0, MaxBatches - 1, Index)
-                || !Integer(P, TEXT("totalBatches"), 1, MaxBatches, Total) || Index >= Total
-                || !P->TryGetArrayField(TEXT("blocks"), Rows) || Rows->Num() > 12) return false;
+                || !Integer(P, TEXT("batchIndex"), 0, (WorldCell ? 1024 : MaxBatches) - 1, Index)
+                || !Integer(P, TEXT("totalBatches"), 1, WorldCell ? 1024 : MaxBatches, Total) || Index >= Total
+                || !P->TryGetArrayField(TEXT("blocks"), Rows) || Rows->Num() > (WorldCell ? 8 : 12)) return false;
             R.BatchIndex = int32(Index); R.TotalBatches = int32(Total);
             for (const auto& Row : *Rows) {
                 const TArray<TSharedPtr<FJsonValue>>* Values;
-                if (!Row.IsValid() || !Row->TryGetArray(Values) || Values->Num() != 4) return false;
-                double V[4];
-                for (int32 I = 0; I < 4; ++I) if (!(*Values)[I].IsValid() || (*Values)[I]->Type != EJson::Number
+                const int32 Fields = WorldCell ? 7 : 4;
+                if (!Row.IsValid() || !Row->TryGetArray(Values) || Values->Num() != Fields) return false;
+                double V[7];
+                for (int32 I = 0; I < Fields; ++I) if (!(*Values)[I].IsValid() || (*Values)[I]->Type != EJson::Number
                     || !(*Values)[I]->TryGetNumber(V[I]) || !FMath::IsFinite(V[I])) return false;
                 if (FMath::Abs(V[0]) > 100000 || FMath::Abs(V[1]) > 100000 || FMath::Abs(V[2]) > 100000
                     || V[3] < 0 || V[3] > 0xffffff || FMath::FloorToDouble(V[3]) != V[3]) return false;
-                R.Blocks.Add(FBridgeBlock{FVector(V[0], V[1], V[2]), int32(V[3])});
+                FVector Size = FVector::OneVector;
+                if (WorldCell) {
+                    if (V[4]<=0 || V[5]<=0 || V[6]<=0 || V[4]>4 || V[5]>4 || V[6]>4) return false;
+                    Size=FVector(V[4],V[5],V[6]);
+                }
+                R.Blocks.Add(FBridgeBlock{FVector(V[0], V[1], V[2]), int32(V[3]), Size});
             }
         } else return false;
     } else return false;

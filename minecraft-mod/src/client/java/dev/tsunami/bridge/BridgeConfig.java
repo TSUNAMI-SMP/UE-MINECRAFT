@@ -17,6 +17,11 @@ public final class BridgeConfig {
     public boolean bowEvents = false;
     public int previewRadius = 6;
     public int previewHalfHeight = 4;
+    public boolean worldSync = false;
+    public int worldRadius = 2;
+    public int worldHalfHeight = 1;
+    public int videoMode = 0; // 0=off, 1=picture in picture, 2=full screen
+    public int videoPort = 7780;
     private static final Gson JSON = new GsonBuilder().setPrettyPrinting().create();
     public BridgeConfig copy() { return JSON.fromJson(JSON.toJson(this), BridgeConfig.class); }
     public void validate() {
@@ -24,6 +29,10 @@ public final class BridgeConfig {
         if (inputHz < 20 || inputHz > 240) throw new IllegalArgumentException("inputHz must be 20..240");
         if (previewRadius < 1 || previewRadius > 8) throw new IllegalArgumentException("previewRadius must be 1..8");
         if (previewHalfHeight < 1 || previewHalfHeight > 4) throw new IllegalArgumentException("previewHalfHeight must be 1..4");
+        if (worldRadius < 1 || worldRadius > 3 || worldHalfHeight < 1 || worldHalfHeight > 2)
+            throw new IllegalArgumentException("worldRadius must be 1..3 / worldHalfHeight 1..2");
+        if (videoMode < 0 || videoMode > 2 || videoPort < 1024 || videoPort > 65535)
+            throw new IllegalArgumentException("videoMode must be 0..2 / videoPort 1024..65535");
     }
     public static BridgeConfig load(Path path) throws IOException {
         if (!Files.exists(path)) return new BridgeConfig();
@@ -31,14 +40,14 @@ public final class BridgeConfig {
             var tree = JsonParser.parseString(Files.readString(path));
             if (!tree.isJsonObject()) throw new IllegalArgumentException("config must be an object");
             var object = tree.getAsJsonObject();
-            for (String name : new String[]{"port", "inputHz", "previewRadius", "previewHalfHeight"}) if (object.has(name)) {
+            for (String name : new String[]{"port", "inputHz", "previewRadius", "previewHalfHeight", "worldRadius", "worldHalfHeight", "videoMode", "videoPort"}) if (object.has(name)) {
                 var value = object.get(name);
                 if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) throw new IllegalArgumentException(name + " must be an integer");
                 double number = value.getAsDouble();
                 if (!Double.isFinite(number) || Math.rint(number) != number || number < Integer.MIN_VALUE || number > Integer.MAX_VALUE)
                     throw new IllegalArgumentException(name + " must be an integer");
             }
-            for (String name : new String[]{"enabled", "notifications", "bowEvents"}) if (object.has(name)) {
+            for (String name : new String[]{"enabled", "notifications", "bowEvents", "worldSync"}) if (object.has(name)) {
                 var value = object.get(name);
                 if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isBoolean()) throw new IllegalArgumentException(name + " must be true/false");
             }

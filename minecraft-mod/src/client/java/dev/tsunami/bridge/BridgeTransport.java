@@ -26,9 +26,13 @@ public final class BridgeTransport implements AutoCloseable {
     private boolean hasStatus, cameraReady, vfxReady;
     private int walls;
     private String receiver = "unknown";
+    private String build = "unknown";
+    private String receiverId = "";
+    private boolean worldSupported, videoSupported;
     private record Pending(byte[] bytes, long created, long sent, boolean attempted) {}
     public record Diagnostics(boolean connected, boolean cameraReady, boolean vfxReady, int walls,
-                              int pending, long sentInputs, long acknowledged, long expired, double rttMillis, String receiver) {}
+                              int pending, long sentInputs, long acknowledged, long expired, double rttMillis, String receiver,
+                              String build, boolean worldSupported, boolean videoSupported, String receiverId) {}
 
     public BridgeTransport(int port) throws IOException { this(port, System::nanoTime); }
     BridgeTransport(int port, LongSupplier clock) throws IOException {
@@ -70,10 +74,12 @@ public final class BridgeTransport implements AutoCloseable {
         pump();
     }
     public int availableEvents() { return MAX_PENDING_EVENTS - pending.size(); }
+    public String session() { return session; }
     public Diagnostics diagnostics() {
         boolean connected = hasStatus && clock.getAsLong() - lastStatus <= 1_000_000_000L;
         return new Diagnostics(connected, connected && cameraReady, connected && vfxReady, connected ? walls : 0,
-                pending.size(), sentInputs, acknowledged, expired, lastRtt / 1_000_000.0, receiver);
+                pending.size(), sentInputs, acknowledged, expired, lastRtt / 1_000_000.0, receiver,
+                build, connected && worldSupported, connected && videoSupported, receiverId);
     }
     private static boolean number(JsonObject p, String name) {
         return p.has(name) && p.get(name).isJsonPrimitive() && p.getAsJsonPrimitive(name).isNumber();
@@ -97,6 +103,12 @@ public final class BridgeTransport implements AutoCloseable {
             lastStatusSequence = (long) seq; hasStatus = true;
             cameraReady = p.get("cameraReady").getAsBoolean(); vfxReady = p.get("vfxReady").getAsBoolean(); walls = (int) count;
             receiver = p.has("receiver") && "diagnostic".equals(p.get("receiver").getAsString()) ? "diagnostic" : "ue";
+            build = p.has("build") && p.get("build").isJsonPrimitive() && p.getAsJsonPrimitive("build").isString()
+                    ? p.get("build").getAsString() : "unknown";
+            worldSupported=bool(p,"worldV1") && p.get("worldV1").getAsBoolean();
+            videoSupported=bool(p,"videoV1") && p.get("videoV1").getAsBoolean();
+            receiverId=p.has("receiverId") && p.get("receiverId").isJsonPrimitive() && p.getAsJsonPrimitive("receiverId").isString()
+                    ? p.get("receiverId").getAsString() : "";
         }
     }
     public void pump() throws IOException {

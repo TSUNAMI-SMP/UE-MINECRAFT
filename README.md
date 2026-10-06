@@ -4,18 +4,19 @@ Fabric **Minecraft Java 1.21.11 / Java 21** と **Unreal Engine 5.8** を同じP
 接続する実験用プロジェクト。Minecraftが操作・プレイヤー移動を担当し、UEが描画と
 壁の物理破壊を担当します。既存サーバーへのインストールは不要です。
 
-**起動修正版0.2.1:** 0.2.0のMixinパッケージ配置による起動失敗を修正。導入済みの場合はBridge MODのJARのみ差し替えてください。UEソースの更新は不要です。
-
-**UE左右修正0.2.2:** [更新手順](docs/CAMERA_FIX_0.2.2.md)。MOD 0.2.1は継続使用できます。
+**最新版0.3.0：** 周辺ワールドの自動同期、設置・破壊の更新、UE映像をMinecraftの小窓/全画面へ表示、しゃがみ/目線高さ同期。
+**MODとUEを両方更新**してください。[ダウンロード](downloads/README.md) / [導入とテスト](docs/UPGRADE_0.3.0.md)。
+UE左右修正0.2.2とMixin起動修正0.2.1も含みます。
 
 ## 現在の状態
 
-- Fabric MOD：ビルド済み。JUnitテスト17件とPythonテスト4件成功。
+- Fabric MOD：Java 21でビルド。JUnit 27件（UDP信頼性、セル分割/差分、実TCP/JPEG受信）とPython診断テスト4件成功。
 - UE：C++プロジェクトと受信・同期・Niagara/Chaos連携コードを作成。
 - **UE Editorがクラウドにないため、UE 5.8でのコンパイル、Niagara/Geometry Collection
   アセット作成、両ゲームを使う成功条件は未検証です。完成済みMVPとはまだ言えません。**
 - UEに設定する `.uasset` / `.umap` は未作成。下記のエディタ手順が必要です。
-- Minecraftの全ワールド転送は未実装。0.2.0では周辺フルキューブの手動プレビューと任意の弓試作を追加しました。
+- ワールド同期はロード済み周辺の色・Outline Shapeを再現。全セーブの一括変換、バニラテクスチャ、Mob同期、UEアセットへの永続化は未実装。
+- 以前の視点同期・左右修正はユーザー実機で動作確認済み。0.3.0のUE追加機能は実機検証が必要です。
 
 ## 保存先
 
@@ -27,6 +28,8 @@ bridge/smoke.py         MOD受信確認 / UE向けテスト送信
 docs/UE_SETUP.md        カメラ・Niagara・Chaosのエディタ設定
 docs/TESTING.md         起動と最初の成功条件の検証
 tools/build_mod.py      クラウド用プロキシ対応ビルド
+tools/setup_world_bridge.py  保存済みテストレベルの色付き地形設定
+unreal/UEBridge/Build-UEBridge.cmd  Windows用C++ビルド補助
 ```
 
 GitHubはファイルの保存場所です。Minecraft/UEそのものをGitHub内で起動するわけでは
@@ -52,7 +55,7 @@ cd minecraft-mod
 ./gradlew build
 ```
 
-`build/libs/minecraft-ue-bridge-0.2.1.jar` がMOD本体です（`-sources.jar`ではありません）。
+`build/libs/minecraft-ue-bridge-0.3.0.jar` がMOD本体です（`-sources.jar`ではありません）。
 Minecraft Launcherに **1.21.11 / Fabric Loader 0.19.5** の専用インストールを作り、
 ゲームディレクトリを新しい `MC-UE-Test` フォルダに設定してください。その `mods/` に
 本MODと **Fabric API 0.141.6+1.21.11** を配置します。新しいシングルプレイ・クリエイティブ
@@ -78,20 +81,21 @@ TNTを置くだけでは発火しません。レッドストーン・連鎖爆�
 
 詳しいチェックと障害切り分けは [TESTING.md](docs/TESTING.md)。
 
-**0.2.0の新機能・コマンド・更新手順は [UPGRADE_0.2.0.md](docs/UPGRADE_0.2.0.md)。**
+**ワールド/映像/しゃがみの更新手順は [UPGRADE_0.3.0.md](docs/UPGRADE_0.3.0.md)。**
 旧版ダウンロードZIPは保持しています。最新版のMODとUEを両方揃えてください。
 
 ## 設計上の範囲
 
 - localhost UDP `127.0.0.1:7779`。カメラ入力は最大120Hz（実FPS以下）。
+- 映像は独立したlocalhost TCP `127.0.0.1:7780`。初期480×270・最大15fps JPEG。圧縮/デコードは別スレッド。
 - 1ブロック = UE 100cm。MC `(x,y,z)` → UE `(z,-x,y)`、Yawはそのまま、Pitchは符号反転。
 - MCが移動・ジャンプを計算し、その位置をUE Characterに直接反映。
   UEで重複して移動/ジャンプ物理を走らせません。
-- 移動キー・ジャンプ状態も受信してBlueprintに公開。ジャンプ押下イベントを利用可能。
-- TNTイベントだけ再送/ACK・重複排除。通常の視点入力にはACK待ちなし。
+- 移動キー・ジャンプ・しゃがみ状態をBlueprintに公開。実際の体高と目線を同期する。
+- TNT・弓・ワールドイベントは再送/ACK・重複排除。通常の視点入力にはACK待ちなし。
 - 接続の基準位置はMCワールド入場時とUE PlayerStart。両方再起動すると基準を揃え直せます。
 - 壁破壊は `BridgeWall` タグ付きGeometry Collectionのみ。床や既存シーン全体を対象にしません。
-- 弓の送信/簡易UE矢は任意の試作。Mob・HP・常時ブロック差分は未実装。
+- 自動地形同期は8ブロック単位の領域置換。変更領域を優先し、未変更領域を再送しない。Mob・HPは未実装。
 
 ## クラウドでの再ビルド
 

@@ -19,7 +19,8 @@ public class BridgeConfigTest {
     @Test public void invalidFileIsNotReplacedOrSilentlyAccepted() throws Exception {
         var path = temp.getRoot().toPath().resolve("settings.json");
         for (String text : new String[]{"null", "[]", "{broken", "{\"port\":0}", "{\"port\":7779.5}", "{\"port\":\"7779\"}",
-                "{\"enabled\":\"false\"}", "{\"enabled\":null}", "{\"inputHz\":10000}", "{\"previewRadius\":999}"}) {
+                "{\"enabled\":\"false\"}", "{\"enabled\":null}", "{\"inputHz\":10000}", "{\"previewRadius\":999}",
+                "{\"worldSync\":\"true\"}", "{\"worldRadius\":4}", "{\"worldHalfHeight\":0}", "{\"videoMode\":3}", "{\"videoPort\":0}"}) {
             Files.writeString(path, text);
             try { BridgeConfig.load(path); fail("Invalid config accepted: " + text); } catch (java.io.IOException expected) { }
             assertEquals(text, Files.readString(path));

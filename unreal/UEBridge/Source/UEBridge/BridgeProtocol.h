@@ -2,10 +2,11 @@
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
 
-enum class EBridgeKind { Input, Tnt, Bow, Snapshot, ClearPreview };
+enum class EBridgeKind { Input, Tnt, Bow, Snapshot, ClearPreview, WorldCell, WorldScope, WorldClear };
 struct FBridgeBlock {
     FVector Position = FVector::ZeroVector; // Minecraft-relative block centers.
     int32 Color = 0;
+    FVector Size = FVector::OneVector;
 };
 struct FBridgePacket {
     EBridgeKind Kind = EBridgeKind::Input;
@@ -14,6 +15,10 @@ struct FBridgePacket {
     FVector Position = FVector::ZeroVector, Direction = FVector::ZeroVector;
     double Yaw = 0, Pitch = 0, Forward = 0, Right = 0, Pull = 0;
     bool Jump = false;
+    bool Sneak = false;
+    double EyeHeight = 1.62, BodyHeight = 1.8;
+    FIntVector Cell = FIntVector::ZeroValue;
+    int32 Radius = 2, HalfHeight = 1;
     int32 BatchIndex = 0, TotalBatches = 0;
     TArray<FBridgeBlock> Blocks;
 };

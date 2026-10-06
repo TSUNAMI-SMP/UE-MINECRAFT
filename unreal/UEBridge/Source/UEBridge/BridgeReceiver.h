@@ -14,6 +14,8 @@ public:
     virtual void Tick(float DeltaSeconds) override;
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge") int32 Port = 7779;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Video") int32 VideoPort = 7780;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Bridge|Video") TObjectPtr<class UBridgeVideo> Video;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge") TObjectPtr<class ACharacter> TargetCharacter;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge") TObjectPtr<class UNiagaraSystem> ExplosionSystem;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge") float ExplosionRadius = 400.f;
@@ -28,12 +30,14 @@ public:
     UPROPERTY(BlueprintReadOnly, Category="Bridge") float ForwardInput = 0;
     UPROPERTY(BlueprintReadOnly, Category="Bridge") float RightInput = 0;
     UPROPERTY(BlueprintReadOnly, Category="Bridge") bool JumpHeld = false;
+    UPROPERTY(BlueprintReadOnly, Category="Bridge") bool SneakHeld = false;
     UFUNCTION(BlueprintImplementableEvent, Category="Bridge") void OnJumpPressed();
     UFUNCTION(BlueprintImplementableEvent, Category="Bridge") void OnTntExplosion(FVector Position);
     UFUNCTION(BlueprintImplementableEvent, Category="Bridge") void OnBowFired(FVector Position, FVector Direction, float Pull);
 private:
     class FSocket* Socket = nullptr;
     FString Session;
+    FString InstanceId;
     uint64 LastSequence = 0;
     TMap<FString, double> SeenEvents;
     FVector Anchor = FVector::ZeroVector;
@@ -44,6 +48,7 @@ private:
     uint32 PeerAddress = 0;
     int32 PeerPort = 0;
     UPROPERTY() TObjectPtr<class ABridgeBlockPreview> Preview;
+    UPROPERTY() TObjectPtr<class ABridgeWorld> SyncedWorld;
     UPROPERTY() TArray<TObjectPtr<class ABridgeArrow>> Arrows;
     FBridgePacket LatestInput;
     bool HasNewInput = false;

@@ -13,3 +13,9 @@ ABridgeCharacter::ABridgeCharacter() {
     GetCharacterMovement()->GravityScale = 0;
     GetCharacterMovement()->DefaultLandMovementMode = MOVE_None;
 }
+void ABridgeCharacter::ApplyMinecraftPose(double BodyHeight, double EyeHeight, bool Sneak) {
+    const float HalfHeight = float(BodyHeight * 50);
+    GetCapsuleComponent()->SetCapsuleSize(FMath::Min(30.f,HalfHeight),HalfHeight,false);
+    BridgeCamera->SetRelativeLocation(FVector(0,0,EyeHeight*100-HalfHeight));
+    BaseEyeHeight = float(EyeHeight*100); BridgeSneaking = Sneak; bIsCrouched = Sneak;
+}

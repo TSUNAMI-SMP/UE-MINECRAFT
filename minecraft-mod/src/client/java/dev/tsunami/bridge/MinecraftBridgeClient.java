@@ -34,8 +34,14 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
     public static void bowReleased(LivingEntity user, float pull) {
         if (instance != null) instance.bow(user, pull);
     }
+    public static void blockChanged(BlockPos pos) {
+        if (instance != null && instance.config.worldSync) instance.worldSync.changed(pos);
+    }
     private static final Logger LOG = LoggerFactory.getLogger("minecraft-ue-bridge");
     private final IgnitionTracker ignition = new IgnitionTracker();
+    private final WorldSync worldSync = new WorldSync();
+    private final VideoOverlay videoOverlay = new VideoOverlay();
+    private VideoClient video;
     private final ArrayDeque<JsonObject> snapshotQueue = new ArrayDeque<>();
     private final Path configPath = FabricLoader.getInstance().getConfigDir().resolve("minecraft-ue-bridge.json");
     private BridgeConfig config = new BridgeConfig();
@@ -45,9 +51,10 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
     private Vec3d origin;
     private long lastFrame, lastError, lastRetry, reportedExpired, snapshotSequence;
     private boolean lastConnected;
+    private String lastReceiverId = "";
 
     @Override public void onInitializeClient() {
-        instance = this; reload(); commands();
+        instance = this; reload(); commands(); videoOverlay.register();
         UseBlockCallback.EVENT.register((player, w, hand, hit) -> {
             MinecraftClient mc = MinecraftClient.getInstance();
             if (w.isClient() && w == world && player == mc.player && transport != null && origin != null
@@ -100,13 +107,25 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
             boolean active = mc.currentScreen == null && !mc.isPaused();
             p.addProperty("forward", active ? axis(mc.options.forwardKey.isPressed(), mc.options.backKey.isPressed()) : 0);
             p.addProperty("right", active ? axis(mc.options.rightKey.isPressed(), mc.options.leftKey.isPressed()) : 0);
-            p.addProperty("jump", active && mc.options.jumpKey.isPressed()); transport.input(p);
+            p.addProperty("jump", active && mc.options.jumpKey.isPressed());
+            p.addProperty("sneak", mc.player.isSneaking());
+            p.addProperty("eyeHeight", mc.player.getEyeHeight(mc.player.getPose()));
+            p.addProperty("bodyHeight", mc.player.getHeight()); transport.input(p);
         } catch (IOException e) { report(e); }
     }
     private void tick(MinecraftClient mc) {
         ensureConnection(mc); if (transport == null) return;
         try {
             transport.pump();
+            var ready=transport.diagnostics();
+            if (ready.connected() && (!lastConnected || !ready.receiverId().equals(lastReceiverId))) {
+                lastReceiverId=ready.receiverId(); worldSync.reset();
+            }
+            if (config.worldSync) worldSync.tick(mc, origin, config, transport);
+            if (config.videoMode != 0 && video == null && transport.diagnostics().cameraReady() && transport.diagnostics().videoSupported())
+                video = new VideoClient(config.videoPort, transport.session());
+            if (config.videoMode == 0 && video != null) { video.close(); video = null; }
+            videoOverlay.setClient(video, config.videoMode);
             // Leave 16 slots for gameplay events. Bulk work never blocks the input path.
             for (int i = 0; i < 4 && !snapshotQueue.isEmpty() && transport.availableEvents() > 16; i++) {
                 JsonObject payload = snapshotQueue.removeFirst(); JsonObject p = transport.packet("event");
@@ -169,6 +188,19 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         snapshotQueue.clear(); snapshotSequence = 0;
         sendEvent("block_preview_clear", origin, null); return feedback("UEプレビューの消去を送信しました");
     }
+    private int worldEnabled(boolean enabled) {
+        int result = change(v -> v.worldSync = enabled, false);
+        if (config.worldSync == enabled) {
+            worldSync.reset();
+            if (transport != null && origin != null) sendEvent("world_clear", origin, null);
+        }
+        return result;
+    }
+    private int refreshWorld() {
+        worldSync.reset();
+        if (transport != null && origin != null) sendEvent("world_clear", origin, null);
+        return feedback("周辺ワールドを再送信します。/uebridge world on で自動同期を有効にしてください");
+    }
     private int change(Consumer<BridgeConfig> update, boolean reconnect) {
         if (configError != null) return feedback(configError + "。設定を修正して /uebridge reload を実行してください");
         BridgeConfig next = config.copy(); update.accept(next);
@@ -189,6 +221,19 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
                 .executes(c -> change(v -> v.inputHz = IntegerArgumentType.getInteger(c, "value"), false))))
             .then(literal("bow").then(literal("on").executes(c -> change(v -> v.bowEvents = true, false)))
                 .then(literal("off").executes(c -> change(v -> v.bowEvents = false, false))))
+            .then(literal("world").executes(c -> feedback("自動同期="+config.worldSync+" / 領域="+worldSync.synchronizedCells()+"/"+worldSync.targetCells()))
+                .then(literal("on").executes(c -> worldEnabled(true)))
+                .then(literal("off").executes(c -> worldEnabled(false)))
+                .then(literal("refresh").executes(c -> refreshWorld()))
+                .then(literal("radius").then(argument("value", IntegerArgumentType.integer(1,3))
+                    .executes(c -> change(v -> v.worldRadius = IntegerArgumentType.getInteger(c,"value"), false)))))
+            .then(literal("video").executes(c -> feedback(video == null ? "UE映像OFF" : video.status()))
+                .then(literal("on").executes(c -> change(v -> v.videoMode = 1, false)))
+                .then(literal("pip").executes(c -> change(v -> v.videoMode = 1, false)))
+                .then(literal("fullscreen").executes(c -> change(v -> v.videoMode = 2, false)))
+                .then(literal("off").executes(c -> change(v -> v.videoMode = 0, false)))
+                .then(literal("port").then(argument("value", IntegerArgumentType.integer(1024,65535))
+                    .executes(c -> change(v -> v.videoPort = IntegerArgumentType.getInteger(c,"value"), true)))))
             .then(literal("preview").executes(c -> snapshot()).then(literal("clear").executes(c -> clearPreview())))));
     }
     private String status() {
@@ -198,7 +243,10 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         var d = transport.diagnostics();
         return String.format(java.util.Locale.ROOT, "UE Bridge: %s / Camera=%s VFX=%s 壁=%d / RTT=%.1fms / 未ACK=%d 期限切れ=%d / %dHz",
                 d.connected() ? ("diagnostic".equals(d.receiver()) ? "UDP診断ツール" : "UE応答あり") : "UE応答待ち（旧版UEはstatus非対応）", d.cameraReady(), d.vfxReady(), d.walls(),
-                d.rttMillis(), d.pending(), d.expired(), config.inputHz);
+                d.rttMillis(), d.pending(), d.expired(), config.inputHz)
+                + " / World=" + worldSync.synchronizedCells()+"/"+worldSync.targetCells()
+                + " / UE=" + d.build() + (config.worldSync && !d.worldSupported() ? "（ワールド同期対応UEを待っています）" : "")
+                + " / Video=" + (video == null ? "OFF" : video.status());
     }
     private int feedback(String text) {
         MinecraftClient mc = MinecraftClient.getInstance();
@@ -216,8 +264,10 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         if (lastError == 0 || now - lastError > 5_000_000_000L) { LOG.warn("UE bridge: {}", e.toString()); lastError = now; }
     }
     private void disconnect() {
+        if (video != null) video.close(); video = null; videoOverlay.setClient(null, 0); worldSync.reset();
         if (transport != null) try { transport.close(); } catch (IOException e) { report(e); }
         transport = null; origin = null; ignition.clear(); snapshotQueue.clear(); snapshotSequence = 0; lastConnected = false;
+        lastReceiverId = "";
         lastRetry = 0;
     }
 }

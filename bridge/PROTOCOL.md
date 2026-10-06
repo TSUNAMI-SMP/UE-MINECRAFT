@@ -20,9 +20,13 @@ state (UE exposes rising-edge notification). Input gets no ACK; old/reordered
 input is discarded. After 250 ms without valid input, key states reset and pose
 holds. GUI/pause sends neutral keys. World disconnect stops transmission.
 
+0.3.0 adds optional typed fields: `sneak:boolean`, `eyeHeight:0.1..2.5`,
+`bodyHeight:0.2..3` in blocks. Defaults for old senders are false/1.62/1.8.
+UE applies body height to the capsule and places the camera eyeHeight above feet.
+
 UE mapping: `(X,Y,Z) = spawnFeet + 100 * (mcZ,-mcX,mcY)`, yaw `mcYaw`, pitch
 `-mcPitch`. Character capsule center adds its half height above feet. First-person
-camera is 162 cm above feet. Movement authority stays in Minecraft: position is
+camera uses the supplied eyeHeight (default 162 cm). Movement authority stays in Minecraft: position is
 mirrored directly; UE does not simulate a second player movement controller or
 call Jump twice. UE wall debris is independently simulated in Chaos.
 
@@ -109,3 +113,68 @@ Chaos and no textures. Non-full-cube blocks/unloaded chunks are skipped.
 UE fully validates every message (types/ranges/UUIDs) before renewing session
 leases. Input frames are drained up to 256 datagrams/tick and only the latest pose
 is applied once. No network callback thread mutates UE objects.
+
+## Automatic world stream (0.3.0, additive v1)
+
+Status adds `build:"0.3.0"`, `receiverId` (fresh UUID on each BeginPlay),
+`worldV1:true`, `videoV1:true`, `worldCells`, `worldShapes`, `videoReady`.
+The MOD gates new traffic on supported capabilities and clears its cell cache
+when receiverId changes or status reconnects, including very short UE restarts.
+
+`world_scope`: event envelope, `cellX/cellY/cellZ` integer absolute Minecraft
+cell coordinates (`floor(blockCoordinate/8)`), `radius:1..3`, `halfHeight:1..2`.
+No MC origin is needed to interpret cell keys; geometry positions remain relative
+to the session origin. A new scope prunes cells outside the inclusive axis bounds.
+Scope is sent after the previous transfer completes and is ACKed before new cells.
+
+`world_cell`: snapshot envelope with `cellX/cellY/cellZ`, `snapshotId`,
+`snapshotSeq`, `batchIndex`, `totalBatches` and rows:
+
+```json
+{"event":"world_cell","cellX":-1,"cellY":0,"cellZ":0,"snapshotId":"00000000-0000-4000-8000-000000000003","snapshotSeq":10,"batchIndex":0,"totalBatches":1,"blocks":[[0.5,-0.25,0.5,6657602,1,0.5,1]]}
+```
+
+Rows: `[relative centerX,centerY,centerZ,mapColorRGB,sizeX,sizeY,sizeZ]`.
+MC box scales map to UE `(sizeZ,sizeX,sizeY)`. Max 8 rows/batch, 1024 batches,
+8192 shapes/cell, 64 colors/cell, 131072 displayed shapes. Dimensions must be
+finite in (0,4]. Empty cells use one empty batch to remove previous geometry.
+The UE stages at most 4 incomplete cells, with 60-second deadlines, then commits
+only complete newer snapshots atomically per cell. Revisions/clear barriers and
+scope bounds reject late stale data. Unfinished updates retain the previous cell.
+
+MC scans 128 blocks/client tick and prioritizes notified block changes and their
+neighbors. Continuous bounded rescans cover chunk loads and missed notifications.
+Buried opaque cubes are omitted. Outline boxes and approximate fluid boxes are
+sent; no textures, block entities, mobs, collision or persistent world export.
+At most 6 batches/tick, with 16 gameplay queue slots reserved. SHA256 fingerprints
+are cached only after all events ACK; expired transfers force a new full cell
+snapshot. There is no byte delta within a changed cell. Radius defaults to 2 and
+halfHeight to 1 (75 cells, 40x24x40 blocks). Limits are independent of camera rate.
+
+`world_clear`: clears cell/staging/revision data, installs a sequence barrier and
+requires a newer world_scope before accepting cell snapshots. Session takeover
+also clears all streamed world data. Manual block_preview remains separate.
+
+## Video return path (0.3.0, TCP v1)
+
+UE listens only on 127.0.0.1:7780, separate from UDP. One client sends exactly
+40 ASCII bytes: `UEBH` plus the 36-character current UDP session UUID. The UE
+accepts loopback clients only, checks the session, and drops a mismatched/stale
+handshake after 2 seconds. This correlates the streams; it is not a security
+boundary against other processes on the same PC.
+
+Each UE frame has six unsigned 32-bit words in **network byte order**:
+magic 0x55454256 (`UEBV`), version 1, width, height, frame sequence, JPEG byte length;
+then that many JPEG bytes. Width/height <=1920x1080, payload <=2 MiB. Sequence wraps
+as uint32; the ordered TCP stream supplies frame order. MC verifies JPEG dimensions
+before pixel allocation. No audio. Default 480x270, maximum15fps, quality75.
+
+UE captures the target Camera's current view with SceneCapture2D, performs a
+synchronous GPU pixel readback, compresses JPEG on a thread-pool worker, and sends
+nonblocking partial writes. One compressed frame/in-flight encode, no accumulated
+frame queue; a stalled send disconnects after 2 seconds. Capture cost can affect
+UE FPS even though it uses another socket. Target/worker cleanup occurs on EndPlay.
+MC receives/decodes on a dedicated daemon, retains only the latest decoded frame,
+uploads textures on the render thread, and draws a HUD layer before the crosshair.
+Timeout/disconnect retries do not block input. Aspect ratio is preserved. GPU
+capture/JPEG means this is a bounded prototype, not a zero-copy streaming pipeline.

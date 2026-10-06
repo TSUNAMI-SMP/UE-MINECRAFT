@@ -61,4 +61,31 @@ bool FBridgeSnapshotTest::RunTest(const FString& Parameters) {
     P = PacketJson(Text); P->SetNumberField(TEXT("totalBatches"), 1000000); TestFalse(TEXT("Batch limit"), BridgeProtocol::Parse(P, Out));
     return true;
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgePoseTest, "UEBridge.Protocol.MinecraftPose", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBridgePoseTest::RunTest(const FString& Parameters) {
+    auto P=PacketJson(Input); FBridgePacket Out;
+    TestTrue(TEXT("Older MOD input uses standing defaults"),BridgeProtocol::Parse(P,Out));
+    TestEqual(TEXT("Standing eye"),Out.EyeHeight,1.62);
+    P->SetBoolField(TEXT("sneak"),true); P->SetNumberField(TEXT("eyeHeight"),1.27); P->SetNumberField(TEXT("bodyHeight"),1.5);
+    TestTrue(TEXT("Sneaking pose"),BridgeProtocol::Parse(P,Out)); TestTrue(TEXT("Sneak"),Out.Sneak);
+    TestEqual(TEXT("Crouch eye"),Out.EyeHeight,1.27); TestEqual(TEXT("Crouch body"),Out.BodyHeight,1.5);
+    P->SetStringField(TEXT("sneak"),TEXT("true")); TestFalse(TEXT("String sneak rejected"),BridgeProtocol::Parse(P,Out));
+    P->SetBoolField(TEXT("sneak"),true); P->SetNumberField(TEXT("bodyHeight"),-1); TestFalse(TEXT("Negative body rejected"),BridgeProtocol::Parse(P,Out));
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeWorldProtocolTest, "UEBridge.Protocol.WorldCell", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBridgeWorldProtocolTest::RunTest(const FString& Parameters) {
+    const FString Text=TEXT("{\"v\":1,\"kind\":\"event\",\"session\":\"00000000-0000-4000-8000-000000000001\",\"seq\":5,\"eventId\":\"00000000-0000-4000-8000-000000000002\",\"event\":\"world_cell\",\"cellX\":-1,\"cellY\":0,\"cellZ\":1,\"x\":0,\"y\":0,\"z\":0,\"snapshotId\":\"00000000-0000-4000-8000-000000000003\",\"snapshotSeq\":3,\"batchIndex\":0,\"totalBatches\":1,\"blocks\":[[1,2,3,16711680,1,0.5,1]]}");
+    auto P=PacketJson(Text); FBridgePacket Out;
+    TestTrue(TEXT("World cell with half block"),BridgeProtocol::Parse(P,Out));
+    TestTrue(TEXT("Shape dimensions"),Out.Blocks.Num()==1 && Out.Blocks[0].Size.Equals(FVector(1,.5,1)));
+    TestTrue(TEXT("Negative cell coordinate"),Out.Cell==FIntVector(-1,0,1));
+    P->SetNumberField(TEXT("cellX"),.5); TestFalse(TEXT("Fractional cell rejected"),BridgeProtocol::Parse(P,Out));
+    P=PacketJson(Text); P->SetNumberField(TEXT("totalBatches"),1025); TestFalse(TEXT("World batch limit"),BridgeProtocol::Parse(P,Out));
+    P=PacketJson(Text); P->SetStringField(TEXT("event"),TEXT("world_scope")); P->SetNumberField(TEXT("radius"),2); P->SetNumberField(TEXT("halfHeight"),1);
+    TestTrue(TEXT("World scope"),BridgeProtocol::Parse(P,Out));
+    P->SetNumberField(TEXT("radius"),4); TestFalse(TEXT("World scope limit"),BridgeProtocol::Parse(P,Out));
+    P->SetStringField(TEXT("event"),TEXT("world_clear")); TestTrue(TEXT("World clear"),BridgeProtocol::Parse(P,Out));
+    return true;
+}
 #endif

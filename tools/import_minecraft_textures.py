@@ -232,13 +232,25 @@ def import_minecraft_textures(filename):
             # Repair every instance rather than treating asset existence as import completion.
             editing.set_material_instance_parent(material, parent)
             editing.update_material_instance(material)
+            texture_values = []
+            scalar_values = []
+            for face in ("top", "side", "bottom"):
+                texture_values.append(unreal.TextureParameterValue(
+                    parameter_info=unreal.MaterialParameterInfo(name=face.title() + "Texture"),
+                    parameter_value=imported[entry[face]["texture"]]))
+                scalar_values.append(unreal.ScalarParameterValue(
+                    parameter_info=unreal.MaterialParameterInfo(name=face.title() + "Tint"),
+                    parameter_value=float(entry[face]["tint"])))
+            # Explicit overrides avoid the failed parameter lookup in the editor setter.
+            material.set_editor_property("texture_parameter_values", texture_values)
+            material.set_editor_property("scalar_parameter_values", scalar_values)
+            editing.update_material_instance(material)
             for face in ("top", "side", "bottom"):
                 parameter = face.title() + "Texture"
-                if not editing.set_material_instance_texture_parameter_value(material, parameter, imported[entry[face]["texture"]]):
-                    raise RuntimeError("Cannot set " + parameter + " for " + identifier)
-                if not editing.set_material_instance_scalar_parameter_value(material, face.title() + "Tint", float(entry[face]["tint"])):
-                    raise RuntimeError("Cannot set tint for " + identifier)
-            editing.update_material_instance(material)
+                actual = editing.get_material_instance_texture_parameter_value(material, parameter)
+                expected = imported[entry[face]["texture"]]
+                if actual != expected:
+                    raise RuntimeError("Texture override readback failed: " + identifier + ":" + parameter)
             if not assets.save_loaded_asset(material, False):
                 raise RuntimeError("Cannot save block material")
             palette_materials[identifier] = material

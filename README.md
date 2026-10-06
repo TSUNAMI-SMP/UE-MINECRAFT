@@ -7,6 +7,7 @@ Fabric **Minecraft Java 1.21.11 / Java 21** と **Unreal Engine 5.8** を同じP
 一人称/後方/前方視点、Minecraftの音、破壊・ダッシュ粒子を追加。
 **MODとUEを両方更新**してください。[ダウンロード](downloads/README.md) / [導入とテスト](docs/UPGRADE_0.7.0.md)。
 以前のC4458修正も含みます。スキン/粒子の素材は専用Minecraft環境からローカルに書き出します。
+0.7.0の配布ZIPには[ビルド修正パッチ0.7.1](docs/BUILD_FIX_0.7.1.md)も適用してください。MODは0.7.0のままです。
 
 ## 現在の状態
 

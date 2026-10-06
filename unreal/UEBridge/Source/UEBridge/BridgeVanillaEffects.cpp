@@ -71,7 +71,7 @@ void ABridgeVanillaEffects::AddParticle(const FVector& Position,const FVector& V
     // Minecraft Particle adds uniformly random velocity, normalizes it, then adds upward motion.
     FVector RandomDirection=Velocity+FVector(FMath::FRandRange(-.4f,.4f),FMath::FRandRange(-.4f,.4f),FMath::FRandRange(-.4f,.4f));
     Particle.Velocity=RandomDirection.GetSafeNormal()*(FMath::FRand()+FMath::FRand()+1)*120+FVector(0,0,200);
-    Particle.Size=FMath::FRandRange(10,20);
+    Particle.Size=FMath::FRandRange(10.f,20.f);
     Particle.Lifetime=FMath::FloorToInt(4/(FMath::FRand()*.9f+.1f));
     Particle.TextureOffset=FVector2D(FMath::FRand()*.75f,FMath::FRand()*.75f);
     Particles.Add(MoveTemp(Particle));
@@ -88,7 +88,7 @@ void ABridgeVanillaEffects::SpawnSprint(const FVector& Feet,const FVector& Veloc
     const FString Group=FindGroup(BlockId,Tint); if(Group.IsEmpty()) return;
     // Entity's -4*motion / 1.5 upward inputs still pass through Particle's random normalization.
     const FVector SeedVelocity(-4*Velocity.X/2000,-4*Velocity.Y/2000,1.5f);
-    AddParticle(Feet+FVector(FMath::FRandRange(-30,30),FMath::FRandRange(-30,30),10),SeedVelocity,Group);
+    AddParticle(Feet+FVector(FMath::FRandRange(-30.f,30.f),FMath::FRandRange(-30.f,30.f),10),SeedVelocity,Group);
 }
 void ABridgeVanillaEffects::SampleCharacter(ABridgeCharacter* Character,float DeltaSeconds,TArray<FBridgeVanillaEvent>& OutEvents) {
     if(!IsValid(Character) || !Character->UEAuthority || !Terrain || !Terrain->IsSealed()) { ResetMovement(); return; }

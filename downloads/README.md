@@ -2,6 +2,9 @@
 
 ## 最新版 0.7.0
 
+**UEビルドには[修正パッチ0.7.1](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-build-fix-0.7.1.zip)も適用してください。**
+粒子コードのC2668を修正し、GPU終了処理の旧APIを更新。MODは0.7.0のまま。[適用手順](../docs/BUILD_FIX_0.7.1.md)。
+
 [MOD 0.7.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/minecraft-ue-bridge-0.7.0.jar)
 
 [UE更新ZIP 0.7.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-update-0.7.0.zip)

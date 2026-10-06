@@ -63,7 +63,7 @@ void UBridgeVideo::EndPlay(const EEndPlayReason::Type Reason) {
     if (Encoding.IsValid()) Encoding.Wait(); // Worker owns pixels only; no UObject is touched by it.
     // Only shutdown waits for render commands. No FlushRenderingCommands/ReadPixels occurs per frame.
     if(!Readbacks.IsEmpty()) {
-        ENQUEUE_RENDER_COMMAND(BridgeFinishReadbacks)([Frames=Readbacks](FRHICommandListImmediate& RHICmdList) {RHICmdList.BlockUntilGPUIdle();});
+        ENQUEUE_RENDER_COMMAND(BridgeFinishReadbacks)([Frames=Readbacks](FRHICommandListImmediate& RHICmdList) {RHICmdList.SubmitAndBlockUntilGPUIdle();});
     }
     FlushRenderingCommands();Readbacks.Empty();
     if (Capture) Capture->DestroyComponent(); Capture=nullptr; Target=nullptr;

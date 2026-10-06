@@ -83,7 +83,10 @@ def setup_vanilla_effects():
     if default_texture is None:
         raise RuntimeError("Engine default texture is missing")
     sample.set_editor_property("texture", default_texture)
-    wire(final_uv, sample, "Coordinates")
+    # Texture samples expose the first input as UVs, not the C++ field name
+    # Coordinates. MaterialEditingLibrary's empty-name convention selects the
+    # first input without relying on editor pin labels.
+    wire(final_uv, sample)
     color = node(unreal.MaterialExpressionVectorParameter)
     color.set_editor_property("parameter_name", "ParticleColor")
     color.set_editor_property("default_value", unreal.LinearColor(.6, .6, .6, 1))

@@ -1,5 +1,7 @@
 # 0.8.1：UE 5.8粒子素材設定スクリプト修正
 
+追加のUV接続修正を含む[0.8.2パッチ](PARTICLE_SETUP_FIX_0.8.2.md)を使用してください。0.8.1の修正も含みます。
+
 [修正ZIPをダウンロード](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.8.0/downloads/UEBridge-particle-setup-fix-0.8.1.zip)
 
 `MaterialExpressionPerInstanceCustomData: Failed to find property 'default_value'` で

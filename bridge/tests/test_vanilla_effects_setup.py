@@ -110,6 +110,12 @@ class Editor:
     def connect(self, source, output, target, pin):
         if self.fail_connections:
             return False
+        if type(target).__name__ == "TextureSampleParameter2D":
+            # Texture sample inputs expose UVs, not the C++ field Coordinates.
+            # MaterialEditingLibrary accepts an empty name for the first input.
+            if pin not in ("", "UVs"):
+                return False
+            pin = "UVs"
         target.inputs[pin] = (source, output)
         return True
 
@@ -167,7 +173,7 @@ class VanillaEffectsSetupTest(unittest.TestCase):
     def test_quarter_sprite_uvs_and_explicit_custom_data_transport(self):
         material = self.editor.run()
         sample = next(node for node in material.nodes if type(node).__name__ == "TextureSampleParameter2D")
-        coordinate = sample.inputs["Coordinates"][0]
+        coordinate = sample.inputs["UVs"][0]
         for uv in ((0, 0), (1, 1), (.2, .7)):
             for offset in ((0, 0), (.3, .45), (.749, .749)):
                 actual = evaluate(coordinate, uv, offset)

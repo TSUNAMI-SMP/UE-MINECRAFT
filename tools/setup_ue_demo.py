@@ -7,8 +7,8 @@ UE editor execution remains unverified in cloud (no editor installed here).
 import pathlib
 import unreal
 
-project = pathlib.Path(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_file_path()))
-if project.stem != "UEBridge" or not (project.parent / "Source/UEBridge/BridgeProtocol.h").is_file():
+project_dir = pathlib.Path(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()))
+if not (project_dir / "UEBridge.uproject").is_file() or not (project_dir / "Source/UEBridge/BridgeProtocol.h").is_file():
     raise RuntimeError("Run only inside the new UEBridge project; other projects are not supported")
 if unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages():
     raise RuntimeError("Save or discard your current map changes before running this setup")

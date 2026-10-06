@@ -4,6 +4,11 @@ Minecraft 1.21.11 / Fabric / Java 21はそのままです。**今回はMODとUE�
 クラウドでMODのコンパイル・自動テスト・TCP/JPEG通信を確認しています。
 UE EditorのC++ビルド、実際の描画・色・しゃがみ・映像はWindows実機で確認が必要です。
 
+**マテリアル設定スクリプト修正版0.3.1：** `Paths.project_file_path`のAttributeErrorが出る場合、
+[設定スクリプトの修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-material-setup-fix-0.3.1.zip)の
+`setup_world_bridge.py`を使用中のUEBridgeフォルダへ上書きしてください。
+旧0.3.0アーカイブのスクリプトにはこの不具合が残っています。MOD/C++の交換・再ビルドは不要です。
+
 ## 導入
 
 1. Minecraftを終了。UEで今のテストレベルを保存し、UEとVisual Studioを閉じる。
@@ -18,10 +23,11 @@ UE EditorのC++ビルド、実際の描画・色・しゃがみ・映像はWindo
    **BUILD SUCCESSFUL**が出たら、そのフォルダのuprojectを開く。失敗時は最初のerrorを確認する。
    Visual StudioのC++開発環境が必要。スクリプトは他プロジェクトを編集せず、起動中UEも終了させない。
 6. 保存したテストレベルを読み込む。BridgeReceiverは1個、GameModeはBridgeGameModeを使用。
-7. 色付きブロック用マテリアルを準備する。レベルを保存し、Playしていない状態でUEのコンソールに次を入力。
+7. 色付きブロック用マテリアルを準備する。修正版スクリプトを使用し、レベルを保存し、Playしていない状態で
+   UEのコンソール入力欄を**Pythonモード**にして次を入力。パスは実際の場所に合わせる。
 
-   ```text
-   py "C:/実際の場所/UE-MINECRAFT/unreal/UEBridge/setup_world_bridge.py"
+   ```python
+   exec(open("C:/実際の場所/UE-MINECRAFT/unreal/UEBridge/setup_world_bridge.py", encoding="utf-8").read())
    ```
 
    このスクリプトは`/Game/Bridge/M_BridgeBlock`を必要時だけ作り、現在のレベルのBridgeReceiverに設定する。

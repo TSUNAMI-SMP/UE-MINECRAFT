@@ -6,8 +6,8 @@ Does not import Minecraft assets, delete actors, or change Niagara/Chaos assignm
 import pathlib
 import unreal
 
-project = pathlib.Path(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_file_path()))
-if project.stem != "UEBridge" or not (project.parent / "Source/UEBridge/BridgeWorld.h").is_file():
+project_dir = pathlib.Path(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()))
+if not (project_dir / "UEBridge.uproject").is_file() or not (project_dir / "Source/UEBridge/BridgeWorld.h").is_file():
     raise RuntimeError("Run this script in the updated UEBridge project only")
 if unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages():
     raise RuntimeError("Save your open level first, then run this script outside Play")

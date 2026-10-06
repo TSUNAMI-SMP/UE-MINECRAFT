@@ -1,5 +1,13 @@
 # ダウンロード
 
+## マテリアル設定スクリプト修正版 0.3.1
+
+[設定スクリプト修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-material-setup-fix-0.3.1.zip)
+
+UEの`Paths.project_file_path`のAttributeErrorを修正。ZIP内の`setup_world_bridge.py`だけを使用中のUEBridgeへ上書きし、
+Pythonモードで再実行してください。MOD 0.3.0とUE C++はそのままで、再ビルドは不要です。
+下の0.3.0 ZIPは以前のスクリプトを含むため、この修正も適用してください。実UE実行の確認は必要です。
+
 ## 最新版 0.3.0
 
 [Minecraft MOD 0.3.0のJAR](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/minecraft-ue-bridge-0.3.0.jar)

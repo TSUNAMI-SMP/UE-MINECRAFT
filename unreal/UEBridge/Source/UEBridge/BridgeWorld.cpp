@@ -90,16 +90,16 @@ void ABridgeWorld::BuildBoundary() {
         Box->SetHiddenInGame(true); Box->SetCanEverAffectNavigation(false); Box->RegisterComponent(); Boundary.Add(Box);
     }
 }
-int32 ABridgeWorld::RemoveBlocksInSphere(FVector Position,float Radius) {
-    if(!Sealed || !FMath::IsFinite(Radius) || Radius<=0 || Radius>5000) return 0;
+int32 ABridgeWorld::RemoveBlocksInSphere(FVector Position,float RemovalRadius) {
+    if(!Sealed || !FMath::IsFinite(RemovalRadius) || RemovalRadius<=0 || RemovalRadius>5000) return 0;
     int32 Removed=0;
     for(auto& Pair:Stored) {
         const int32 Before=Pair.Value.Num();
-        Pair.Value.RemoveAll([&](const FBridgeBlock& B){ return FVector::DistSquared(BridgeProtocol::ToUnreal(B.Position,ImportAnchor),Position)<=Radius*Radius; });
+        Pair.Value.RemoveAll([&](const FBridgeBlock& B){ return FVector::DistSquared(BridgeProtocol::ToUnreal(B.Position,ImportAnchor),Position)<=RemovalRadius*RemovalRadius; });
         const int32 Difference=Before-Pair.Value.Num(); if(!Difference) continue;
         Removed+=Difference; Shapes-=Difference;
-        if(auto* Cell=Cells.Find(Pair.Key())) if(IsValid(*Cell)) (*Cell)->Replace(Pair.Value,ImportAnchor,SavedMaterial,SavedPalette,true);
-        Counts.Add(Pair.Key(),Pair.Value.Num());
+        if(auto* Cell=Cells.Find(Pair.Key)) if(IsValid(*Cell)) (*Cell)->Replace(Pair.Value,ImportAnchor,SavedMaterial,SavedPalette,true);
+        Counts.Add(Pair.Key,Pair.Value.Num());
     }
     return Removed;
 }

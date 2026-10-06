@@ -1,5 +1,12 @@
 # ダウンロード
 
+## UEビルド修正 0.5.1
+
+[UEビルド修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-build-fix-0.5.1.zip)
+
+0.5.0でBridgeWorld.cppのC4458/C2064が出る場合に適用。Sourceを上書きして再ビルド。
+MOD0.5.0と保存済みレベル/素材は変更不要です。下の0.5.0アーカイブには修正が入っていません。
+
 ## 最新版 0.5.0
 
 [MOD 0.5.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/minecraft-ue-bridge-0.5.0.jar)

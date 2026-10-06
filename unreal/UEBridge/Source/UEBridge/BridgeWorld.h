@@ -29,7 +29,7 @@ public:
     bool IsImporting() const { return !ImportId.IsEmpty() && !Sealed; }
     FString GetImportId() const { return ImportId; }
     int32 ImportedCells() const { return Revisions.Num(); }
-    UFUNCTION(BlueprintCallable,Category="Bridge|World") int32 RemoveBlocksInSphere(FVector Position,float Radius);
+    UFUNCTION(BlueprintCallable,Category="Bridge|World") int32 RemoveBlocksInSphere(FVector Position,float RemovalRadius);
     int32 CellCount() const { return Cells.Num(); }
     int32 ShapeCount() const { return Shapes; }
 private:

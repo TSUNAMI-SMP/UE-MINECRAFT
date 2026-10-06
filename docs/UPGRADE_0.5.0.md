@@ -4,6 +4,14 @@
 腕・持ち物、UEへのアイテム使用、リアルな水、Chaos特殊破壊は次の段階です。
 従来の位置コピー方式も残し、明示コマンドで新モードへ切り替えます。
 
+## UEビルド修正版0.5.1
+
+0.5.0のUE ZIPにはBridgeWorld.cppのC4458/C2064を起こす不具合があります。
+[UEビルド修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-build-fix-0.5.1.zip)の
+Sourceフォルダを使用中のUEBridgeへ上書きし、Build-UEBridge.cmdを再実行してください。
+MOD0.5.0・レベル・素材はそのまま。引数の名前衝突とTMapキーの参照を修正します。
+UE5.8実機ログから原因を特定。クラウドでのUEビルド検証はできません。
+
 ## 更新
 
 1. Minecraftを終了。UEで今のレベルを保存し、UEとVisual Studioを閉じる。

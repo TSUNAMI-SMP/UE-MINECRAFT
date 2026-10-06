@@ -38,6 +38,13 @@ class Expression(PropertyObject):
     def get_class(self):
         return types.SimpleNamespace(get_name=lambda: type(self).__name__)
 
+    def set_editor_property(self, name, value):
+        # UE 5.8's real editor rejected default_value on this expression. Keep
+        # that observed API contract strict so the helper cannot regress.
+        if type(self).__name__ == "PerInstanceCustomData" and name != "data_index":
+            raise AttributeError("PerInstanceCustomData has no editor property: " + name)
+        super().set_editor_property(name, value)
+
 
 class Receiver(PropertyObject):
     pass

@@ -59,7 +59,8 @@ def setup_vanilla_effects():
     for index in range(2):
         custom = node(unreal.MaterialExpressionPerInstanceCustomData)
         custom.set_editor_property("data_index", index)
-        custom.set_editor_property("default_value", 0.0)
+        # UE 5.8 does not expose a default_value editor property here. Both
+        # instance channels are explicitly supplied by BridgeVanillaEffects.
         offsets.append(custom)
     mirrored_u = node(unreal.MaterialExpressionAdd)
     mirrored_u.set_editor_property("const_b", 0.25)

@@ -2,6 +2,10 @@
 
 ## 更新版 0.8.0
 
+**粒子素材の設定には[修正パッチ0.8.1](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.8.0/downloads/UEBridge-particle-setup-fix-0.8.1.zip)も適用してください。**
+UE 5.8の`default_value`プロパティエラーを修正します。[適用手順](../docs/PARTICLE_SETUP_FIX_0.8.1.md)。
+setup_vanilla_effects.pyだけを更新します。MOD/C++は0.8.0のまま、再ビルドは不要です。
+
 [MOD 0.8.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.8.0/downloads/minecraft-ue-bridge-0.8.0.jar)
 
 [UE更新ZIP 0.8.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.8.0/downloads/UEBridge-update-0.8.0.zip)

@@ -1,5 +1,13 @@
 # ダウンロード
 
+## UE腕・持ち物マテリアル修正0.9.4
+
+- [UE修正パッチZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/UEBridge-material-fix-0.9.4.zip)
+- [1ファイルの上書き・再ビルドとIDLE時の操作](../docs/UE_MATERIAL_FIX_0.9.4.md)
+
+BridgeCharacter.cppの動的マテリアル親の警告を修正します。
+MODは0.9.3、UEの他のファイルと素材は保持します。UEビルド・描画はクラウドでは未確認です。
+
 ## MOD・取り込みスクリプト修正0.9.3
 
 - [MOD 0.9.3](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/minecraft-ue-bridge-0.9.3.jar)

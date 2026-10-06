@@ -16,6 +16,21 @@
 #include "ProceduralMeshComponent.h"
 
 namespace {
+UMaterialInstanceDynamic* CreateVisualInstance(UMaterialInterface* SourceMaterial,UObject* Outer) {
+    if(!IsValid(SourceMaterial)) return nullptr;
+    auto* SourceDynamic=Cast<UMaterialInstanceDynamic>(SourceMaterial);
+    UMaterialInterface* ParentMaterial=SourceMaterial;
+    // UE permits a material or constant instance as a MID parent, but never another MID.
+    // HeldMesh already has a MID when its material is copied onto the procedural hand model.
+    while(auto* DynamicParent=Cast<UMaterialInstanceDynamic>(ParentMaterial)) {
+        UMaterialInterface* NextParent=DynamicParent->Parent;
+        if(!IsValid(NextParent) || NextParent==ParentMaterial) return nullptr;
+        ParentMaterial=NextParent;
+    }
+    auto* Result=UMaterialInstanceDynamic::Create(ParentMaterial,Outer);
+    if(Result && SourceDynamic) Result->CopyInterpParameters(SourceDynamic);
+    return Result;
+}
 FVector PosePosition(const BridgeCharacterMath::Pose& Pose) {return FVector(Pose.Position.X,Pose.Position.Y,Pose.Position.Z);}
 FQuat PoseRotation(const BridgeCharacterMath::Pose& Pose) {return FQuat(Pose.Rotation.X,Pose.Rotation.Y,Pose.Rotation.Z,Pose.Rotation.W).GetNormalized();}
 // Minecraft cuboid net: right/front/left/back across the middle, top/bottom above.
@@ -208,7 +223,7 @@ void ABridgeCharacter::ConfigureVisuals(UMaterialInterface* Material,UBridgeBloc
     if(!VisualsConfigured || VisualMaterial!=Material) {
         auto Tint=[&](UStaticMeshComponent* VisualMesh,const FColor& ColorValue) {
             UMaterialInterface* Base=Material ? Material : VisualMesh->GetMaterial(0);if(!Base) return;
-            auto* Dynamic=UMaterialInstanceDynamic::Create(Base,this);
+            auto* Dynamic=CreateVisualInstance(Base,this);if(!Dynamic) return;
             Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(ColorValue));
             VisualMesh->SetMaterial(0,Dynamic);
         };
@@ -220,9 +235,9 @@ void ABridgeCharacter::ConfigureVisuals(UMaterialInterface* Material,UBridgeBloc
         UMaterialInterface* ItemMaterial=Palette && !Block.IsEmpty() ? Palette->Find(Block) : nullptr;
         if(!ItemMaterial) ItemMaterial=Material ? Material : Hand->GetMaterial(0);
         if(ItemMaterial) {
-            auto* Dynamic=UMaterialInstanceDynamic::Create(ItemMaterial,this);
+            auto* Dynamic=CreateVisualInstance(ItemMaterial,this);
             const FColor ItemColor(Block.IsEmpty() ? 200 : ((Color>>16)&255),Block.IsEmpty() ? 180 : ((Color>>8)&255),Block.IsEmpty() ? 110 : (Color&255));
-            Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(ItemColor));HeldMesh->SetMaterial(0,Dynamic);
+            if(Dynamic) {Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(ItemColor));HeldMesh->SetMaterial(0,Dynamic);}
         }
     }
     VisualsConfigured=true;VisualMaterial=Material;VisualPalette=Palette;VisualItem=Item;VisualBlock=Block;VisualColor=Color;
@@ -395,10 +410,9 @@ void ABridgeCharacter::BuildHeldGeometry() {
         const auto& Section=Sections[Index];
         HeldModel->CreateMeshSection_LinearColor(Index,Section.Vertices,Section.Triangles,Section.Normals,Section.UV,Section.Colors,Section.Tangents,false);
         if(Section.Material) {
-            auto* Dynamic=UMaterialInstanceDynamic::Create(Section.Material,this);
+            auto* Dynamic=CreateVisualInstance(Section.Material,this);
             const FColor Color=VisualBlock.IsEmpty() ? FColor(200,180,110) : FColor((VisualColor>>16)&255,(VisualColor>>8)&255,VisualColor&255);
-            Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(Color));
-            HeldModel->SetMaterial(Index,Dynamic);
+            if(Dynamic) {Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(Color));HeldModel->SetMaterial(Index,Dynamic);}
         }
     }
     CacheHandGeometry(HeldModel);HeldGeometryReady=true;

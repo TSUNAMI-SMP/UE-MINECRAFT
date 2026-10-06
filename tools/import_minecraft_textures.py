@@ -148,10 +148,10 @@ def import_minecraft_textures(filename):
                 raise RuntimeError("Texture asset name is occupied by a different type")
             imported[identifier] = texture
 
-        parent_path = root + "/M_MinecraftFaces_v1"
+        parent_path = root + "/M_MinecraftFaces_v2"
         parent = unreal.load_asset(parent_path) if assets.does_asset_exist(parent_path) else None
         if parent is None:
-            parent = tools.create_asset("M_MinecraftFaces_v1", root, unreal.Material, unreal.MaterialFactoryNew())
+            parent = tools.create_asset("M_MinecraftFaces_v2", root, unreal.Material, unreal.MaterialFactoryNew())
             if parent is None:
                 raise RuntimeError("Cannot create texture master material")
             parent.set_editor_property("used_with_instanced_static_meshes", True)
@@ -205,6 +205,11 @@ def import_minecraft_textures(filename):
                 raise RuntimeError("Cannot save texture master material")
         elif not isinstance(parent, unreal.Material):
             raise RuntimeError("Master material path is occupied by a different type")
+        editing.recompile_material(parent)
+        required_textures = {face + "Texture" for face in ("Top", "Side", "Bottom")}
+        actual_textures = {str(name) for name in editing.get_texture_parameter_names(parent)}
+        if not required_textures.issubset(actual_textures):
+            raise RuntimeError("Texture master is incomplete: " + str(sorted(required_textures - actual_textures)))
         progress.enter_progress_frame(1, "Master material")
         palette_materials = {}
         for identifier, entry in manifest["blocks"].items():
@@ -212,7 +217,7 @@ def import_minecraft_textures(filename):
                 raise RuntimeError("Import cancelled; palette and level unchanged")
             progress.enter_progress_frame(1, identifier)
             content = {face: {"hash": manifest["textures"][entry[face]["texture"]]["sha256"], "tint": entry[face]["tint"]} for face in ("top", "side", "bottom")}
-            digest = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+            digest = hashlib.sha256(json.dumps({"master_version": 2, "faces": content}, sort_keys=True).encode()).hexdigest()
             name = asset_name("MI_", identifier, digest)
             folder = root + "/Materials"
             target = folder + "/" + name
@@ -221,16 +226,21 @@ def import_minecraft_textures(filename):
                 material = tools.create_asset(name, folder, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
                 if material is None:
                     raise RuntimeError("Cannot create block material")
-                editing.set_material_instance_parent(material, parent)
-                for face in ("top", "side", "bottom"):
-                    if not editing.set_material_instance_texture_parameter_value(material, face.title() + "Texture", imported[entry[face]["texture"]]):
-                        raise RuntimeError("Texture parameter missing")
-                    if not editing.set_material_instance_scalar_parameter_value(material, face.title() + "Tint", float(entry[face]["tint"])):
-                        raise RuntimeError("Tint parameter missing")
-                if not assets.save_loaded_asset(material, False):
-                    raise RuntimeError("Cannot save block material")
             elif not isinstance(material, unreal.MaterialInstanceConstant):
                 raise RuntimeError("Block material path is occupied by a different type")
+            # A failed previous attempt may have left an instance with only some parameters.
+            # Repair every instance rather than treating asset existence as import completion.
+            editing.set_material_instance_parent(material, parent)
+            editing.update_material_instance(material)
+            for face in ("top", "side", "bottom"):
+                parameter = face.title() + "Texture"
+                if not editing.set_material_instance_texture_parameter_value(material, parameter, imported[entry[face]["texture"]]):
+                    raise RuntimeError("Cannot set " + parameter + " for " + identifier)
+                if not editing.set_material_instance_scalar_parameter_value(material, face.title() + "Tint", float(entry[face]["tint"])):
+                    raise RuntimeError("Cannot set tint for " + identifier)
+            editing.update_material_instance(material)
+            if not assets.save_loaded_asset(material, False):
+                raise RuntimeError("Cannot save block material")
             palette_materials[identifier] = material
 
     palette_path = root + "/DA_MinecraftPalette"

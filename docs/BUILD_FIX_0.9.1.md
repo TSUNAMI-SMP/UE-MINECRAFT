@@ -1,5 +1,7 @@
 # UE 0.9.0のビルド修正パッチ0.9.1
 
+**現在は[累積修正パッチ0.9.2](BUILD_FIX_0.9.2.md)を使用してください。** 0.9.1のJSONキー変換で追加のビルドエラーが確認され、0.9.2で修正しています。0.9.1を適用済みの場合も0.9.2を上書きします。
+
 [修正パッチZIPをダウンロード](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/UEBridge-build-fix-0.9.1.zip)
 
 ユーザーのUE5.8ビルドログで確認された、次の4種類のエラーを修正します。

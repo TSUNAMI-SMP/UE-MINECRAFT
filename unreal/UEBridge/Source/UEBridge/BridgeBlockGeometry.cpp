@@ -36,9 +36,9 @@ bool MatchVariant(const FString& Key,const TMap<FString,FString>& State) {
 bool MatchWhen(const Object& When,const TMap<FString,FString>& State) {
     if(!When.IsValid()) return true;
     for(const auto& Pair:When->Values) {
-        // UE5.8 stores JSON keys as shared string views. Copy using their explicit
-        // length so lookups do not depend on implicit FString conversion or a NUL terminator.
-        const FString Key(Pair.Key.Len(),Pair.Key.GetData());
+        // UE5.8 JSON keys are TSharedString: operator* returns a NUL-terminated
+        // character pointer. This also works with the FString keys used by older UE versions.
+        const FString Key(*Pair.Key);
         if(Key==TEXT("OR") || Key==TEXT("AND")) {
             const TArray<TSharedPtr<FJsonValue>>* Terms=nullptr;
             if(!Pair.Value->TryGetArray(Terms) || Terms->IsEmpty()) return false;
@@ -195,7 +195,7 @@ bool UBridgeBlockPalette::BuildModel(const FString& BlockId,const FString& State
     const Object Variants=Child(Definition,TEXT("variants"));
     if(Variants.IsValid()) {
         for(const auto& Pair:Variants->Values) {
-            const FString Key(Pair.Key.Len(),Pair.Key.GetData());
+            const FString Key(*Pair.Key);
             if(MatchVariant(Key,StateProperties)) {Applications.Add(Choose(Pair.Value));break;}
         }
     }

@@ -126,9 +126,9 @@ bool ABridgeWorld::Aim(const FVector& Start,const FRotator& Rotation,float Reach
     const auto* PreviewActor=Cast<ABridgeBlockPreview>(Hit.GetActor());
     FBridgeBlock Shape;
     if(!PreviewActor || !PreviewActor->ResolveHit(Hit.GetComponent(),Hit.Item,Shape)) return false;
-    const FIntVector Owner=OwnerOf(Shape); const auto* Cell=Cells.Find(CellOf(Owner));
+    const FIntVector SourceVoxel=OwnerOf(Shape); const auto* Cell=Cells.Find(CellOf(SourceVoxel));
     if(!Cell || Cell->Get()!=PreviewActor) return false;
-    Block=Owner;Normal=Hit.ImpactNormal; return true;
+    Block=SourceVoxel;Normal=Hit.ImpactNormal; return true;
 }
 void ABridgeWorld::RebuildCell(const FIntVector& CellKey) {
     auto& Actor=Cells.FindOrAdd(CellKey);

@@ -36,10 +36,10 @@ ABridgeCharacter::ABridgeCharacter() {
     GetCharacterMovement()->GetNavAgentPropertiesRef().bCanCrouch=true;
     GetCharacterMovement()->DefaultLandMovementMode = MOVE_None;
     static ConstructorHelpers::FObjectFinder<UStaticMesh> Cube(TEXT("/Engine/BasicShapes/Cube.Cube"));
-    auto Prepare=[&](UStaticMeshComponent* Mesh,USceneComponent* Parent) {
-        Mesh->SetupAttachment(Parent);if(Cube.Succeeded()) Mesh->SetStaticMesh(Cube.Object);
-        Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);Mesh->SetCastShadow(false);
-        Mesh->SetCanEverAffectNavigation(false);Mesh->SetGenerateOverlapEvents(false);
+    auto Prepare=[&](UStaticMeshComponent* VisualMesh,USceneComponent* Parent) {
+        VisualMesh->SetupAttachment(Parent);if(Cube.Succeeded()) VisualMesh->SetStaticMesh(Cube.Object);
+        VisualMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);VisualMesh->SetCastShadow(false);
+        VisualMesh->SetCanEverAffectNavigation(false);VisualMesh->SetGenerateOverlapEvents(false);
     };
     Sleeve=CreateDefaultSubobject<UStaticMeshComponent>(TEXT("FirstPersonSleeve"));Prepare(Sleeve,BridgeCamera);
     Hand=CreateDefaultSubobject<UStaticMeshComponent>(TEXT("FirstPersonHand"));Prepare(Hand,BridgeCamera);
@@ -116,11 +116,11 @@ void ABridgeCharacter::Tick(float DeltaSeconds) {
 
 void ABridgeCharacter::ConfigureVisuals(UMaterialInterface* Material,UBridgeBlockPalette* Palette,const FString& Item,const FString& Block,int32 Color) {
     if(!VisualsConfigured || VisualMaterial!=Material) {
-        auto Tint=[&](UStaticMeshComponent* Mesh,const FColor& ColorValue) {
-            UMaterialInterface* Base=Material ? Material : Mesh->GetMaterial(0);if(!Base) return;
+        auto Tint=[&](UStaticMeshComponent* VisualMesh,const FColor& ColorValue) {
+            UMaterialInterface* Base=Material ? Material : VisualMesh->GetMaterial(0);if(!Base) return;
             auto* Dynamic=UMaterialInstanceDynamic::Create(Base,this);
             Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(ColorValue));
-            Mesh->SetMaterial(0,Dynamic);
+            VisualMesh->SetMaterial(0,Dynamic);
         };
         Tint(Sleeve,FColor(45,100,165));Tint(Hand,FColor(199,150,113));
         for(auto& Edge:AimEdges) Tint(Edge,FColor(12,12,12));

@@ -9,6 +9,12 @@ Minecraftは入力とHUD、UEは描画と判定を担当します。今回の変
 - GPUの非同期読み戻し、Minecraftへの画素一括コピー、全画面時のMinecraft 3D描画省略。
 - 映像設定を最大60fps・1080pまで拡張。入力からテクスチャ送出までの遅延と処理時間をstatusに表示。
 
+## UEビルド修正0.6.1
+
+0.6.0の配布ソースには、BridgeCharacter.cppとBridgeWorld.cppでC4458を起こす名前衝突があります。
+[修正パッチZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-build-fix-0.6.1.zip)の2ファイルを、0.6.0更新後に上書きして再ビルドしてください。
+[詳しい適用手順](BUILD_FIX_0.6.1.md)。MODは0.6.0のまま。元の0.6.0 ZIPにはこの修正が入っていません。
+
 ## ダウンロードと更新
 
 [MOD 0.6.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/minecraft-ue-bridge-0.6.0.jar)

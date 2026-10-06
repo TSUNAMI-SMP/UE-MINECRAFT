@@ -2,6 +2,8 @@
 
 ## 最新版 0.6.0
 
+**UEビルドには[修正パッチ0.6.1](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-build-fix-0.6.1.zip)も適用してください。** C4458のMesh/Owner名前衝突を修正。MOD0.6.0はそのまま。[適用手順](../docs/BUILD_FIX_0.6.1.md)。
+
 [MOD 0.6.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/minecraft-ue-bridge-0.6.0.jar)
 
 [UE更新ZIP 0.6.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-update-0.6.0.zip)

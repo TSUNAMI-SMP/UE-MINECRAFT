@@ -7,6 +7,7 @@
 #include "BridgeBlockPalette.h"
 #include "BridgePlayerAppearance.h"
 #include "BridgeVanillaEffects.h"
+#include "BridgeMobWorld.h"
 #include "Sockets.h"
 #include "SocketSubsystem.h"
 #include "IPAddress.h"
@@ -58,7 +59,7 @@ void ABridgeReceiver::BeginPlay() {
     int32 ActualBuffer; Socket->SetReceiveBufferSize(256 * 1024, ActualBuffer);
     VanillaEffects=GetWorld()->SpawnActor<ABridgeVanillaEffects>();
     if(IsValid(VanillaEffects)) Video->AddTickPrerequisiteActor(VanillaEffects);
-    UE_LOG(LogTemp, Display, TEXT("Bridge 0.8.0 listening on 127.0.0.1:%d"), Port);
+    UE_LOG(LogTemp, Display, TEXT("Bridge 0.9.0 listening on 127.0.0.1:%d"), Port);
     Video->Start(VideoPort);
     if (!TargetCharacter) UE_LOG(LogTemp, Warning, TEXT("Bridge: waiting for player Character; will retry every tick"));
     if (!ExplosionSystem) UE_LOG(LogTemp, Warning, TEXT("Bridge: ExplosionSystem is unset; Niagara will not play"));
@@ -67,6 +68,7 @@ void ABridgeReceiver::EndPlay(const EEndPlayReason::Type Reason) {
     if (IsValid(Preview)) Preview->Destroy();
     if (IsValid(SyncedWorld)) SyncedWorld->Destroy();
     if (IsValid(VanillaEffects)) VanillaEffects->Destroy();
+    if(IsValid(MobWorld)) MobWorld->Destroy();
     PendingFeedback.Empty();
     for (auto& Arrow : Arrows) if (IsValid(Arrow)) Arrow->Destroy();
     if (Socket) { Socket->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Socket); Socket = nullptr; }
@@ -109,14 +111,15 @@ void ABridgeReceiver::Tick(float DeltaSeconds) {
     if (!Connected) { ForwardInput = RightInput = 0; JumpHeld = false; }
     if(auto* Bridge=Cast<ABridgeCharacter>(TargetCharacter)) {
         UEControl=Connected && Sealed && LatestInput.Controller;
-        Bridge->SetAuthorityEnabled(UEControl);
+        const bool Alive=!IsValid(MobWorld) || MobWorld->PlayerHealth>0;
+        Bridge->SetAuthorityEnabled(UEControl && Alive);
         Bridge->ConfigureVisuals(PreviewMaterial,TexturePalette,LatestInput.HeldItem,LatestInput.HeldBlock,LatestInput.HeldColor);
         Bridge->ConfigureAppearance(PlayerAppearance);
         Bridge->SetMinecraftFov(float(LatestInput.CameraFov));
         Bridge->ApplyPlayerVisuals(LatestInput.Perspective,float(LatestInput.SwingProgress),float(LatestInput.EquipProgress),LatestInput.UsingItem,
             LatestInput.UseAction,float(LatestInput.UseProgress),LatestInput.LeftHanded,LatestInput.SkinLayers,LatestInput.SlimArms);
         Bridge->SetInteractionWorld(SyncedWorld);
-        if(UEControl) {
+        if(UEControl && Alive) {
             if(auto* C=Bridge->GetController()) C->SetControlRotation(BridgeProtocol::ToRotation(LatestInput.Yaw,LatestInput.Pitch));
             Bridge->ApplyUEInput(ForwardInput,RightInput,JumpHeld,SneakHeld,LatestInput.Sprint);
         }
@@ -131,6 +134,7 @@ void ABridgeReceiver::Tick(float DeltaSeconds) {
             } else VanillaEffects->ResetMovement();
         }
     } else UEControl=false;
+    if(IsValid(MobWorld)) {MobWorld->Palette=MobPalette;MobWorld->SetAuthority(UEControl,TargetCharacter);}
     PumpFeedback(Now);
     if(Sealed && Peer.IsValid() && (LastPose<0 || Now-LastPose>=1.0/60)) { LastPose=Now; SendPose(); }
     Video->SetSource(TargetCharacter ? TargetCharacter->FindComponentByClass<UCameraComponent>() : nullptr, Connected ? Session : FString(),LastSequence);
@@ -173,6 +177,41 @@ void ABridgeReceiver::Process(const FBridgePacket& P, const TSharedRef<FInternet
         const FVector Position = BridgeProtocol::ToUnreal(P.Position, Anchor);
         switch (P.Kind) {
             case EBridgeKind::BlockAction: BlockAction(P);break;
+            case EBridgeKind::MobSpawn: {
+                if(!IsValid(SyncedWorld) || !SyncedWorld->IsSealed() || SyncedWorld->GetImportId()!=P.ImportId || !UEControl) return;
+                if(!IsValid(MobWorld)) {
+                    MobWorld=GetWorld()->SpawnActor<ABridgeMobWorld>();
+                    if(!IsValid(MobWorld)) return;
+                    MobWorld->Sound=[this](const FString& Sound,const FVector& Location){QueueMobSound(Sound,Location);};
+                    Video->AddTickPrerequisiteActor(MobWorld);
+                }
+                MobWorld->Palette=MobPalette;
+                if(!MobWorld->Import(P.Mob,Anchor)) return;
+                break;
+            }
+            case EBridgeKind::MobClear:
+                if(!IsValid(SyncedWorld) || SyncedWorld->GetImportId()!=P.ImportId) return;
+                if(IsValid(MobWorld)) MobWorld->Clear();
+                break;
+            case EBridgeKind::PlayerRespawn: {
+                auto* Character=Cast<ABridgeCharacter>(TargetCharacter);
+                if(!UEControl || !Character || !IsValid(MobWorld) || MobWorld->PlayerHealth>0 || !IsValid(SyncedWorld)
+                    || SyncedWorld->GetImportId()!=P.ImportId) return;
+                FCollisionQueryParams Query(SCENE_QUERY_STAT(BridgeRespawn),false,Character);
+                const float Half=Character->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+                const float Radius=Character->GetCapsuleComponent()->GetScaledCapsuleRadius();
+                bool Restored=false;
+                for(int32 Step=0;Step<4;++Step) {
+                    const FVector Spawn=Anchor+FVector(0,0,Half+3+Step*100);
+                    if(!GetWorld()->OverlapBlockingTestByChannel(Spawn,FQuat::Identity,ECC_Pawn,FCollisionShape::MakeCapsule(Radius,Half),Query)) {
+                        Character->SetActorLocation(Spawn,false,nullptr,ETeleportType::TeleportPhysics);
+                        Character->GetCharacterMovement()->StopMovementImmediately();
+                        MobWorld->RespawnPlayer();Restored=true;break;
+                    }
+                }
+                LastAction=Restored ? TEXT("respawned") : TEXT("respawn point blocked; remove obstruction in UE");
+                break;
+            }
             case EBridgeKind::Tnt: if(!UEControl) Explode(Position); break;
             case EBridgeKind::Bow: {
                 if(UEControl) break;
@@ -190,8 +229,13 @@ void ABridgeReceiver::Process(const FBridgePacket& P, const TSharedRef<FInternet
             case EBridgeKind::ClearPreview: if (P.Sequence >= PreviewGeneration) ClearPreview(P.Sequence); break;
             case EBridgeKind::VideoConfig:
                 Video->Width=P.VideoWidth; Video->Height=P.VideoHeight; Video->FramesPerSecond=P.VideoFps;
-                Video->Quality=P.VideoQuality; Video->ExposureCompensation=float(P.VideoExposure); break;
+                Video->Quality=P.VideoQuality; Video->ExposureCompensation=float(P.VideoExposure);
+                Video->SetRenderMode(P.Lighting,P.VanillaSky);
+                if(IsValid(VanillaEffects)) VanillaEffects->ConfigureParticleTuning(float(P.ParticleScale),float(P.ParticleDensity),float(P.ParticleLifetime));
+                break;
             case EBridgeKind::WorldBegin: {
+                Video->SetMinecraftOrigin(P.MinecraftOrigin,Anchor);
+                if(IsValid(MobWorld)) MobWorld->Clear();
                 if(!Cast<ABridgeCharacter>(TargetCharacter)) return;
                 if(!IsValid(SyncedWorld)) SyncedWorld=GetWorld()->SpawnActor<ABridgeWorld>();
                 if(!SyncedWorld) return;
@@ -239,7 +283,21 @@ void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
     Reply->SetBoolField(TEXT("cameraReady"), Camera && Camera->IsActive() && TargetCharacter->GetController());
     Reply->SetBoolField(TEXT("vfxReady"), IsValid(ExplosionSystem)); Reply->SetNumberField(TEXT("walls"), Walls);
     Reply->SetNumberField(TEXT("previewBlocks"), PreviewBlocks);
-    Reply->SetStringField(TEXT("build"),TEXT("0.8.0"));
+    Reply->SetStringField(TEXT("build"),TEXT("0.9.0"));
+    Reply->SetBoolField(TEXT("blockModelsV2"),true); Reply->SetBoolField(TEXT("videoV3"),true);
+    Reply->SetBoolField(TEXT("blockPaletteReady"),IsValid(TexturePalette) && !TexturePalette->BlockstateDefinitions.IsEmpty()
+        && !TexturePalette->StateShapes.IsEmpty() && !TexturePalette->FaceMaterials.IsEmpty());
+    Reply->SetBoolField(TEXT("skySupported"),true);
+    Reply->SetBoolField(TEXT("lightingEnabled"),Video->IsLightingEnabled());
+    Reply->SetBoolField(TEXT("vanillaSkyEnabled"),Video->IsVanillaSkyEnabled());
+    Reply->SetNumberField(TEXT("maskPixels"),Video->GetMaskPixels());
+    Reply->SetNumberField(TEXT("maskForeground"),Video->GetMaskForegroundPixels());
+    Reply->SetNumberField(TEXT("maskTranslucent"),Video->GetMaskTranslucentPixels());
+    Reply->SetBoolField(TEXT("mobsV1"),true);Reply->SetBoolField(TEXT("mobPaletteReady"),IsValid(MobPalette));
+    Reply->SetNumberField(TEXT("mobCount"),IsValid(MobWorld) ? MobWorld->AliveCount() : 0);
+    Reply->SetNumberField(TEXT("mobMissing"),IsValid(MobWorld) ? MobWorld->MissingAppearance : 0);
+    Reply->SetNumberField(TEXT("uePlayerHealth"),IsValid(MobWorld) ? MobWorld->PlayerHealth : 20);
+    Reply->SetStringField(TEXT("mobReason"),IsValid(MobWorld) ? MobWorld->LastReason : TEXT("not_imported"));
     Reply->SetStringField(TEXT("receiverId"),InstanceId);
     Reply->SetBoolField(TEXT("worldV1"),true); Reply->SetBoolField(TEXT("videoV1"),true);
     Reply->SetBoolField(TEXT("blockTexturesV1"),true); Reply->SetBoolField(TEXT("videoControlsV1"),true);
@@ -274,6 +332,7 @@ void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
     Reply->SetNumberField(TEXT("textureMaterials"),TexturePalette ? TexturePalette->Materials.Num() : 0);
     Reply->SetNumberField(TEXT("worldCells"),SyncedWorld ? SyncedWorld->CellCount() : 0);
     Reply->SetNumberField(TEXT("worldShapes"),SyncedWorld ? SyncedWorld->ShapeCount() : 0);
+    Reply->SetStringField(TEXT("blockModelError"),SyncedWorld ? SyncedWorld->GetModelError().Left(160) : FString());
     Reply->SetBoolField(TEXT("videoReady"),Video->Streaming); SendJson(Reply, Sender);
 }
 void ABridgeReceiver::ClearPreview(uint64 Generation) {
@@ -349,13 +408,18 @@ void ABridgeReceiver::BlockAction(const FBridgePacket& P) {
     if(P.Sequence<=LastActionSequence) return;
     LastActionSequence=P.Sequence;
     if(!Character || !UEControl || !Connected || Now-LastInput>.25 || !IsValid(SyncedWorld) || P.ImportId!=SyncedWorld->GetImportId()) {LastAction=TEXT("controller not ready");return;}
+    if(IsValid(MobWorld) && MobWorld->PlayerHealth<=0) {LastAction=TEXT("player dead; /uebridge respawn");return;}
     if(LastActionAt>=0 && Now-LastActionAt<.08) {LastAction=TEXT("rate limited");return;}
     LastActionAt=Now;Character->SwingHand();
     FVector EyePosition;FRotator EyeRotation;Character->GetEyeAim(EyePosition,EyeRotation);
-    FIntVector Block;FVector Normal;
-    if(!SyncedWorld->Aim(EyePosition,BridgeProtocol::ToRotation(P.Yaw,P.Pitch),500.f,Block,Normal,Character)) {LastAction=TEXT("no imported block in reach");return;}
+    if(P.Action==TEXT("break") && IsValid(MobWorld) && MobWorld->Attack(EyePosition,BridgeProtocol::ToRotation(P.Yaw,P.Pitch).Vector())) {
+        LastAction=TEXT("mob attacked");return;
+    }
+    FIntVector Block;FVector Normal,HitPoint;
+    if(!SyncedWorld->Aim(EyePosition,BridgeProtocol::ToRotation(P.Yaw,P.Pitch),500.f,Block,Normal,Character,&HitPoint)) {LastAction=TEXT("no imported block in reach");return;}
     if(P.Action==TEXT("break")) {
         FString BrokenId;FColor BrokenTint;const bool Known=SyncedWorld->GetBlockInfo(Block,BrokenId,BrokenTint);
+        TArray<FBox> DustBoxes;SyncedWorld->GetBlockOutline(Block,DustBoxes);
         const FVector Center=SyncedWorld->BlockCenter(Block);
         const bool Broken=SyncedWorld->BreakBlock(Block);LastAction=Broken ? TEXT("broken") : TEXT("no block");
         if(Broken && Known) {
@@ -365,17 +429,25 @@ void ABridgeReceiver::BlockAction(const FBridgePacket& P) {
                 // the current local palette/material even for the first break event.
                 VanillaEffects->Configure(SyncedWorld,TexturePalette,VanillaParticleMaterial);
                 VanillaEffects->SetViewCamera(Character->BridgeCamera);
-                VanillaEffects->SpawnBreak(Center,BrokenId,BrokenTint);
+                VanillaEffects->SpawnBreak(Center,BrokenId,BrokenTint,DustBoxes);
             }
         }
         return;
     }
-    if(P.HeldBlock.IsEmpty()) {LastAction=TEXT("select a full cube block");return;}
+    if(!P.Sneak && SyncedWorld->UseBlock(Block)) {LastAction=TEXT("block used");return;}
+    if(P.HeldBlock.IsEmpty()) {LastAction=TEXT("select a supported block");return;}
+    FString HitId,HitState;
+    if(P.HeldBlock.EndsWith(TEXT("_slab")) && SyncedWorld->GetBlockState(Block,HitId,HitState) && HitId==P.HeldBlock
+        && ((HitState.Contains(TEXT("type=bottom")) && Normal.Z>.5) || (HitState.Contains(TEXT("type=top")) && Normal.Z<-.5))) {
+        LastAction=SyncedWorld->PlaceBlock(Block,P.HeldBlock,P.HeldColor,P.Yaw,Normal,HitPoint);
+        if(LastAction==TEXT("placed")) QueueFeedback(TEXT("place"),P.HeldBlock,SyncedWorld->BlockCenter(Block));
+        return;
+    }
     const FVector MinecraftNormal(-Normal.Y,Normal.Z,Normal.X);
     int32 Axis=0;if(FMath::Abs(MinecraftNormal.Y)>FMath::Abs(MinecraftNormal.X)) Axis=1;
     if(FMath::Abs(MinecraftNormal.Z)>FMath::Abs(MinecraftNormal[Axis])) Axis=2;
     FIntVector Adjacent=Block;Adjacent[Axis]+=MinecraftNormal[Axis]>=0 ? 1 : -1;
-    LastAction=SyncedWorld->PlaceBlock(Adjacent,P.HeldBlock,P.HeldColor);
+    LastAction=SyncedWorld->PlaceBlock(Adjacent,P.HeldBlock,P.HeldColor,P.Yaw,Normal,HitPoint);
     if(LastAction==TEXT("placed")) QueueFeedback(TEXT("place"),P.HeldBlock,SyncedWorld->BlockCenter(Adjacent));
 }
 
@@ -403,4 +475,18 @@ void ABridgeReceiver::PumpFeedback(double Now) {
             SendJson(Effect.Json.ToSharedRef(),Peer.ToSharedRef());Effect.Sent=Now;
         }
     }
+}
+void ABridgeReceiver::QueueMobSound(const FString& Sound,const FVector& Position) {
+    auto* Character=Cast<ABridgeCharacter>(TargetCharacter);
+    if(!Character || !Connected || !UEControl || !Peer.IsValid() || PendingFeedback.Num()>=64 || Sound.IsEmpty()) return;
+    FMinimalViewInfo View;Character->BridgeCamera->GetCameraView(0,View);
+    const FVector Delta=(Position-View.Location)/100;const FRotationMatrix Basis(View.Rotation);
+    const FString Id=FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
+    auto Reply=MakeShared<FJsonObject>();Reply->SetNumberField(TEXT("v"),1);Reply->SetStringField(TEXT("kind"),TEXT("mob_feedback"));
+    Reply->SetStringField(TEXT("session"),Session);Reply->SetStringField(TEXT("receiverId"),InstanceId);Reply->SetStringField(TEXT("effectId"),Id);
+    Reply->SetNumberField(TEXT("seq"),double(LastSequence));Reply->SetStringField(TEXT("type"),TEXT("mob"));Reply->SetStringField(TEXT("sound"),Sound);
+    Reply->SetNumberField(TEXT("lx"),FVector::DotProduct(Delta,Basis.GetUnitAxis(EAxis::Y)));
+    Reply->SetNumberField(TEXT("ly"),FVector::DotProduct(Delta,Basis.GetUnitAxis(EAxis::Z)));
+    Reply->SetNumberField(TEXT("lz"),FVector::DotProduct(Delta,Basis.GetUnitAxis(EAxis::X)));
+    PendingFeedback.Add(Id,FPendingFeedback{Reply,FPlatformTime::Seconds(),-1});
 }

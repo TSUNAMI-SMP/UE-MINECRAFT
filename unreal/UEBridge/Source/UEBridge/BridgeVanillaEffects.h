@@ -19,6 +19,7 @@ struct FBridgeDustDiagnostics {
     uint64 Requested=0, Spawned=0, Rejected=0;
     FString Reason=TEXT("missing_material"), LastType, LastBlock, LastReason=TEXT("none");
     int32 LastRequested=0, LastSpawned=0;
+    float SizeMultiplier=.75f,DensityMultiplier=1.f,LifetimeMultiplier=.9f;
 };
 
 /** Terrain-textured dust, with Minecraft's 20 Hz lifetime/drag and UE collision. */
@@ -33,7 +34,11 @@ public:
     void SetViewCamera(class UCameraComponent* Camera);
     void SampleCharacter(class ABridgeCharacter* Character,float DeltaSeconds,TArray<FBridgeVanillaEvent>& OutEvents);
     void ResetMovement();
-    void SpawnBreak(const FVector& Center,const FString& BlockId,FColor Tint);
+    void SpawnBreak(const FVector& Center,const FString& BlockId,FColor Tint,const TArray<FBox>& MinecraftShapeBoxes=TArray<FBox>());
+    void ConfigureParticleTuning(float SizeMultiplier,float DensityMultiplier,float LifetimeMultiplier);
+    UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="Bridge|Particles",meta=(ClampMin="0.25",ClampMax="2.0")) float ParticleSizeMultiplier=.75f;
+    UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="Bridge|Particles",meta=(ClampMin="0.0",ClampMax="1.0")) float ParticleDensityMultiplier=1.f;
+    UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="Bridge|Particles",meta=(ClampMin="0.25",ClampMax="2.0")) float ParticleLifetimeMultiplier=.9f;
     int32 ParticleCount() const { return Particles.Num(); }
     FBridgeDustDiagnostics GetDiagnostics() const;
 private:
@@ -55,6 +60,7 @@ private:
     bool HaveMovementSample=false, WasGrounded=false;
     FVector PreviousFeet=FVector::ZeroVector;
     float WalkDistance=0, FallPeak=0, SprintClock=0, PhysicsClock=0;
+    double SprintDensityAccumulator=0;
     FBridgeDustDiagnostics Diagnostics;
     bool Configured=false;
     double LastFailureLog=-1;

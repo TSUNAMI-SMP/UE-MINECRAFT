@@ -185,7 +185,7 @@ def _latest_export(game_dir, prefix, command):
 
 
 def setup_minecraft_visuals(game_dir):
-    """Import the newest local block textures + own skin; never import/modify a world."""
+    """Import newest local blocks/skin plus an optional mob export; preserve saved content."""
     import runpy
     import unreal
     project = pathlib.Path(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()))
@@ -196,6 +196,16 @@ def setup_minecraft_visuals(game_dir):
     textures_manifest = _latest_export(game_dir, "textures", "/uebridge textures export")
     player_manifest = _latest_export(game_dir, "player", "/uebridge player export")
     textures_functions = runpy.run_path(str(textures_script))
+    mobs_script = project / "import_minecraft_mobs.py"
+    mob_exports = list((pathlib.Path(game_dir).expanduser().resolve() / "uebridge-export").glob("mobs-*/manifest.json"))
+    mobs_functions = None
+    mobs_manifest = None
+    if mob_exports:
+        if not mobs_script.is_file():
+            raise RuntimeError("Copy import_minecraft_mobs.py next to UEBridge.uproject first")
+        mobs_manifest = max(mob_exports, key=lambda path: path.stat().st_mtime_ns)
+        mobs_functions = runpy.run_path(str(mobs_script))
+        mobs_functions["load_mob_manifest"](str(mobs_manifest))
     # An incomplete/bad player export must not leave a half-updated texture palette.
     textures_functions["load_texture_manifest"](str(textures_manifest))
     load_player_manifest(str(player_manifest))
@@ -203,4 +213,8 @@ def setup_minecraft_visuals(game_dir):
     unreal.log("Minecraft player export: " + str(player_manifest))
     textures_functions["import_minecraft_textures"](str(textures_manifest))
     import_minecraft_player(str(player_manifest))
+    if mobs_functions is not None:
+        mobs_functions["import_minecraft_mobs"](str(mobs_manifest))
+    else:
+        unreal.log("No local mob export. Spawn nearby mobs and run /uebridge mobs export, then import their latest assets before starting UE control.")
     unreal.log("Minecraft visuals ready. Block textures, your skin, and vanilla particles are assigned to the saved current level.")

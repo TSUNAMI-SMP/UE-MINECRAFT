@@ -1,6 +1,7 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "ProceduralMeshComponent.h"
 #include "BridgeCharacter.generated.h"
 
 UCLASS()
@@ -30,6 +31,7 @@ public:
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") float BridgeEyeHeightCm = 162;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") float BridgeFloorGapCm = 0;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") float BridgeVerticalFov = 80;
+    UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") float BridgeHandVerticalFov = 70;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") float BridgeBodyYaw = 0;
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly) TObjectPtr<class UCameraComponent> BridgeCamera;
 protected:
@@ -49,6 +51,19 @@ private:
     UPROPERTY() TArray<TObjectPtr<class UProceduralMeshComponent>> AvatarLayers;
     UPROPERTY() TObjectPtr<class UProceduralMeshComponent> SkinArm;
     UPROPERTY() TObjectPtr<class UProceduralMeshComponent> SkinSleeve;
+    UPROPERTY() TObjectPtr<class UProceduralMeshComponent> ProjectedSleeve;
+    UPROPERTY() TObjectPtr<class UProceduralMeshComponent> ProjectedHand;
+    UPROPERTY() TObjectPtr<class UProceduralMeshComponent> HeldModel;
+    // Small immutable model sections. The projected vertices are rebuilt from
+    // these sources, never from the previous frame's already deformed geometry.
+    struct FHandSection {
+        TArray<FVector> Positions,Normals;
+        TArray<FVector2D> UV;
+        TArray<FLinearColor> Colors;
+        TArray<FProcMeshTangent> Tangents;
+    };
+    TMap<UProceduralMeshComponent*,TArray<FHandSection>> HandSources;
+    bool HeldGeometryReady=false;
     FString VisualItem, VisualBlock;
     int32 VisualColor=-1;
     bool VisualsConfigured=false;
@@ -60,6 +75,9 @@ private:
     bool PlayerUsingItem=false,PlayerLeftHanded=false,PlayerSlim=false,HasPlayerVisuals=false,AvatarGeometryReady=false;
     FString PlayerUseAction;
     void BuildAvatarGeometry();
+    void BuildHeldGeometry();
+    void CacheHandGeometry(UProceduralMeshComponent* Part);
+    void PoseHandGeometry(UProceduralMeshComponent* Part,const FTransform& Pose,bool FixedHandFov);
     void UpdatePlayerCamera();
     void UpdateAvatar(float Bob);
     float GetFloorGapCm() const;

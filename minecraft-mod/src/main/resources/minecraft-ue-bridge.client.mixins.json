@@ -9,6 +9,13 @@
     "ControllerPlayerMixin",
     "ControllerInteractionMixin",
     "VideoWorldRenderMixin",
+    "BridgeCameraAccessor",
+    "VanillaSkyWorldMixin",
+    "VanillaSkyOverlayMixin",
+    "ModelPartMobAccessor",
+    "LivingEntityMobAccessor",
+    "AgeableMobModelAccessor",
+    "MobAuthorityMixin",
     "HeldItemRendererAccessor",
     "LivingEntityVisualAccessor"
   ],

@@ -100,29 +100,53 @@ public final class WorldSync {
             if (!mc.world.isChunkLoaded(x >> 4, z >> 4)) continue;
             BlockPos p = new BlockPos(x,y,z); var state = mc.world.getBlockState(p);
             if (state.isAir()) continue;
+            // Signs, fluids, dedicated block-entity renderers and special mechanics
+            // are explicitly outside this import, never silently converted to cubes.
+            if(!BlockGeometryCapture.supported(state)) continue;
             boolean buried = state.isOpaqueFullCube();
             if (buried) for (Direction d : Direction.values()) if (!mc.world.getBlockState(p.offset(d)).isOpaqueFullCube()) { buried = false; break; }
             if (buried && !initial) continue;
-            var collisionShape=state.getCollisionShape(mc.world,p);
-            boolean collision=initial && !collisionShape.isEmpty();
-            List<Box> boxes = (collision ? collisionShape : state.getOutlineShape(mc.world,p)).getBoundingBoxes();
-            if (boxes.isEmpty() && !state.getFluidState().isEmpty()) boxes = List.of(new Box(0,0,0,1,state.getFluidState().getHeight(mc.world,p),1));
             int color = state.getMapColor(mc.world, p).color & 0xffffff;
+            int tint=mc.getBlockColors().getColor(state,mc.world,p,0); if(tint!=-1) color=tint & 0xffffff;
             String blockId=Registries.BLOCK.getId(state.getBlock()).toString();
             if(blockId.length()>128) blockId="uebridge:unknown";
-            for (Box b : boxes) {
+            if(!transport.blockModelsSupported()) {
+                var nativeShape=state.getCollisionShape(mc.world,p);boolean collision=initial && !nativeShape.isEmpty();
+                for(Box b:(collision ? nativeShape : state.getOutlineShape(mc.world,p)).getBoundingBoxes()) {
+                    double sx=b.maxX-b.minX,sy=b.maxY-b.minY,sz=b.maxZ-b.minZ;
+                    if(sx<=0 || sy<=0 || sz<=0 || sx>4 || sy>4 || sz>4 || shapes.size()>=WorldSnapshot.MAX_SHAPES) continue;
+                    shapes.add(new WorldSnapshot.Shape(x+(b.minX+b.maxX)/2-origin.x,y+(b.minY+b.maxY)/2-origin.y,
+                        z+(b.minZ+b.maxZ)/2-origin.z,color,sx,sy,sz,blockId,collision,x,y,z));
+                }
+                continue;
+            }
+            String stateKey=BlockGeometryCapture.stateKey(state);
+            if(shapes.size()>=WorldSnapshot.MAX_SHAPES) break;
+            // Visual geometry comes from the actual blockstate model, not its physics hull.
+            var modelOffset=state.getModelOffset(p);
+            shapes.add(new WorldSnapshot.Shape(x+.5+modelOffset.x-origin.x,y+.5+modelOffset.y-origin.y,z+.5+modelOffset.z-origin.z,color,1,1,1,blockId,false,x,y,z,stateKey,1));
+            if(!initial) continue;
+            List<Box> collisionBoxes=state.getCollisionShape(mc.world,p).getBoundingBoxes(),outlineBoxes=state.getOutlineShape(mc.world,p).getBoundingBoxes();
+            for(int role:new int[]{2,3}) {
+            // Identical collision/selection hulls (ordinary full blocks) need one
+            // hidden proxy. The receiver enables Visibility when no role3 is present.
+            if(role==3 && outlineBoxes.equals(collisionBoxes)) continue;
+            for (Box b : role==2 ? collisionBoxes : outlineBoxes) {
                 double sx=b.maxX-b.minX, sy=b.maxY-b.minY, sz=b.maxZ-b.minZ;
                 if (sx <= 0 || sy <= 0 || sz <= 0 || sx > 4 || sy > 4 || sz > 4) continue;
                 if (shapes.size() >= WorldSnapshot.MAX_SHAPES) break;
                 shapes.add(new WorldSnapshot.Shape(x+(b.minX+b.maxX)/2-origin.x, y+(b.minY+b.maxY)/2-origin.y,
-                        z+(b.minZ+b.maxZ)/2-origin.z, color, sx,sy,sz,blockId,collision,x,y,z));
+                        z+(b.minZ+b.maxZ)/2-origin.z, color, sx,sy,sz,blockId,role==2,x,y,z,stateKey,role));
+            }
             }
         }
         if (index < 512) return;
         String fingerprint=WorldSnapshot.fingerprint(shapes);
         if (!fingerprint.equals(confirmed.get(sampling))) {
             sending = sampling; sentFingerprint = fingerprint; generation = 0;
-            expiredAtStart = transport.diagnostics().expired(); outgoing.addAll(WorldSnapshot.encode(sending, shapes,transport.diagnostics().texturesSupported(),initial,transport.actionsSupported()));
+            expiredAtStart = transport.diagnostics().expired();
+            outgoing.addAll(transport.blockModelsSupported() ? WorldSnapshot.encode(sending,shapes,true,true,true)
+                : WorldSnapshot.encode(sending,shapes,transport.diagnostics().texturesSupported(),initial,transport.actionsSupported()));
         }
         sampling = null; shapes = null;
     }

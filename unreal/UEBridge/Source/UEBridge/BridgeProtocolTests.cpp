@@ -97,9 +97,51 @@ bool FBridgeVideoConfigTest::RunTest(const FString& Parameters) {
     P->SetNumberField(TEXT("fps"),20); P->SetNumberField(TEXT("quality"),85); P->SetNumberField(TEXT("exposure"),1);
     TestTrue(TEXT("Quality configuration"),BridgeProtocol::Parse(P,Out));
     TestEqual(TEXT("Width"),Out.VideoWidth,960); TestEqual(TEXT("Exposure"),Out.VideoExposure,1.0);
+    P->SetBoolField(TEXT("lighting"),false);P->SetBoolField(TEXT("vanillaSky"),true);
+    TestTrue(TEXT("Unlit native sky"),BridgeProtocol::Parse(P,Out));TestTrue(TEXT("Sky flag"),Out.VanillaSky);
+    P->SetBoolField(TEXT("lighting"),true);TestFalse(TEXT("Lit sky mode is contradictory"),BridgeProtocol::Parse(P,Out));
+    P->SetBoolField(TEXT("lighting"),false);P->SetStringField(TEXT("vanillaSky"),TEXT("true"));
+    TestFalse(TEXT("Typed sky flag"),BridgeProtocol::Parse(P,Out));P->SetBoolField(TEXT("vanillaSky"),true);
+    P->SetNumberField(TEXT("particleScale"),0);TestFalse(TEXT("Particle scale bound"),BridgeProtocol::Parse(P,Out));
+    P->SetNumberField(TEXT("particleScale"),.75);
     P->SetNumberField(TEXT("fps"),61); TestFalse(TEXT("FPS bound"),BridgeProtocol::Parse(P,Out));
     P->SetNumberField(TEXT("fps"),20); P->SetStringField(TEXT("exposure"),TEXT("1"));
     TestFalse(TEXT("Typed exposure"),BridgeProtocol::Parse(P,Out));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeModelRowsTest, "UEBridge.Protocol.ModelRows", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBridgeModelRowsTest::RunTest(const FString& Parameters) {
+    const FString Text=TEXT("{\"v\":1,\"kind\":\"event\",\"session\":\"00000000-0000-4000-8000-000000000001\",\"seq\":5,\"eventId\":\"00000000-0000-4000-8000-000000000002\",\"event\":\"world_cell_physics\",\"cellX\":0,\"cellY\":0,\"cellZ\":0,\"x\":0,\"y\":0,\"z\":0,\"snapshotId\":\"00000000-0000-4000-8000-000000000003\",\"snapshotSeq\":3,\"batchIndex\":0,\"totalBatches\":8192,\"blocks\":[[1.5,2.5,3.5,16777215,1,1,1,\"minecraft:oak_stairs\",false,1,2,3,\"facing=east,half=bottom,shape=straight,waterlogged=false\",1]]}");
+    FBridgePacket Out;TestTrue(TEXT("Baked model row"),BridgeProtocol::Parse(PacketJson(Text),Out));
+    TestTrue(TEXT("State and role preserved"),Out.Blocks.Num()==1 && Out.Blocks[0].Role==1 && Out.Blocks[0].StateKey.Contains(TEXT("facing=east")));
+    TestFalse(TEXT("Cross-cell owner rejected"),BridgeProtocol::Parse(PacketJson(Text.Replace(TEXT("false,1,2,3"),TEXT("false,8,2,3"))),Out));
+    TestFalse(TEXT("State cannot contain path"),BridgeProtocol::Parse(PacketJson(Text.Replace(TEXT("facing=east"),TEXT("facing=../east"))),Out));
+    TestFalse(TEXT("Render row cannot collide"),BridgeProtocol::Parse(PacketJson(Text.Replace(TEXT("false,1,2,3"),TEXT("true,1,2,3"))),Out));
+    TestFalse(TEXT("Unknown role"),BridgeProtocol::Parse(PacketJson(Text.Replace(TEXT("false\",1]]"),TEXT("false\",4]]"))),Out));
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeMobPacketsTest, "UEBridge.Protocol.MobPackets", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBridgeMobPacketsTest::RunTest(const FString& Parameters) {
+    auto P=PacketJson(Input);FBridgePacket Out;
+    P->SetStringField(TEXT("kind"),TEXT("event"));P->SetStringField(TEXT("event"),TEXT("mob_spawn"));
+    P->SetStringField(TEXT("eventId"),TEXT("00000000-0000-4000-8000-000000000002"));
+    P->SetStringField(TEXT("importId"),TEXT("00000000-0000-4000-8000-000000000003"));
+    P->SetStringField(TEXT("mobId"),TEXT("ABCDEF01-2345-4678-9ABC-DEF012345678"));
+    P->SetStringField(TEXT("mobType"),TEXT("minecraft:zombie"));
+    P->SetStringField(TEXT("appearance"),FString::ChrN(64,TCHAR('a')));
+    P->SetNumberField(TEXT("width"),.6);P->SetNumberField(TEXT("height"),1.95);
+    P->SetNumberField(TEXT("health"),20);P->SetNumberField(TEXT("maxHealth"),20);
+    P->SetNumberField(TEXT("speed"),.23);P->SetNumberField(TEXT("damage"),3);
+    P->SetBoolField(TEXT("hostile"),true);P->SetBoolField(TEXT("baby"),false);
+    TestTrue(TEXT("Native mob snapshot and uppercase UUID"),BridgeProtocol::Parse(P,Out));
+    TestTrue(TEXT("Mob type and dimensions retained"),Out.Kind==EBridgeKind::MobSpawn && Out.Mob.Type==TEXT("minecraft:zombie") && FMath::IsNearlyEqual(Out.Mob.Height,1.95f));
+    P->SetNumberField(TEXT("health"),21);TestFalse(TEXT("Health exceeds maximum"),BridgeProtocol::Parse(P,Out));P->SetNumberField(TEXT("health"),20);
+    P->SetStringField(TEXT("hostile"),TEXT("true"));TestFalse(TEXT("Typed hostility"),BridgeProtocol::Parse(P,Out));P->SetBoolField(TEXT("hostile"),true);
+    P->SetStringField(TEXT("appearance"),TEXT("../local-resource"));TestFalse(TEXT("Appearance must be hash"),BridgeProtocol::Parse(P,Out));
+    P->SetStringField(TEXT("event"),TEXT("player_respawn"));TestTrue(TEXT("Respawn requires valid import"),BridgeProtocol::Parse(P,Out));
+    P->RemoveField(TEXT("importId"));TestFalse(TEXT("Respawn import required"),BridgeProtocol::Parse(P,Out));
     return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeTextureProtocolTest, "UEBridge.Protocol.TexturedCell", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

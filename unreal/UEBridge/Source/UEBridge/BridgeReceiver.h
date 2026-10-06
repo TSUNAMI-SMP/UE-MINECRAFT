@@ -25,6 +25,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Textures") TObjectPtr<class UBridgeBlockPalette> TexturePalette;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Player") TObjectPtr<class UBridgePlayerAppearance> PlayerAppearance;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Particles") TObjectPtr<class UMaterialInterface> VanillaParticleMaterial;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Mobs") TObjectPtr<class UBridgeMobPalette> MobPalette;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Bow") bool SpawnBowProjectiles = true;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") bool Connected = false;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") int32 InvalidPackets = 0;
@@ -57,6 +58,7 @@ private:
     UPROPERTY() TObjectPtr<class ABridgeBlockPreview> Preview;
     UPROPERTY() TObjectPtr<class ABridgeWorld> SyncedWorld;
     UPROPERTY() TObjectPtr<class ABridgeVanillaEffects> VanillaEffects;
+    UPROPERTY() TObjectPtr<class ABridgeMobWorld> MobWorld;
     struct FPendingFeedback { TSharedPtr<FJsonObject> Json; double Created=0,Sent=-1; };
     TMap<FString,FPendingFeedback> PendingFeedback;
     UPROPERTY() TArray<TObjectPtr<class ABridgeArrow>> Arrows;
@@ -80,6 +82,7 @@ private:
     void SendPose();
     void QueueFeedback(const FString& Type,const FString& BlockId,const FVector& Position,float FallDistance=0);
     void PumpFeedback(double Now);
+    void QueueMobSound(const FString& Sound,const FVector& Position);
     void SendStatus(const TSharedRef<class FInternetAddr>& Sender);
     void Explode(const FVector& Position);
 };

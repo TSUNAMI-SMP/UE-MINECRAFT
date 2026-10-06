@@ -82,11 +82,35 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
     } else if (Kind == TEXT("event")) {
         FString Event;
         if (!Guid(P, TEXT("eventId"), R.EventId) || !P->TryGetStringField(TEXT("event"), Event)) return false;
-        if(Event==TEXT("block_action")) {
+        if(Event==TEXT("player_respawn")) {
+            if(!Guid(P,TEXT("importId"),R.ImportId)) return false;
+            R.Kind=EBridgeKind::PlayerRespawn;
+        }
+        else if(Event==TEXT("mob_spawn") || Event==TEXT("mob_clear")) {
+            if(!Guid(P,TEXT("importId"),R.ImportId)) return false;
+            if(Event==TEXT("mob_clear")) R.Kind=EBridgeKind::MobClear;
+            else {
+                R.Kind=EBridgeKind::MobSpawn;R.Mob.Position=R.Position;
+                if(!Guid(P,TEXT("mobId"),R.Mob.Id) || !P->TryGetStringField(TEXT("mobType"),R.Mob.Type) || !Identifier(R.Mob.Type)
+                    || !P->TryGetStringField(TEXT("appearance"),R.Mob.Appearance) || R.Mob.Appearance.Len()!=64
+                    || !Number(P,TEXT("yaw"),-1e9,1e9,R.Mob.Yaw)
+                    || !P->HasTypedField<EJson::Boolean>(TEXT("hostile")) || !P->TryGetBoolField(TEXT("hostile"),R.Mob.Hostile)
+                    || !P->HasTypedField<EJson::Boolean>(TEXT("baby")) || !P->TryGetBoolField(TEXT("baby"),R.Mob.Baby)) return false;
+                for(const TCHAR C:R.Mob.Appearance) if(!((C>='0'&&C<='9') || (C>='a'&&C<='f'))) return false;
+                double W,H,HP,MaxHP,Speed,Damage;
+                if(!Number(P,TEXT("width"),.05,16,W) || !Number(P,TEXT("height"),.05,16,H)
+                    || !Number(P,TEXT("health"),.01,10000,HP) || !Number(P,TEXT("maxHealth"),.01,10000,MaxHP) || HP>MaxHP
+                    || !Number(P,TEXT("speed"),0,2,Speed) || !Number(P,TEXT("damage"),0,100,Damage)) return false;
+                R.Mob.Width=float(W);R.Mob.Height=float(H);R.Mob.Health=float(HP);R.Mob.MaxHealth=float(MaxHP);
+                R.Mob.Speed=float(Speed);R.Mob.Damage=float(Damage);
+            }
+        }
+        else if(Event==TEXT("block_action")) {
             R.Kind=EBridgeKind::BlockAction;
             if(!Guid(P,TEXT("importId"),R.ImportId) || !P->TryGetStringField(TEXT("action"),R.Action)
                 || (R.Action!=TEXT("break") && R.Action!=TEXT("place")) || !Selection(P,R)
                 || !Number(P,TEXT("yaw"),-1e9,1e9,R.Yaw) || !Number(P,TEXT("pitch"),-90,90,R.Pitch)) return false;
+            if(P->HasField(TEXT("sneak")) && (!P->HasTypedField<EJson::Boolean>(TEXT("sneak")) || !P->TryGetBoolField(TEXT("sneak"),R.Sneak))) return false;
         }
         else if (Event == TEXT("tnt_ignite")) R.Kind = EBridgeKind::Tnt;
         else if (Event == TEXT("bow_fire")) {
@@ -112,6 +136,12 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
                 || !Integer(P,TEXT("fps"),1,60,F) || !Integer(P,TEXT("quality"),30,95,Q)
                 || !Number(P,TEXT("exposure"),-6,6,R.VideoExposure)) return false;
             R.Kind=EBridgeKind::VideoConfig; R.VideoWidth=int32(W); R.VideoHeight=int32(H); R.VideoFps=int32(F); R.VideoQuality=int32(Q);
+            if(P->HasField(TEXT("lighting")) && (!P->HasTypedField<EJson::Boolean>(TEXT("lighting")) || !P->TryGetBoolField(TEXT("lighting"),R.Lighting))) return false;
+            if(P->HasField(TEXT("vanillaSky")) && (!P->HasTypedField<EJson::Boolean>(TEXT("vanillaSky")) || !P->TryGetBoolField(TEXT("vanillaSky"),R.VanillaSky))) return false;
+            if(R.Lighting && R.VanillaSky) return false;
+            if(P->HasField(TEXT("particleScale")) && !Number(P,TEXT("particleScale"),.25,2,R.ParticleScale)) return false;
+            if(P->HasField(TEXT("particleDensity")) && !Number(P,TEXT("particleDensity"),.125,1,R.ParticleDensity)) return false;
+            if(P->HasField(TEXT("particleLifetime")) && !Number(P,TEXT("particleLifetime"),.25,2,R.ParticleLifetime)) return false;
         }
         else if (Event == TEXT("world_scope")) {
             R.Kind = EBridgeKind::WorldScope; double X,Y,Z; uint64 Radius,Height;
@@ -135,14 +165,14 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
             if (!Guid(P, TEXT("snapshotId"), R.SnapshotId)
                 || !Integer(P, TEXT("snapshotSeq"), 1, 9007199254740991.0, R.SnapshotSequence)
                 || R.SnapshotSequence > R.Sequence
-                || !Integer(P, TEXT("batchIndex"), 0, (Textured ? 2048 : (WorldCell ? 1024 : MaxBatches)) - 1, Index)
-                || !Integer(P, TEXT("totalBatches"), 1, Textured ? 2048 : (WorldCell ? 1024 : MaxBatches), Total) || Index >= Total
+                || !Integer(P, TEXT("batchIndex"), 0, (Physics ? 8192 : (Textured ? 2048 : (WorldCell ? 1024 : MaxBatches))) - 1, Index)
+                || !Integer(P, TEXT("totalBatches"), 1, Physics ? 8192 : (Textured ? 2048 : (WorldCell ? 1024 : MaxBatches)), Total) || Index >= Total
                 || !P->TryGetArrayField(TEXT("blocks"), Rows) || Rows->Num() > (Textured ? 4 : (WorldCell ? 8 : 12))) return false;
             R.BatchIndex = int32(Index); R.TotalBatches = int32(Total);
             for (const auto& Row : *Rows) {
                 const TArray<TSharedPtr<FJsonValue>>* Values;
                 const int32 Fields = WorldCell ? 7 : 4;
-                if (!Row.IsValid() || !Row->TryGetArray(Values) || (Values->Num() != Fields+(Textured ? 1 : 0)+(Physics ? 1 : 0) && !(Physics && Values->Num()==12))) return false;
+                if (!Row.IsValid() || !Row->TryGetArray(Values) || (Values->Num() != Fields+(Textured ? 1 : 0)+(Physics ? 1 : 0) && !(Physics && (Values->Num()==12 || Values->Num()==14)))) return false;
                 double V[7];
                 for (int32 I = 0; I < Fields; ++I) if (!(*Values)[I].IsValid() || (*Values)[I]->Type != EJson::Number
                     || !(*Values)[I]->TryGetNumber(V[I]) || !FMath::IsFinite(V[I])) return false;
@@ -168,7 +198,7 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
                 bool Collision=false;
                 if(Physics && (!(*Values)[8].IsValid() || (*Values)[8]->Type!=EJson::Boolean || !(*Values)[8]->TryGetBool(Collision))) return false;
                 FBridgeBlock Block{FVector(V[0], V[1], V[2]), int32(V[3]), Size, BlockId,Collision};
-                if(Physics && Values->Num()==12) {
+                if(Physics && Values->Num()>=12) {
                     FIntVector Owner;
                     for(int32 I=0;I<3;++I) {
                         double Value;
@@ -180,6 +210,16 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
                     const FIntVector OwnerCell(FMath::FloorToInt(Owner.X/8.0),FMath::FloorToInt(Owner.Y/8.0),FMath::FloorToInt(Owner.Z/8.0));
                     if(OwnerCell!=R.Cell) return false;
                     Block.SourceBlock=Owner;Block.HasSourceBlock=true;
+                }
+                if(Physics && Values->Num()==14) {
+                    FString State; double Role;
+                    if(!(*Values)[12].IsValid() || (*Values)[12]->Type!=EJson::String || !(*Values)[12]->TryGetString(State) || State.Len()>1024
+                        || !(*Values)[13].IsValid() || (*Values)[13]->Type!=EJson::Number || !(*Values)[13]->TryGetNumber(Role)
+                        || !FMath::IsFinite(Role) || Role!=FMath::FloorToDouble(Role) || Role<1 || Role>3) return false;
+                    for(const TCHAR C:State) if(!((C>='a'&&C<='z') || (C>='0'&&C<='9') || C=='_' || C=='=' || C==',' || C=='.' || C=='-')) return false;
+                    if((Role==1 || Role==3) && Collision) return false;
+                    if(Role==2 && !Collision) return false;
+                    Block.StateKey=MoveTemp(State); Block.Role=uint8(Role);
                 }
                 R.Blocks.Add(MoveTemp(Block));
             }

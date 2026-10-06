@@ -21,7 +21,7 @@ public final class TextureExportJob implements AutoCloseable {
                     if(cancelled) { status="書き出しを中止しました"; return; }
                     export.export(block); status="テクスチャ書き出し "+(++done)+"/"+blocks.size()+" / 対応="+export.exported();
                 }
-                Path manifest=export.finish(); status="完了: "+export.exported()+"種類 / 未対応="+export.skipped()+" / "+manifest;
+                Path manifest=export.finish(); status="完了: "+export.exported()+"種類 / 除外・未対応="+export.skipped()+"（manifest.json の excluded に一覧） / "+manifest;
                 if(!cancelled) complete.accept(status);
             } catch(IOException | RuntimeException e) { status="書き出し失敗: "+e.getMessage(); if(!cancelled) complete.accept(status); }
             finally { running=false; }

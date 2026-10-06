@@ -1,8 +1,9 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
+#include "BridgeMobData.h"
 
-enum class EBridgeKind { Input, Tnt, Bow, Snapshot, ClearPreview, WorldCell, WorldScope, WorldClear, WorldBegin, WorldCommit, VideoConfig, BlockAction, FeedbackAck };
+enum class EBridgeKind { Input, Tnt, Bow, Snapshot, ClearPreview, WorldCell, WorldScope, WorldClear, WorldBegin, WorldCommit, VideoConfig, BlockAction, FeedbackAck, MobSpawn, MobClear, PlayerRespawn };
 struct FBridgeBlock {
     FVector Position = FVector::ZeroVector; // Minecraft-relative block centers.
     int32 Color = 0;
@@ -11,6 +12,8 @@ struct FBridgeBlock {
     bool Collision=false;
     FIntVector SourceBlock=FIntVector::ZeroValue;
     bool HasSourceBlock=false;
+    FString StateKey;
+    uint8 Role=0; // 0 legacy, 1 baked render model, 2 collision, 3 outline/selection.
 };
 struct FBridgePacket {
     EBridgeKind Kind = EBridgeKind::Input;
@@ -34,6 +37,9 @@ struct FBridgePacket {
     int32 Radius = 2, HalfHeight = 1;
     int32 VideoWidth=960, VideoHeight=540, VideoFps=20, VideoQuality=85;
     double VideoExposure=0;
+    bool Lighting=true, VanillaSky=false;
+    double ParticleScale=.75,ParticleDensity=1,ParticleLifetime=.9;
+    FBridgeMobSnapshot Mob;
     int32 BatchIndex = 0, TotalBatches = 0;
     TArray<FBridgeBlock> Blocks;
 };

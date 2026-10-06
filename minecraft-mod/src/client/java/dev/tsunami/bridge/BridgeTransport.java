@@ -26,6 +26,23 @@ public final class BridgeTransport implements AutoCloseable {
     private final ArrayDeque<JsonObject> feedback = new ArrayDeque<>();
     private final LinkedHashMap<String, Boolean> seenFeedback = new LinkedHashMap<>();
     private boolean playerVisualsSupported, feedbackSupported;
+    private boolean videoV3, blockModelsSupported, mobsSupported, skySupported;
+    private boolean blockPaletteReady, mobPaletteReady;
+    public boolean blockPaletteReady() {return diagnostics().connected() && blockPaletteReady;}
+    public boolean mobPaletteReady() {return diagnostics().connected() && mobPaletteReady;}
+    private boolean lightingEnabled=true, vanillaSkyEnabled;
+    private int mobCount, mobMissing;
+    private int maskPixels,maskForeground,maskTranslucent;
+    private String blockModelError="";
+    private double playerHealth=20;
+    public double playerHealth() {return diagnostics().connected() ? playerHealth : 20;}
+    public boolean videoV3Supported() { return diagnostics().connected() && videoV3; }
+    public boolean blockModelsSupported() { return diagnostics().connected() && blockModelsSupported; }
+    public boolean mobsSupported() { return diagnostics().connected() && mobsSupported; }
+    public boolean skySupported() { return diagnostics().connected() && skySupported; }
+    public String renderStatus() { return "照明="+lightingEnabled+" MC空="+vanillaSkyEnabled+" マスク="+maskForeground+"/"+maskPixels+" 半透明="+maskTranslucent; }
+    public String blockModelError() {return blockModelError;}
+    public String mobStatus() { return "モブ="+mobCount+" 素材不足="+mobMissing; }
     private ParticleDiagnostics particles = ParticleDiagnostics.unavailable("unsupported");
     public ParticleDiagnostics particleDiagnostics() {
         return diagnostics().connected() ? particles : ParticleDiagnostics.unavailable("disconnected");
@@ -121,13 +138,17 @@ public final class BridgeTransport implements AutoCloseable {
         String kind = p.get("kind").getAsString();
         if ("ack".equals(kind)) {
             if (pending.remove(p.get("eventId").getAsString()) != null) ++acknowledged;
-        } else if ("feedback".equals(kind)) {
+        } else if ("feedback".equals(kind) || "mob_feedback".equals(kind)) {
             if(!feedbackSupported || !diagnostics().connected()) return;
-            var effect=VanillaFeedbackData.parse(p); if(effect==null) return;
+            if("mob_feedback".equals(kind) ? !MobFeedback.valid(p) : VanillaFeedbackData.parse(p)==null) return;
             if(!receiverId.equals(p.get("receiverId").getAsString())) return;
+            if(!number(p,"seq")) return;
+            double feedbackSeq=p.get("seq").getAsDouble();
+            if(!Double.isFinite(feedbackSeq) || feedbackSeq!=Math.rint(feedbackSeq) || feedbackSeq<1 || feedbackSeq>sequence) return;
             long seq=p.get("seq").getAsLong(); Long sent=inputTimes.get(seq);
             if(sent==null || clock.getAsLong()-sent>1_000_000_000L) return;
             String id=p.get("effectId").getAsString();
+            try { if(!java.util.UUID.fromString(id).toString().equals(id.toLowerCase(java.util.Locale.ROOT))) return; } catch(IllegalArgumentException invalid) { return; }
             if(!seenFeedback.containsKey(id)) {
                 if(feedback.size()>=64) return; // Sender retries; never ACK a discarded effect.
                 feedback.addLast(p.deepCopy());seenFeedback.put(id,true);
@@ -158,6 +179,25 @@ public final class BridgeTransport implements AutoCloseable {
                     ? p.get("build").getAsString() : "unknown";
             actionsSupported=bool(p,"blockActionsV1") && p.get("blockActionsV1").getAsBoolean();
             videoV2=bool(p,"videoV2") && p.get("videoV2").getAsBoolean();
+            videoV3=bool(p,"videoV3") && p.get("videoV3").getAsBoolean();
+            blockModelsSupported=bool(p,"blockModelsV2") && p.get("blockModelsV2").getAsBoolean();
+            blockPaletteReady=bool(p,"blockPaletteReady") && p.get("blockPaletteReady").getAsBoolean();
+            mobPaletteReady=bool(p,"mobPaletteReady") && p.get("mobPaletteReady").getAsBoolean();
+            mobsSupported=bool(p,"mobsV1") && p.get("mobsV1").getAsBoolean();
+            skySupported=bool(p,"skySupported") && p.get("skySupported").getAsBoolean();
+            lightingEnabled=!bool(p,"lightingEnabled") || p.get("lightingEnabled").getAsBoolean();
+            vanillaSkyEnabled=bool(p,"vanillaSkyEnabled") && p.get("vanillaSkyEnabled").getAsBoolean();
+            double mobs=number(p,"mobCount") ? p.get("mobCount").getAsDouble() : 0;
+            double missing=number(p,"mobMissing") ? p.get("mobMissing").getAsDouble() : 0;
+            mobCount=Double.isFinite(mobs) && mobs==Math.rint(mobs) && mobs>=0 && mobs<=128 ? (int)mobs : 0;
+            mobMissing=Double.isFinite(missing) && missing==Math.rint(missing) && missing>=0 && missing<=100000 ? (int)missing : 0;
+            double hp=number(p,"uePlayerHealth") ? p.get("uePlayerHealth").getAsDouble() : 20;
+            playerHealth=Double.isFinite(hp) && hp>=0 && hp<=20 ? hp : 20;
+            maskPixels=statusCount(p,"maskPixels",1920*1080);maskForeground=statusCount(p,"maskForeground",maskPixels);
+            maskTranslucent=statusCount(p,"maskTranslucent",maskForeground);
+            blockModelError=p.has("blockModelError") && p.get("blockModelError").isJsonPrimitive() && p.getAsJsonPrimitive("blockModelError").isString()
+                ? p.get("blockModelError").getAsString() : "";
+            if(blockModelError.length()>160) blockModelError="invalid-diagnostic";
             playerVisualsSupported=bool(p,"playerVisualsV1") && p.get("playerVisualsV1").getAsBoolean();
             feedbackSupported=bool(p,"vanillaFeedbackV1") && p.get("vanillaFeedbackV1").getAsBoolean();
             particles=ParticleDiagnostics.parse(p);
@@ -199,6 +239,10 @@ public final class BridgeTransport implements AutoCloseable {
                 send(p.bytes); e.setValue(new Pending(p.bytes, p.created, now, true));
             }
         }
+    }
+    private static int statusCount(JsonObject p,String name,int maximum) {
+        double value=number(p,name) ? p.get(name).getAsDouble() : 0;
+        return Double.isFinite(value) && value==Math.rint(value) && value>=0 && value<=maximum ? (int)value : 0;
     }
     @Override public void close() throws IOException { pending.clear(); inputTimes.clear(); feedback.clear();seenFeedback.clear();channel.close(); }
 }

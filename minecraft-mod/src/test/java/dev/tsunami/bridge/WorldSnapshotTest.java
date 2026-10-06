@@ -97,4 +97,21 @@ public class WorldSnapshotTest {
         try {new WorldSnapshot.Shape(0,0,0,0,1,1,1,"minecraft:stone",true,Integer.MIN_VALUE,0,0);fail();}
         catch(IllegalArgumentException expected) {}
     }
+    @Test public void longStateKeysSplitIntoSafeModelBatchesAndFingerprintIncludesRole() {
+        String state="a="+"a".repeat(1022);
+        var shape=new WorldSnapshot.Shape(-99999.123456789,99999.123456789,99999.123456789,0xffffff,1,1,1,
+            "minecraft:"+"a".repeat(118),false,-30000000,30000000,-30000000,state,1);
+        var outline=new WorldSnapshot.Shape(shape.x(),shape.y(),shape.z(),shape.color(),1,1,1,shape.blockId(),false,
+            shape.blockX(),shape.blockY(),shape.blockZ(),state,3);
+        assertNotEquals(WorldSnapshot.fingerprint(List.of(shape)),WorldSnapshot.fingerprint(List.of(outline)));
+        var packets=WorldSnapshot.encode(new WorldSnapshot.Cell(-3750000,3750000,-3750000),Collections.nCopies(8,shape),true,true,true);
+        assertEquals(8,packets.size());
+        for(var p:packets) {
+            assertEquals(14,p.getAsJsonArray("blocks").get(0).getAsJsonArray().size());
+            p.addProperty("v",1);p.addProperty("kind","event");p.addProperty("session",UUID.randomUUID().toString());
+            p.addProperty("eventId",UUID.randomUUID().toString());p.addProperty("snapshotSeq",9007199254740991L);p.addProperty("seq",9007199254740991L);
+            p.addProperty("x",0);p.addProperty("y",0);p.addProperty("z",0);
+            assertTrue(p.toString().getBytes(StandardCharsets.UTF_8).length<=2048);
+        }
+    }
 }

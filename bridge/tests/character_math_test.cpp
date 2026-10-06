@@ -1,5 +1,7 @@
 #include "BridgeCharacterMath.h"
+#include "BridgeParticleMath.h"
 #include <iostream>
+#include <limits>
 #include <string>
 
 namespace {
@@ -25,6 +27,22 @@ int main() {
     Check(Near(SprintFovMultiplier(1,true,-.1),1),"negative frame delta does not advance smoothing");
     Check(Near(HorizontalFov(80,1),80),"square capture keeps vertical and horizontal FOV equal");
     Check(HorizontalFov(80)>80&&HorizontalFov(92)>HorizontalFov(80),"16:9 preserves increasing vertical FOV");
+    bool ProjectionMatches=true,DepthPreserved=true,NormalsCorrect=true;
+    for(double Fov:{30.,70.,80.,92.,110.,126.5}) for(const auto& Point:{Vector{45,15,-20},Vector{90,-35,5},Vector{12,1,2}}) {
+        const auto Projected=ProjectFirstPersonPoint(Point,Fov);
+        const double WorldTan=std::tan(Fov*Pi/360.0),HandTan=std::tan(70*Pi/360.0);
+        ProjectionMatches=ProjectionMatches&&Near(Projected.Y/(Projected.X*WorldTan),Point.Y/(Point.X*HandTan))
+            &&Near(Projected.Z/(Projected.X*WorldTan),Point.Z/(Point.X*HandTan));
+        DepthPreserved=DepthPreserved&&Near(Projected.X,Point.X);
+        const auto N=ProjectFirstPersonNormal({1,1,0},Fov),T=ProjectFirstPersonPoint({1,-1,0},Fov);
+        NormalsCorrect=NormalsCorrect&&Near(N.X*T.X+N.Y*T.Y+N.Z*T.Z,0)&&Near(N.X*N.X+N.Y*N.Y+N.Z*N.Z,1);
+    }
+    Check(ProjectionMatches,"arm silhouette uses fixed70 projection at every supported world FOV");
+    Check(DepthPreserved,"independent hand projection leaves camera depth unchanged");
+    Check(NormalsCorrect,"inverse-transpose projected normals stay perpendicular to surfaces");
+    Check(Near(FirstPersonTransverseScale(70),1),"native hand FOV needs no deformation");
+    Check(Near(FirstPersonTransverseScale(std::numeric_limits<double>::quiet_NaN()),FirstPersonTransverseScale(80)),"invalid FOV uses safe default");
+    Check(Same(ProjectFirstPersonPoint({10,-2,3},92),Vector{10,-2*FirstPersonTransverseScale(92),3*FirstPersonTransverseScale(92)}),"projection preserves left-handed mirror");
 
     Check(Near(BodyYaw(0,30,0,0,false,false,.05),0),"head can turn at rest without turning torso");
     Check(Near(BodyYaw(0,80,0,0,false,false,.05),30),"torso follows only after 50 degree neck limit");
@@ -72,6 +90,29 @@ int main() {
     Check(Same(ThirdLeft.Position,{28.125,-6.25,-62.5}),"third left grip mirrors across arm lateral axis");
     const auto& ThirdQ=ThirdBlock.Rotation;
     Check(Near(ThirdQ.X*ThirdQ.X+ThirdQ.Y*ThirdQ.Y+ThirdQ.Z*ThirdQ.Z+ThirdQ.W*ThirdQ.W,1),"third grip keeps a unit rotation after basis conversion");
+    using namespace BridgeParticleMath;
+    Check(BoxCount(1,1,1)==64,"native full block breakup remains64 particles");
+    Check(BoxCount(1,.5,1)==32,"slab breakup follows native outline subdivisions");
+    Check(BoxCount(.1,.1,.1)==8,"small shapes retain two subdivisions per axis");
+    Check(BoxCount(2,1,1)==64,"oversized outlines cap each native subdivision extent at one block");
+    Check(SelectedCount(64,.5)==32&&SelectedCount(64,0)==0&&SelectedCount(64,1)==64,"density tuning has exact bounded counts");
+    bool EvenSelection=true;
+    for(int Native:{8,32,48,64,384}) for(double Density:{0.,.1,.5,.75,1.}) {
+        const int Selected=SelectedCount(Native,Density);int Actual=0;
+        for(int Cell=0;Cell<Native;++Cell) {
+            Actual+=SelectCell(Cell,Native,Selected) ? 1 : 0;
+            EvenSelection=EvenSelection&&std::abs(Actual-double(Cell+1)*Selected/Native)<1.00001;
+        }
+        EvenSelection=EvenSelection&&Actual==Selected;
+    }
+    Check(EvenSelection,"density reduction distributes particles across the entire shape");
+    Check(Near(QuadSizeCm(0,1),10)&&Near(QuadSizeCm(1,1),20),"native dust diameter is10 to20 cm after half-size conversion");
+    Check(Near(QuadSizeCm(0,.75),7.5)&&Near(QuadSizeCm(1,.75),15),"default visual tuning reduces diameter rather than native cube count");
+    Check(LifetimeTicks(1,1)==4&&LifetimeTicks(0,1)==40,"native dust lifetime is4 to40 ticks");
+    Check(LifetimeTicks(0,.9)==36&&LifetimeTicks(1,.25)==1,"lifetime tuning remains at least one tick");
+    Check(Near(SizeMultiplier(-1),.25)&&Near(SizeMultiplier(99),2)&&Near(DensityMultiplier(99),1),"particle tuning clamps extreme input");
+    Check(Near(SizeMultiplier(std::numeric_limits<double>::infinity()),.75)
+        &&Near(DensityMultiplier(std::numeric_limits<double>::quiet_NaN()),1),"particle tuning rejects nonfinite input safely");
     std::cout<<"Character production math: "<<Passed<<" passed, "<<Failed<<" failed\n";
     return Failed ? 1 : 0;
 }

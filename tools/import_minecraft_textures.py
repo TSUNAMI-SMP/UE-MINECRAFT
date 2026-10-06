@@ -5,6 +5,7 @@ Assets use content hashes, are reused on repeat import, and never deleted.
 """
 import hashlib
 import json
+import math
 import pathlib
 import re
 import struct
@@ -46,12 +47,150 @@ def _png_dimensions(data):
     return dimensions
 
 
+def _number(value, low, high):
+    return type(value) in (int, float) and math.isfinite(value) and low <= value <= high
+
+
+def _state_key(value):
+    if not isinstance(value, str) or len(value) > 512:
+        raise ValueError("Invalid block state key")
+    if not value:
+        return
+    parts = value.split(",")
+    if parts != sorted(parts) or len({p.split("=", 1)[0] for p in parts}) != len(parts):
+        raise ValueError("State properties must be unique and sorted")
+    if any(not re.fullmatch(r"[a-z0-9_]+=[a-z0-9_]+", part) for part in parts):
+        raise ValueError("Invalid state property")
+
+
+def _validate_models(manifest):
+    blocks, textures = manifest["blocks"], manifest["textures"]
+    definitions, models = manifest.get("blockstates"), manifest.get("models")
+    if not isinstance(definitions, dict) or not isinstance(models, dict) or len(models) > 16384 or not models:
+        raise ValueError("Missing/oversized baked model palette")
+    if set(definitions) != set(blocks):
+        raise ValueError("Every exported block needs a blockstate definition")
+    state_budget = 0
+    for identifier, entry in blocks.items():
+        _state_key(entry.get("defaultState"))
+        states = entry.get("states")
+        offset = entry.get("modelOffset", [0, 0])
+        if not isinstance(offset, list) or len(offset) != 2 or not all(_number(v, 0, 0.5) for v in offset):
+            raise ValueError("Invalid vegetation model offset")
+        if not isinstance(states, dict) or not 1 <= len(states) <= 8192 or entry["defaultState"] not in states:
+            raise ValueError("Missing/oversized native block states")
+        state_budget += len(states)
+        if state_budget > 131072:
+            raise ValueError("Native block state budget exceeded")
+        for key, state in states.items():
+            _state_key(key)
+            if not isinstance(state, dict):
+                raise ValueError("Invalid native state")
+            if type(state.get("cannotConnect", False)) is not bool:
+                raise ValueError("Invalid native connection flag")
+            solid = state.get("solidFaces")
+            if solid is not None and (not isinstance(solid, list) or len(solid) > 6 or any(not isinstance(face, str) for face in solid) or len(set(solid)) != len(solid)
+                    or any(face not in ("north", "south", "east", "west", "up", "down") for face in solid)):
+                raise ValueError("Invalid native solid faces")
+            for kind in ("collision", "outline"):
+                boxes = state.get(kind)
+                if not isinstance(boxes, list) or len(boxes) > 64:
+                    raise ValueError("Invalid native shape")
+                for box in boxes:
+                    if (not isinstance(box, list) or len(box) != 6 or not all(_number(v, -4, 4) for v in box)
+                            or any(box[i] >= box[i + 3] for i in range(3))):
+                        raise ValueError("Invalid native shape bounds")
+    for identifier, model in models.items():
+        _identifier(identifier)
+        if not isinstance(model, dict) or not isinstance(model.get("elements"), list) or len(model["elements"]) > 512:
+            raise ValueError("Invalid model elements")
+        for element in model["elements"]:
+            if not isinstance(element, dict):
+                raise ValueError("Invalid model element")
+            for kind in ("from", "to"):
+                vector = element.get(kind)
+                if not isinstance(vector, list) or len(vector) != 3 or not all(_number(v, -64, 80) for v in vector):
+                    raise ValueError("Invalid model cuboid coordinates")
+            # Vanilla's *_inner_faces models deliberately invert X to draw interior
+            # surfaces. Keep signed extents; physics boxes are validated separately.
+            rotation = element.get("rotation")
+            if rotation is not None:
+                if (not isinstance(rotation, dict) or rotation.get("axis") not in ("x", "y", "z")
+                        or rotation.get("angle") not in (-45, -22.5, 0, 22.5, 45)
+                        or type(rotation.get("rescale", False)) is not bool
+                        or not isinstance(rotation.get("origin"), list) or len(rotation["origin"]) != 3
+                        or not all(_number(v, -64, 80) for v in rotation["origin"])):
+                    raise ValueError("Invalid element rotation")
+            faces = element.get("faces")
+            if not isinstance(faces, dict) or not faces or not set(faces).issubset({"up", "down", "north", "south", "east", "west"}):
+                raise ValueError("Invalid model faces")
+            for face in faces.values():
+                if not isinstance(face, dict) or face.get("texture") not in textures:
+                    raise ValueError("Unresolved model texture")
+                uv = face.get("uv")
+                if uv is not None and (not isinstance(uv, list) or len(uv) != 4 or not all(_number(v, -64, 80) for v in uv)):
+                    raise ValueError("Invalid model UV")
+                if (type(face.get("rotation", 0)) is not int or face.get("rotation", 0) not in (0, 90, 180, 270)
+                        or type(face.get("tintindex", -1)) is not int or not -1 <= face.get("tintindex", -1) <= 255):
+                    raise ValueError("Invalid model face rotation/tint")
+    def application(value):
+        options = value if isinstance(value, list) else [value]
+        if not 1 <= len(options) <= 256:
+            raise ValueError("Invalid weighted model list")
+        for item in options:
+            if not isinstance(item, dict) or not isinstance(item.get("model"), str):
+                raise ValueError("Invalid model application")
+            identifier = item["model"] if ":" in item["model"] else "minecraft:" + item["model"]
+            if identifier not in models:
+                raise ValueError("Missing referenced model")
+            for axis in ("x", "y"):
+                if type(item.get(axis, 0)) is not int or item.get(axis, 0) not in (0, 90, 180, 270):
+                    raise ValueError("Invalid blockstate model rotation")
+            if type(item.get("uvlock", False)) is not bool or type(item.get("weight", 1)) is not int or not 1 <= item.get("weight", 1) <= 65536:
+                raise ValueError("Invalid model UV lock/weight")
+    def condition(value, depth=0):
+        if not isinstance(value, dict) or depth > 8 or len(value) > 32:
+            raise ValueError("Invalid multipart condition")
+        for key, item in value.items():
+            if key in ("OR", "AND"):
+                if not isinstance(item, list) or not 1 <= len(item) <= 64:
+                    raise ValueError("Invalid multipart boolean expression")
+                for term in item:
+                    condition(term, depth + 1)
+            elif not re.fullmatch(r"[a-z0-9_]+", key) or not isinstance(item, str) or not re.fullmatch(r"[a-z0-9_]+(?:\|[a-z0-9_]+)*", item):
+                raise ValueError("Invalid multipart state selector")
+    for identifier, definition in definitions.items():
+        if not isinstance(definition, dict) or ("variants" in definition) == ("multipart" in definition):
+            raise ValueError("Blockstate needs variants or multipart")
+        if "variants" in definition:
+            variants = definition["variants"]
+            if not isinstance(variants, dict) or not 1 <= len(variants) <= 8192:
+                raise ValueError("Invalid variant palette")
+            for selector, value in variants.items():
+                if not isinstance(selector, str) or len(selector) > 512:
+                    raise ValueError("Invalid variant selector")
+                # Vanilla selectors can use alternative values and are not necessarily sorted.
+                if selector and any(not re.fullmatch(r"[a-z0-9_]+=[a-z0-9_]+(?:\|[a-z0-9_]+)*", p) for p in selector.split(",")):
+                    raise ValueError("Invalid variant selector")
+                application(value)
+        else:
+            parts = definition["multipart"]
+            if not isinstance(parts, list) or not 1 <= len(parts) <= 256:
+                raise ValueError("Invalid multipart palette")
+            for part in parts:
+                if not isinstance(part, dict) or "apply" not in part:
+                    raise ValueError("Invalid multipart part")
+                if "when" in part:
+                    condition(part["when"])
+                application(part["apply"])
+
+
 def load_texture_manifest(filename):
     path = pathlib.Path(filename).expanduser().resolve()
-    if path.stat().st_size > 4 * 1024 * 1024:
+    if path.stat().st_size > 64 * 1024 * 1024:
         raise ValueError("Manifest too large")
-    manifest = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict) or manifest.get("format") != "uebridge-block-textures" or type(manifest.get("version")) is not int or manifest["version"] != 1:
+    manifest = json.loads(path.read_text(encoding="utf-8"), parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON number")))
+    if not isinstance(manifest, dict) or manifest.get("format") != "uebridge-block-textures" or type(manifest.get("version")) is not int or manifest["version"] not in (1, 2):
         raise ValueError("Unsupported texture manifest")
     textures, blocks = manifest.get("textures"), manifest.get("blocks")
     if not isinstance(textures, dict) or not isinstance(blocks, dict) or not textures or not blocks or len(textures) > 4096 or len(blocks) > 4096:
@@ -61,6 +200,8 @@ def load_texture_manifest(filename):
         _identifier(name)
         if not isinstance(entry, dict) or not isinstance(entry.get("file"), str):
             raise ValueError("Invalid texture entry")
+        if entry.get("alphaMode", "cutout") not in ("opaque", "cutout", "translucent"):
+            raise ValueError("Invalid texture alpha mode")
         relative = pathlib.PurePosixPath(entry["file"])
         if relative.is_absolute() or ".." in relative.parts or "\\" in entry["file"] or ":" in entry["file"]:
             raise ValueError("Texture path escapes export")
@@ -93,7 +234,73 @@ def load_texture_manifest(filename):
                     or type(particle.get("tint")) is not bool
                     or type(particle.get("color")) is not int or not 0 <= particle["color"] <= 0xffffff):
                 raise ValueError("Invalid block particle texture/tint")
+    if manifest["version"] == 2:
+        _validate_models(manifest)
     return manifest
+
+
+def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mode):
+    """Create/reuse the actual UE material graph; alpha behavior is texture metadata."""
+    translucent = alpha_mode == "translucent"
+    name = "M_MinecraftModel_" + ("Translucent" if translucent else "Masked") + "_v2"
+    path = root + "/" + name
+    parent = unreal.load_asset(path) if assets.does_asset_exist(path) else None
+    if parent is None:
+        parent = tools.create_asset(name, root, unreal.Material, unreal.MaterialFactoryNew())
+        if parent is None:
+            raise RuntimeError("Cannot create model-face material")
+        parent.set_editor_property("blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT if translucent else unreal.BlendMode.BLEND_MASKED)
+        parent.set_editor_property("opacity_mask_clip_value", 0.1)
+        parent.set_editor_property("two_sided", True)  # Crossed plant planes need both sides.
+        if translucent:
+            # UE's surface lighting path is needed for stained glass and ice, rather
+            # than the default volumetric-particle translucency lighting.
+            parent.set_editor_property("translucency_lighting_mode", unreal.TranslucencyLightingMode.TLM_SURFACE)
+        def expression(cls):
+            value = editing.create_material_expression(parent, cls, 0, 0)
+            if value is None:
+                raise RuntimeError("Cannot create model material expression")
+            return value
+        def connect(a, b, pin="", output=""):
+            if not editing.connect_material_expressions(a, output, b, pin):
+                raise RuntimeError("Cannot connect model material: " + pin)
+        sample = expression(unreal.MaterialExpressionTextureSampleParameter2D)
+        sample.set_editor_property("parameter_name", "FaceTexture"); sample.set_editor_property("texture", sample_texture)
+        color = expression(unreal.MaterialExpressionVectorParameter)
+        color.set_editor_property("parameter_name", "BlockColor"); color.set_editor_property("default_value", unreal.LinearColor(1, 1, 1, 1))
+        tint = expression(unreal.MaterialExpressionScalarParameter)
+        tint.set_editor_property("parameter_name", "FaceTint"); tint.set_editor_property("default_value", 0.0)
+        white = expression(unreal.MaterialExpressionConstant3Vector); white.set_editor_property("constant", unreal.LinearColor(1, 1, 1, 1))
+        blend = expression(unreal.MaterialExpressionLinearInterpolate)
+        connect(white, blend, "A"); connect(color, blend, "B"); connect(tint, blend, "Alpha")
+        colored = expression(unreal.MaterialExpressionMultiply)
+        connect(sample, colored, "A", "RGB"); connect(blend, colored, "B")
+        unlit = expression(unreal.MaterialExpressionScalarParameter)
+        unlit.set_editor_property("parameter_name", "BridgeUnlit"); unlit.set_editor_property("default_value", 0.0)
+        zero = expression(unreal.MaterialExpressionConstant); zero.set_editor_property("r", 0.0)
+        base = expression(unreal.MaterialExpressionLinearInterpolate)
+        connect(colored, base, "A"); connect(zero, base, "B"); connect(unlit, base, "Alpha")
+        emissive = expression(unreal.MaterialExpressionLinearInterpolate)
+        connect(zero, emissive, "A"); connect(colored, emissive, "B"); connect(unlit, emissive, "Alpha")
+        alpha_target = unreal.MaterialProperty.MP_OPACITY if translucent else unreal.MaterialProperty.MP_OPACITY_MASK
+        for node_value, output, target in ((base, "", unreal.MaterialProperty.MP_BASE_COLOR), (emissive, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR), (sample, "A", alpha_target)):
+            if not editing.connect_material_property(node_value, output, target):
+                raise RuntimeError("Cannot connect model-face output")
+        roughness = expression(unreal.MaterialExpressionConstant); roughness.set_editor_property("r", 0.85)
+        if not editing.connect_material_property(roughness, "", unreal.MaterialProperty.MP_ROUGHNESS):
+            raise RuntimeError("Cannot connect model-face roughness")
+        editing.recompile_material(parent)
+        if not assets.save_loaded_asset(parent, False):
+            raise RuntimeError("Cannot save model-face master")
+    elif not isinstance(parent, unreal.Material):
+        raise RuntimeError("Model master path has another asset type")
+    required = {"FaceTexture"}
+    if not required.issubset({str(name) for name in editing.get_texture_parameter_names(parent)}):
+        raise RuntimeError("Model-face master has an incomplete texture graph")
+    scalars = {str(name) for name in editing.get_scalar_parameter_names(parent)}
+    if not {"FaceTint", "BridgeUnlit"}.issubset(scalars):
+        raise RuntimeError("Model-face master has an incomplete tint/lighting graph")
+    return parent
 
 
 def import_minecraft_textures(filename):
@@ -112,10 +319,10 @@ def import_minecraft_textures(filename):
         raise RuntimeError("Build the updated UEBridge first")
     try:
         palette_defaults = unreal.get_default_object(palette_class)
-        for field in ("particle_textures", "particle_tints", "particle_colors"):
+        for field in ("particle_textures", "particle_tints", "particle_colors", "face_materials", "blockstate_definitions", "models", "state_shapes"):
             palette_defaults.get_editor_property(field)
     except Exception as error:
-        raise RuntimeError("Build the updated UEBridge and reopen the editor before importing particles") from error
+        raise RuntimeError("Build UEBridge 0.9 and reopen the editor before importing models") from error
     actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
     receivers = [actor for actor in actors.get_all_level_actors() if isinstance(actor, receiver_class)]
     if len(receivers) != 1:
@@ -160,13 +367,15 @@ def import_minecraft_textures(filename):
                 raise RuntimeError("Texture asset name is occupied by a different type")
             imported[identifier] = texture
 
-        parent_path = root + "/M_MinecraftFaces_v3"
+        parent_path = root + "/M_MinecraftFaces_v4"
         parent = unreal.load_asset(parent_path) if assets.does_asset_exist(parent_path) else None
         if parent is None:
-            parent = tools.create_asset("M_MinecraftFaces_v3", root, unreal.Material, unreal.MaterialFactoryNew())
+            parent = tools.create_asset("M_MinecraftFaces_v4", root, unreal.Material, unreal.MaterialFactoryNew())
             if parent is None:
                 raise RuntimeError("Cannot create texture master material")
             parent.set_editor_property("used_with_instanced_static_meshes", True)
+            parent.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED)
+            parent.set_editor_property("opacity_mask_clip_value", 0.1)
 
             def node(cls):
                 result = editing.create_material_expression(parent, cls, 0, 0)
@@ -183,7 +392,7 @@ def import_minecraft_textures(filename):
             color.set_editor_property("default_value", unreal.LinearColor(1, 1, 1, 1))
             white = node(unreal.MaterialExpressionConstant3Vector)
             white.set_editor_property("constant", unreal.LinearColor(1, 1, 1, 1))
-            channels = {}
+            channels, alpha_channels = {}, {}
             for face in ("Top", "Side", "Bottom"):
                 sample = node(unreal.MaterialExpressionTextureSampleParameter2D)
                 sample.set_editor_property("parameter_name", face + "Texture")
@@ -196,6 +405,7 @@ def import_minecraft_textures(filename):
                 product = node(unreal.MaterialExpressionMultiply)
                 wire(sample, product, "A", "RGB"); wire(blend, product, "B")
                 channels[face] = product
+                alpha_channels[face] = sample
             normal = node(unreal.MaterialExpressionVertexNormalWS)
             z = node(unreal.MaterialExpressionComponentMask)
             z.set_editor_property("r", False); z.set_editor_property("g", False)
@@ -210,6 +420,22 @@ def import_minecraft_textures(filename):
             wire(first, result, "A"); wire(channels["Bottom"], result, "B"); wire(bottom, result, "Alpha")
             if not editing.connect_material_property(result, "", unreal.MaterialProperty.MP_BASE_COLOR):
                 raise RuntimeError("Cannot connect material Base Color")
+            opacity_first = node(unreal.MaterialExpressionLinearInterpolate)
+            wire(alpha_channels["Side"], opacity_first, "A", "A"); wire(alpha_channels["Top"], opacity_first, "B", "A"); wire(top, opacity_first, "Alpha")
+            opacity = node(unreal.MaterialExpressionLinearInterpolate)
+            wire(opacity_first, opacity, "A"); wire(alpha_channels["Bottom"], opacity, "B", "A"); wire(bottom, opacity, "Alpha")
+            if not editing.connect_material_property(opacity, "", unreal.MaterialProperty.MP_OPACITY_MASK):
+                raise RuntimeError("Cannot connect cube alpha mask")
+            # One parameter switches diffuse shading off and restores pixel color as emissive.
+            unlit = node(unreal.MaterialExpressionScalarParameter)
+            unlit.set_editor_property("parameter_name", "BridgeUnlit"); unlit.set_editor_property("default_value", 0.0)
+            zero = node(unreal.MaterialExpressionConstant); zero.set_editor_property("r", 0.0)
+            base = node(unreal.MaterialExpressionLinearInterpolate)
+            wire(result, base, "A"); wire(zero, base, "B"); wire(unlit, base, "Alpha")
+            emissive = node(unreal.MaterialExpressionLinearInterpolate)
+            wire(zero, emissive, "A"); wire(result, emissive, "B"); wire(unlit, emissive, "Alpha")
+            if not editing.connect_material_property(base, "", unreal.MaterialProperty.MP_BASE_COLOR) or not editing.connect_material_property(emissive, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR):
+                raise RuntimeError("Cannot connect lighting switch")
             roughness = node(unreal.MaterialExpressionConstant); roughness.set_editor_property("r", 0.85)
             editing.connect_material_property(roughness, "", unreal.MaterialProperty.MP_ROUGHNESS)
             editing.recompile_material(parent)
@@ -229,7 +455,7 @@ def import_minecraft_textures(filename):
                 raise RuntimeError("Import cancelled; palette and level unchanged")
             progress.enter_progress_frame(1, identifier)
             content = {face: {"hash": manifest["textures"][entry[face]["texture"]]["sha256"], "tint": entry[face]["tint"]} for face in ("top", "side", "bottom")}
-            digest = hashlib.sha256(json.dumps({"master_version": 3, "faces": content}, sort_keys=True).encode()).hexdigest()
+            digest = hashlib.sha256(json.dumps({"master_version": 4, "faces": content}, sort_keys=True).encode()).hexdigest()
             name = asset_name("MI_", identifier, digest)
             folder = root + "/Materials"
             target = folder + "/" + name
@@ -267,6 +493,32 @@ def import_minecraft_textures(filename):
                 raise RuntimeError("Cannot save block material")
             palette_materials[identifier] = material
 
+        # Arbitrary cuboid/plane model faces use their own UVs rather than cube-normal
+        # texture selection. Keep this master separate so imported v1 palettes remain usable.
+        alpha_modes = {entry.get("alphaMode", "cutout") for entry in manifest["textures"].values()}
+        face_parents = {mode: _model_parent(unreal, assets, tools, editing, root, next(iter(imported.values())), mode) for mode in alpha_modes}
+        face_materials = {}
+        for identifier, texture in imported.items():
+            alpha_mode = manifest["textures"][identifier].get("alphaMode", "cutout")
+            face_parent = face_parents[alpha_mode]
+            for tinted in (False, True):
+                digest = hashlib.sha256((manifest["textures"][identifier]["sha256"] + "model-v2:" + alpha_mode + ":" + str(tinted)).encode()).hexdigest()
+                name = asset_name("MI_Model_", identifier, digest)
+                folder = root + "/Materials"
+                target = folder + "/" + name
+                instance = unreal.load_asset(target) if assets.does_asset_exist(target) else None
+                if instance is None:
+                    instance = tools.create_asset(name, folder, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
+                if not isinstance(instance, unreal.MaterialInstanceConstant):
+                    raise RuntimeError("Cannot create model-face instance")
+                editing.set_material_instance_parent(instance, face_parent)
+                instance.set_editor_property("texture_parameter_values", [unreal.TextureParameterValue(parameter_info=unreal.MaterialParameterInfo(name="FaceTexture"), parameter_value=texture)])
+                instance.set_editor_property("scalar_parameter_values", [unreal.ScalarParameterValue(parameter_info=unreal.MaterialParameterInfo(name="FaceTint"), parameter_value=float(tinted))])
+                editing.update_material_instance(instance)
+                if editing.get_material_instance_texture_parameter_value(instance, "FaceTexture") != texture or not assets.save_loaded_asset(instance, False):
+                    raise RuntimeError("Cannot save/read back model-face instance")
+                face_materials[identifier + ("#1" if tinted else "#0")] = instance
+
     palette_path = root + "/DA_MinecraftPalette"
     palette = unreal.load_asset(palette_path) if assets.does_asset_exist(palette_path) else None
     if palette is None:
@@ -293,9 +545,16 @@ def import_minecraft_textures(filename):
         palette.set_editor_property("particle_textures", particle_textures)
         palette.set_editor_property("particle_tints", particle_tints)
         palette.set_editor_property("particle_colors", particle_colors)
+        merged_faces = dict(palette.get_editor_property("face_materials")); merged_faces.update(face_materials)
+        palette.set_editor_property("face_materials", merged_faces)
+        if manifest["version"] == 2:
+            for field, source in (("blockstate_definitions", manifest["blockstates"]), ("models", manifest["models"]), ("state_shapes", manifest["blocks"])):
+                merged = dict(palette.get_editor_property(field))
+                merged.update({key: json.dumps(value, separators=(",", ":"), ensure_ascii=True) for key, value in source.items()})
+                palette.set_editor_property(field, merged)
         if not assets.save_loaded_asset(palette, False):
             raise RuntimeError("Cannot save texture palette")
         receivers[0].set_editor_property("texture_palette", palette)
     if not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level():
         raise RuntimeError("Cannot save current level")
-    unreal.log("Minecraft texture palette ready: " + str(len(palette_materials)) + " block types. Press Play and /uebridge world refresh.")
+    unreal.log("Minecraft texture/model palette ready: " + str(len(palette_materials)) + " block types, " + str(len(manifest.get("models", {}))) + " models. Press Play and /uebridge world refresh.")

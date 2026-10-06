@@ -10,6 +10,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/ConstructorHelpers.h"
 #include "BridgeBlockPalette.h"
+#include "BridgeBlockGeometry.h"
 #include "BridgeWorld.h"
 #include "BridgePlayerAppearance.h"
 #include "ProceduralMeshComponent.h"
@@ -96,7 +97,10 @@ ABridgeCharacter::ABridgeCharacter() {
         PrepareSkin(Layer,Part);AvatarLayers.Add(Layer);
     }
     SkinArm=CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("MinecraftFirstPersonArm"));PrepareSkin(SkinArm,BridgeCamera);SkinArm->SetCastShadow(false);
-    SkinSleeve=CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("MinecraftFirstPersonSleeve"));PrepareSkin(SkinSleeve,SkinArm);SkinSleeve->SetCastShadow(false);
+    SkinSleeve=CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("MinecraftFirstPersonSleeve"));PrepareSkin(SkinSleeve,BridgeCamera);SkinSleeve->SetCastShadow(false);
+    ProjectedSleeve=CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ProjectedFallbackSleeve"));PrepareSkin(ProjectedSleeve,BridgeCamera);ProjectedSleeve->SetCastShadow(false);
+    ProjectedHand=CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ProjectedFallbackHand"));PrepareSkin(ProjectedHand,BridgeCamera);ProjectedHand->SetCastShadow(false);
+    HeldModel=CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("MinecraftHeldModel"));PrepareSkin(HeldModel,BridgeCamera);HeldModel->SetCastShadow(false);
     AvatarRoot->SetVisibility(false,true);SkinArm->SetVisibility(false,true);
     AimRoot=CreateDefaultSubobject<USceneComponent>(TEXT("AimOutline"));AimRoot->SetupAttachment(GetCapsuleComponent());
     for(int32 I=0;I<12;++I) {
@@ -104,6 +108,7 @@ ABridgeCharacter::ABridgeCharacter() {
         Prepare(Edge,AimRoot);AimEdges.Add(Edge);
     }
     AimRoot->SetVisibility(false,true);HeldMesh->SetVisibility(false);
+    ProjectedSleeve->SetVisibility(false);ProjectedHand->SetVisibility(false);HeldModel->SetVisibility(false);
 }
 void ABridgeCharacter::ApplyMinecraftPose(double BodyHeight, double EyeHeight, bool Sneak) {
     const float HalfHeight = float(BodyHeight * 50);
@@ -211,6 +216,7 @@ void ABridgeCharacter::ConfigureVisuals(UMaterialInterface* Material,UBridgeBloc
         for(auto& Edge:AimEdges) Tint(Edge,FColor(12,12,12));
     }
     if(!VisualsConfigured || VisualMaterial!=Material || VisualPalette!=Palette || VisualItem!=Item || VisualBlock!=Block || VisualColor!=Color) {
+        HeldGeometryReady=false;
         UMaterialInterface* ItemMaterial=Palette && !Block.IsEmpty() ? Palette->Find(Block) : nullptr;
         if(!ItemMaterial) ItemMaterial=Material ? Material : Hand->GetMaterial(0);
         if(ItemMaterial) {
@@ -297,10 +303,110 @@ void ABridgeCharacter::BuildAvatarGeometry() {
         SkinArm->SetMaterial(0,PlayerAppearance->SkinMaterial);SkinSleeve->SetMaterial(0,PlayerAppearance->SkinMaterial);
     }
     AvatarGeometryReady=true;
+    CacheHandGeometry(SkinArm);CacheHandGeometry(SkinSleeve);
+    // Match the skinned arm's 75 cm silhouette when no personal skin is imported.
+    SkinCuboid(ProjectedSleeve,ArmWidth,7.2f,4,0,0,0);
+    SkinCuboid(ProjectedHand,ArmWidth,4.8f,4,0,0,0);
+    CacheHandGeometry(ProjectedSleeve);CacheHandGeometry(ProjectedHand);
+}
+
+void ABridgeCharacter::CacheHandGeometry(UProceduralMeshComponent* Part) {
+    auto& Sources=HandSources.FindOrAdd(Part);Sources.Empty();
+    for(int32 Index=0;Index<Part->GetNumSections();++Index) {
+        const auto* Section=Part->GetProcMeshSection(Index);
+        auto& Source=Sources.AddDefaulted_GetRef();
+        if(!Section) continue;
+        for(const auto& Vertex:Section->ProcVertexBuffer) {
+            Source.Positions.Add(Vertex.Position);Source.Normals.Add(Vertex.Normal);
+            Source.UV.Add(Vertex.UV0);Source.Colors.Add(FLinearColor::FromSRGBColor(Vertex.Color));
+            Source.Tangents.Add(Vertex.Tangent);
+        }
+    }
+}
+
+void ABridgeCharacter::PoseHandGeometry(UProceduralMeshComponent* Part,const FTransform& Pose,bool FixedHandFov) {
+    const auto* Sources=HandSources.Find(Part);if(!Sources) return;
+    Part->SetRelativeTransform(FTransform::Identity);
+    const double Transverse=FixedHandFov ? BridgeCharacterMath::FirstPersonTransverseScale(BridgeVerticalFov) : 1.0;
+    const FVector Stretch(1,Transverse,Transverse),Scale=Pose.GetScale3D();
+    for(int32 Index=0;Index<Sources->Num();++Index) {
+        const auto& Source=(*Sources)[Index];if(Source.Positions.IsEmpty()) continue;
+        TArray<FVector> Positions,Normals;TArray<FProcMeshTangent> Tangents;
+        Positions.Reserve(Source.Positions.Num());Normals.Reserve(Source.Positions.Num());Tangents.Reserve(Source.Positions.Num());
+        for(int32 V=0;V<Source.Positions.Num();++V) {
+            Positions.Add(Pose.TransformPosition(Source.Positions[V])*Stretch);
+            // Inverse transpose, including the display scale of narrow items.
+            const FVector N=Pose.GetRotation().RotateVector(Source.Normals[V]/Scale)/Stretch;
+            const FVector Normal=N.GetSafeNormal();Normals.Add(Normal);
+            const FVector T=Pose.TransformVector(Source.Tangents[V].TangentX)*Stretch;
+            Tangents.Add(FProcMeshTangent((T-Normal*FVector::DotProduct(T,Normal)).GetSafeNormal(),Source.Tangents[V].bFlipTangentY));
+        }
+        Part->UpdateMeshSection_LinearColor(Index,Positions,Normals,Source.UV,Source.Colors,Tangents);
+    }
+}
+
+void ABridgeCharacter::BuildHeldGeometry() {
+    HeldModel->ClearAllMeshSections();
+    TArray<FBridgeModelFace> Faces;
+    const bool Imported=IsValid(VisualPalette) && !VisualBlock.IsEmpty()
+        && VisualPalette->BuildModel(VisualBlock,VisualPalette->DefaultState(VisualBlock),Faces) && !Faces.IsEmpty();
+    if(!Imported) {
+        // Preserve the existing neutral model for items outside this release's
+        // block scope. A full block still works with a legacy face-only palette.
+        const FVector N[]={FVector(1,0,0),FVector(-1,0,0),FVector(0,1,0),FVector(0,-1,0),FVector(0,0,1),FVector(0,0,-1)};
+        for(const FVector& Normal:N) {
+            const FVector U=FMath::Abs(Normal.Z)>.5f ? FVector(1,0,0) : FVector::CrossProduct(FVector(0,0,1),Normal);
+            const FVector V=FVector::CrossProduct(Normal,U),Center=Normal*.5f;
+            FBridgeModelFace Face;
+            const FVector Positions[]={Center-U*.5f-V*.5f,Center+U*.5f-V*.5f,Center+U*.5f+V*.5f,Center-U*.5f+V*.5f};
+            const FVector2D UV[]={FVector2D(0,1),FVector2D(1,1),FVector2D(1,0),FVector2D(0,0)};
+            for(int32 I=0;I<4;++I) {Face.Vertices[I]=Positions[I]+FVector(.5);Face.UV[I]=UV[I];}
+            Faces.Add(MoveTemp(Face));
+        }
+    }
+    struct FModelSection {
+        TArray<FVector> Vertices,Normals;
+        TArray<FVector2D> UV;
+        TArray<int32> Triangles;
+        TArray<FLinearColor> Colors;
+        TArray<FProcMeshTangent> Tangents;
+        UMaterialInterface* Material=nullptr;
+    };
+    TArray<FModelSection> Sections;TMap<FString,int32> MaterialSections;
+    for(const auto& Face:Faces) {
+        const FString Key=Imported ? Face.TextureId+(Face.bTint ? TEXT("#1") : TEXT("#0")) : TEXT("legacy");
+        int32* Existing=MaterialSections.Find(Key);int32 Index;
+        if(Existing) Index=*Existing;
+        else {
+            Index=Sections.Num();MaterialSections.Add(Key,Index);auto& New=Sections.AddDefaulted_GetRef();
+            New.Material=Imported ? VisualPalette->FindFaceMaterial(Face.TextureId,Face.bTint) : HeldMesh->GetMaterial(0);
+        }
+        auto& Section=Sections[Index];const int32 First=Section.Vertices.Num();
+        for(int32 I=0;I<4;++I) {
+            const FVector MC=Face.Vertices[I]-FVector(.5);
+            Section.Vertices.Add(FVector(MC.Z,-MC.X,MC.Y)*100);Section.UV.Add(Face.UV[I]);Section.Colors.Add(FLinearColor::White);
+        }
+        const FVector Normal=FVector::CrossProduct(Section.Vertices[First+2]-Section.Vertices[First],Section.Vertices[First+1]-Section.Vertices[First]).GetSafeNormal();
+        const FVector Tangent=(Section.Vertices[First+1]-Section.Vertices[First]).GetSafeNormal();
+        for(int32 I=0;I<4;++I) {Section.Normals.Add(Normal);Section.Tangents.Add(FProcMeshTangent(Tangent,false));}
+        Section.Triangles.Append({First,First+2,First+1,First,First+3,First+2});
+    }
+    for(int32 Index=0;Index<Sections.Num();++Index) {
+        const auto& Section=Sections[Index];
+        HeldModel->CreateMeshSection_LinearColor(Index,Section.Vertices,Section.Triangles,Section.Normals,Section.UV,Section.Colors,Section.Tangents,false);
+        if(Section.Material) {
+            auto* Dynamic=UMaterialInstanceDynamic::Create(Section.Material,this);
+            const FColor Color=VisualBlock.IsEmpty() ? FColor(200,180,110) : FColor((VisualColor>>16)&255,(VisualColor>>8)&255,VisualColor&255);
+            Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(Color));
+            HeldModel->SetMaterial(Index,Dynamic);
+        }
+    }
+    CacheHandGeometry(HeldModel);HeldGeometryReady=true;
 }
 
 void ABridgeCharacter::UpdateAvatar(float Bob) {
     if(!AvatarGeometryReady) BuildAvatarGeometry();
+    if(!HeldGeometryReady) BuildHeldGeometry();
     const bool HasSkin=IsValid(PlayerAppearance) && IsValid(PlayerAppearance->SkinMaterial);
     const bool FirstPerson=CameraPerspective==0 && (UEAuthority || HasPlayerVisuals);
     const bool ThirdPerson=CameraPerspective!=0 && (UEAuthority || HasPlayerVisuals) && HasSkin;
@@ -345,23 +451,27 @@ void ABridgeCharacter::UpdateAvatar(float Bob) {
     // path renders the skin arm. Keep the two transforms/visibility paths separate.
     const bool EmptyHand=VisualItem.IsEmpty();
     SkinArm->SetVisibility(FirstPerson && HasSkin && EmptyHand);SkinSleeve->SetVisibility(FirstPerson && HasSkin && EmptyHand && (PlayerSkinLayers&(PlayerLeftHanded ? 4 : 8))!=0);
-    SkinArm->SetRelativeLocationAndRotation(ArmPosition,ArmRotation);
-    Sleeve->SetVisibility(FirstPerson && !HasSkin && EmptyHand);Hand->SetVisibility(FirstPerson && !HasSkin && EmptyHand);
-    const float ArmWidthCm=PlayerSlim ? 18.75f : 25.f;
-    Sleeve->SetRelativeScale3D(FVector(.25f,ArmWidthCm/100.f,.45f));Hand->SetRelativeScale3D(FVector(.25f,ArmWidthCm/100.f,.30f));
-    Sleeve->SetRelativeLocationAndRotation(ArmPosition+ArmRotation.RotateVector(FVector(0,0,-22.5f)),ArmRotation);
-    Hand->SetRelativeLocationAndRotation(ArmPosition+ArmRotation.RotateVector(FVector(0,0,-60.f)),ArmRotation);
-    HeldMesh->SetVisibility((FirstPerson || ThirdPerson) && !VisualItem.IsEmpty());
+    Sleeve->SetVisibility(false);Hand->SetVisibility(false);HeldMesh->SetVisibility(false);
+    ProjectedSleeve->SetVisibility(FirstPerson && !HasSkin && EmptyHand);ProjectedHand->SetVisibility(FirstPerson && !HasSkin && EmptyHand);
+    ProjectedSleeve->SetMaterial(0,Sleeve->GetMaterial(0));ProjectedHand->SetMaterial(0,Hand->GetMaterial(0));
+    if(FirstPerson && EmptyHand) {
+        const FTransform ArmTransform(ArmRotation,ArmPosition);
+        if(HasSkin) {
+            PoseHandGeometry(SkinArm,ArmTransform,true);PoseHandGeometry(SkinSleeve,ArmTransform,true);
+        } else {
+            PoseHandGeometry(ProjectedSleeve,ArmTransform,true);
+            PoseHandGeometry(ProjectedHand,FTransform(ArmRotation,ArmPosition+ArmRotation.RotateVector(FVector(0,0,-45.f))),true);
+        }
+    }
+    HeldModel->SetVisibility((FirstPerson || ThirdPerson) && !VisualItem.IsEmpty());
     if(ThirdPerson) {
         const int32 ArmIndex=PlayerLeftHanded ? 3 : 2;
-        HeldMesh->AttachToComponent(AvatarParts[ArmIndex],FAttachmentTransformRules::KeepRelativeTransform);
-        HeldMesh->SetRelativeScale3D(VisualBlock.IsEmpty() ? FVector(.025,.035,.20) : FVector(BridgeCharacterMath::ThirdPersonBlockScale));
+        HeldModel->AttachToComponent(AvatarParts[ArmIndex],FAttachmentTransformRules::KeepRelativeTransform);
         const auto GripPose=BridgeCharacterMath::ThirdPersonBlock(PlayerLeftHanded);
-        HeldMesh->SetRelativeLocationAndRotation(PosePosition(GripPose),PoseRotation(GripPose));
+        PoseHandGeometry(HeldModel,FTransform(PoseRotation(GripPose),PosePosition(GripPose),VisualBlock.IsEmpty() ? FVector(.025,.035,.20) : FVector(BridgeCharacterMath::ThirdPersonBlockScale)),false);
         if(NativeSwing>0) AvatarParts[ArmIndex]->AddLocalRotation(FRotator(float(BridgeCharacterMath::AttackPitch(NativeSwing,GetControlRotation().Pitch)),0,0));
-    } else {
-        HeldMesh->AttachToComponent(BridgeCamera,FAttachmentTransformRules::KeepRelativeTransform);
-        HeldMesh->SetRelativeScale3D(VisualBlock.IsEmpty() ? FVector(.025,.035,.20) : FVector(BridgeCharacterMath::FirstPersonBlockScale));
-        HeldMesh->SetRelativeLocationAndRotation(ItemPosition,ItemRotation);
+    } else if(FirstPerson) {
+        HeldModel->AttachToComponent(BridgeCamera,FAttachmentTransformRules::KeepRelativeTransform);
+        PoseHandGeometry(HeldModel,FTransform(ItemRotation,ItemPosition,VisualBlock.IsEmpty() ? FVector(.025,.035,.20) : FVector(BridgeCharacterMath::FirstPersonBlockScale)),true);
     }
 }

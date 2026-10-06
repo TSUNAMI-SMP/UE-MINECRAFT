@@ -13,6 +13,7 @@ constexpr double CrouchedEyeCm = 127.0;
 constexpr double FirstPersonBlockScale = 0.40;
 constexpr double ThirdPersonBlockScale = 0.375;
 constexpr double SwingSeconds = 0.30;
+constexpr double FirstPersonVerticalFov = 70.0;
 
 inline double Clamp(double Value,double Low,double High) { return std::max(Low,std::min(Value,High)); }
 inline double WrapDegrees(double Value) {
@@ -57,6 +58,24 @@ struct Vector {
     Vector operator+(const Vector& Other) const {return {X+Other.X,Y+Other.Y,Z+Other.Z};}
     Vector operator*(double Scale) const {return {X*Scale,Y*Scale,Z*Scale};}
 };
+// Exact perspective equivalence in a single capture: x is camera depth. Scale
+// transverse coordinates, after the complete model pose, to cancel world FOV.
+// A nonuniform parent component scale cannot do this for rotated children
+// because FTransform cannot retain the required shear.
+inline double FirstPersonTransverseScale(double WorldVerticalFov) {
+    const double Fov=std::isfinite(WorldVerticalFov) ? Clamp(WorldVerticalFov,30.0,160.0) : 80.0;
+    return std::tan(Fov*Pi/360.0)/std::tan(FirstPersonVerticalFov*Pi/360.0);
+}
+inline Vector ProjectFirstPersonPoint(const Vector& CameraPoint,double WorldVerticalFov) {
+    const double Scale=FirstPersonTransverseScale(WorldVerticalFov);
+    return {CameraPoint.X,CameraPoint.Y*Scale,CameraPoint.Z*Scale};
+}
+inline Vector ProjectFirstPersonNormal(const Vector& CameraNormal,double WorldVerticalFov) {
+    const double Scale=FirstPersonTransverseScale(WorldVerticalFov);
+    const Vector N{CameraNormal.X,CameraNormal.Y/Scale,CameraNormal.Z/Scale};
+    const double Length=std::sqrt(N.X*N.X+N.Y*N.Y+N.Z*N.Z);
+    return Length>1e-12 ? N*(1.0/Length) : Vector{0,0,1};
+}
 struct Quaternion {
     double X=0,Y=0,Z=0,W=1;
     Quaternion operator*(const Quaternion& Other) const {

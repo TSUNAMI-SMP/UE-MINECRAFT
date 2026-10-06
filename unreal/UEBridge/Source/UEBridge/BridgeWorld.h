@@ -30,13 +30,17 @@ public:
     FString GetImportId() const { return ImportId; }
     int32 ImportedCells() const { return Revisions.Num(); }
     UFUNCTION(BlueprintCallable,Category="Bridge|World") int32 RemoveBlocksInSphere(FVector Position,float RemovalRadius);
-    bool Aim(const FVector& Start,const FRotator& Rotation,float Reach,FIntVector& Block,FVector& Normal,const AActor* Ignored=nullptr) const;
+    bool Aim(const FVector& Start,const FRotator& Rotation,float Reach,FIntVector& Block,FVector& Normal,const AActor* Ignored=nullptr,FVector* HitPoint=nullptr) const;
     FVector BlockCenter(const FIntVector& Block) const;
     /** Resolve source metadata without relying on the frozen Minecraft player. */
     bool GetBlockInfo(const FIntVector& SourceVoxel,FString& BlockId,FColor& Tint) const;
+    bool GetBlockState(const FIntVector& SourceVoxel,FString& BlockId,FString& StateKey) const;
+    FString GetModelError() const { return LastModelError; }
+    bool GetBlockOutline(const FIntVector& SourceVoxel,TArray<FBox>& MinecraftBoxes) const;
     bool GetSupportingBlock(const FVector& Feet,FIntVector& SourceVoxel,FString& BlockId,FColor& Tint,FVector& ImpactPoint,const AActor* Ignored=nullptr) const;
     bool BreakBlock(const FIntVector& Block);
-    FString PlaceBlock(const FIntVector& Block,const FString& BlockId,int32 Color);
+    FString PlaceBlock(const FIntVector& Block,const FString& BlockId,int32 Color,double Yaw=0,const FVector& Normal=FVector::UpVector,const FVector& HitPoint=FVector::ZeroVector);
+    bool UseBlock(const FIntVector& Block);
     int32 CellCount() const { return Cells.Num(); }
     int32 ShapeCount() const { return Shapes; }
 private:
@@ -55,8 +59,13 @@ private:
     UPROPERTY() TObjectPtr<class UMaterialInterface> SavedMaterial;
     UPROPERTY() TObjectPtr<class UBridgeBlockPalette> SavedPalette;
     UPROPERTY() TArray<TObjectPtr<class UBoxComponent>> Boundary;
+    TMap<FIntVector,double> ButtonRelease;
+    FString LastModelError;
     void BuildBoundary();
     bool Inside(const FIntVector& C) const;
     FIntVector OwnerOf(const FBridgeBlock& Block) const;
     void RebuildCell(const FIntVector& Cell);
+    bool AppendState(const FIntVector& Block,const FString& BlockId,int32 Color,const FString& StateKey,TArray<FBridgeBlock>& Out) const;
+    const FBridgeBlock* FindVisual(const FIntVector& Block) const;
+    void UpdateConnections(const FIntVector& Block);
 };

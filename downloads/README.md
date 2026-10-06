@@ -1,5 +1,26 @@
 # ダウンロード
 
+## 更新版0.9.0
+
+- [MOD 0.9.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/minecraft-ue-bridge-0.9.0.jar)
+- [既存UE用更新ZIP 0.9.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/UEBridge-update-0.9.0.zip)
+- [ソース＋MOD一式ZIP 0.9.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/UE-Minecraft-MVP-0.9.0.zip)
+
+一人称のFOV70投影、破片調整、通常ブロックのモデル・当たり判定・設置、
+地上モブの基本AI、照明オフと実際のMinecraftの空の合成。
+[上書き対象・操作順・診断](../docs/UPGRADE_0.9.0.md) / [ブロック対象範囲](../docs/BLOCK_SUPPORT_0.9.0.md)。
+モブ固有AI・飛行／水中・装備等の描画、全アイテム、全ブロック固有挙動は未完成です。
+
+MODとUEを両方更新し、UEを閉じて再ビルドします。Sourceは削除せず統合コピーします。
+ブロック・スキン・モブ素材をMC専用環境から再書き出し、UEに再取り込みしてください。
+更新ZIPはContent/Config/Saved/uprojectを含まず、既存レベル・素材を保持します。
+0.8.2の粒子設定修正を含むため、その旧パッチを重ねて適用する必要はありません。
+配布ブランチは `ue-bridge-0.9.0`。旧版ZIP・mainは保持します。
+
+クラウドでMODビルド、Java95件/Python41件、独立C++計算53項目とマスク15往復が成功。
+実際の1.21.11ローカル素材1008静的モデルIDの解決・検証も成功しました。
+**UE5.8のビルド・描画・Windows統合動作は未確認です。**
+
 ## 更新版 0.8.0
 
 **粒子素材の設定には[修正パッチ0.8.2](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.8.0/downloads/UEBridge-particle-setup-fix-0.8.2.zip)も適用してください。**

@@ -56,8 +56,8 @@ memory and retry traffic; it is not persistent delivery across UE restarts. Rest
 UE Play and reconnect the MC world together when testing. ACK indicates receiver
 handled the event, not proof that an assigned Niagara asset rendered or wall broke.
 
-Future types (`block_place`, `block_break`, `mob_state`, `hp_state`)
-should add versioned payloads/handlers behind this transport. Unknown types are
+Later versions below add authoritative block actions, mobs and UE health.
+Other future types should add versioned payloads/handlers behind this transport. Unknown types are
 ignored. No Minecraft or Fabric types in `BridgeTransport`; no rendering code in
 the sender.
 
@@ -435,3 +435,100 @@ Missing extensions identify an older receiver; invalid diagnostic metadata does
 not invalidate otherwise valid receiver readiness. `/uebridge status` displays
 the extension without asserting GPU visibility. The nested extension and bounded
 strings remain within the2048-byte UDP datagram limit.
+
+## Models, ground mobs and native sky (0.9.0)
+
+Status capabilities: `blockModelsV2`, `blockPaletteReady`, `mobsV1`,
+`mobPaletteReady`, `videoV3`, `skySupported`. A missing model palette prevents
+initial import. `blockModelError` identifies a rejected state or missing face
+material; a cell is not acknowledged as complete with missing visuals.
+
+Physics rows may append a canonical sorted state key and role to the previous
+12-field owner row:
+
+```text
+[x,y,z,rgb,sx,sy,sz,blockId,collision,ownerX,ownerY,ownerZ,stateKey,role]
+```
+
+`role=1`: baked render model, no collision. `role=2`: native collision boxes,
+hidden, Pawn blocking. It also blocks Visibility when that owner has no separate
+outline boxes. `role=3`: hidden native outline boxes, Visibility only. Identical
+collision/outline lists share role2 instead of duplicating proxies. Owners stay
+in their declared cell. State keys are at most1024 characters; roles1/3 require
+collision=false, role2 requires true. Old7/8/9/12-field rows remain parseable.
+New physics batches use at most4 rows and a1500-byte row budget, up to8192 batches
+and8192 rows per cell. Cells stage atomically for60seconds; total world shapes
+are bounded at524288. Event envelopes still fit2048bytes. Normal imports bake
+variants/multipart and export native collision/outline metadata; special blocks
+are explicitly excluded locally. See `docs/BLOCK_SUPPORT_0.9.0.md`.
+
+Block actions optionally include typed `sneak`. Unsneaked right clicks use wooden
+doors/trapdoors/gates/levers/buttons before placing. Same-slab clicks merge only
+on the open half's appropriate vertical face. Other placement states derive from
+UE hit position, face and Minecraft yaw; source block edits remain UE-local.
+All-item models and complete block-specific gameplay mechanics are outside this version.
+
+`video_config` optionally adds `lighting:boolean` (defaulttrue),
+`vanillaSky:boolean` (defaultfalse), `particleScale:0.25..2` (default.75),
+`particleDensity:0.125..1` (default1), `particleLifetime:0.25..2` (default.9).
+Lighting=true with vanillaSky=true is rejected. Lighting flags affect stream
+scene captures, preserving saved assets/editor view. Paused input sets controller=false.
+First-person projected meshes use fixed verticalFOV70 while the world retains
+its smooth cameraFov/sprint projection. They share world depth.
+
+A v3 client sends `UEB3` +36-byte session UUID instead of legacy `UEBH`.
+Legacy clients continue receiving v2 JPEG frames. V3 headers are84bytes:
+
+```text
+uint32 magic='UEBV', version=3, width, height, frameSequence, jpegLength
+uint64 inputSequence
+uint32 readbackMicroseconds, encodeMicroseconds
+uint32 flags(bit0=skyMask), maskLength
+float64 absoluteMinecraftCameraX,Y,Z
+float32 minecraftYaw,minecraftPitch,verticalFov
+byte[jpegLength] JPEG
+byte[maskLength] lossless mask
+```
+
+All numbers are big endian IEEE/integer. The mask is a stream of
+`uint16 runLength` + `uint8 opacity`; every run is positive and runs must cover
+exactly width*height. Limits1920*1080, JPEG2MiB, mask3*1920*1080bytes.
+SkyMode pairs the same-view LDR color and SceneColorHDR inverse-opacity capture,
+removes UE sky/atmosphere/fog, and latches RGB/mask/camera/session/mode revision
+together. It does not color-key pixels. Matching captures disable temporalAA.
+Decoder converts captured premultiplied RGB back to straight alpha in gamma2.2
+before the native GUI blend; fully transparent pixels are zeroed.
+
+Minecraft renders only its native sky/celestial/cloud framegraph behind that
+latched frame, using native time/weather and captured camera position/rotation.
+Image letterboxing adjusts sky projection to the same focal length. No native
+terrain/entities/particles/hand or frozen-player fire/water overlays draw in
+that mode. Rain/snow geometry and GPU shared textures are not implemented.
+`maskPixels/maskForeground/maskTranslucent` are CPU mask pixel counts, not FPS.
+
+`mob_spawn`: ordinary reliable event envelope plus importId, mobId UUID,
+mobType identifier, appearance64-lowercase-hex key, relative feet x/y/z,
+yaw, width/height0.05..16, health/maxHealth0.01..10000 (health<=maxHealth),
+speed0..2, damage0..100, hostile/baby typed booleans. UE requires the current
+sealed import and active controller. Missing palette/appearance or failed spawn
+gets noACK; retries expire and MC does not suspend originals. Accepted UUIDs
+are tombstoned for that world import, including dead copies. `mob_clear` requires
+the current importId. Modifications never write source position/NBT/health.
+In dedicated integrated singleplayer (not LAN), only successfully acknowledged
+imported source mobs receive a2second in-memory lease cancelling the outer
+ServerWorld.tickEntity call. Off/pause/stale control/disconnect releases it.
+Ground copies use generic wander/chase/melee; species-specificAI, flying/aquatic
+mobs and feature render layers are not complete.
+
+`mob_feedback` uses reliable effectId/session/receiverId/seq and feedback_ack,
+`type:"mob"`, a native `sound` identifier and numeric `lx/ly/lz` in blocks
+relative to the UE camera's right/up/forward axes. MC remaps these to its audio
+listener and uses active-resource-pack sounds. UUIDs accept upper/lowercase hex
+whileACK preserves the original wire ID. No MC saved-player damage is applied.
+UE playerHP is reported in `uePlayerHealth` and displayed in the native HUD.
+AtHP0 UE movement/editing stops. `player_respawn` requires current importId,
+active control and HP0; UE finds an unblocked original spawn position and resetsHP.
+
+`mobCount/mobMissing/mobReason` and `/uebridge mobs` expose import outcomes.
+CloudJava/Python/portableC++ tests validate protocols/assets/math. They do not
+validate UE module compilation, shader output or full game integration.

@@ -4,6 +4,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Engine/World.h"
 #include "Misc/AutomationTest.h"
+#include "BridgeBlockPreview.h"
+#include "Components/InstancedStaticMeshComponent.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeWorldSealTest,"UEBridge.World.ImportCommitAndProtection",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FBridgeWorldSealTest::RunTest(const FString& Parameters) {
@@ -57,5 +59,39 @@ bool FBridgeWorldSealTest::RunTest(const FString& Parameters) {
     Begin.ImportId=TEXT("second");Bridge->BeginImport(Begin,FVector::ZeroVector);
     TestFalse(TEXT("Explicit new import unlocks"),Bridge->IsSealed());TestEqual(TEXT("Explicit replacement clears"),Bridge->ImportedCells(),0);
     World->DestroyWorld(false); return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeNativeProxyTest,"UEBridge.World.NativeProxyGroupingRetainsOwnerAndBiomePalette",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBridgeNativeProxyTest::RunTest(const FString& Parameters) {
+    UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);if(!TestNotNull(TEXT("Test world"),World)) return false;
+    auto* Preview=World->SpawnActor<ABridgeBlockPreview>();
+    if(!TestNotNull(TEXT("Proxy actor"),Preview)) {World->DestroyWorld(false);return false;}
+    TArray<FBridgeBlock> Blocks;
+    for(int32 I=0;I<2;++I) {
+        FBridgeBlock Block;Block.Position=FVector(I+.5,.5,.5);Block.SourceBlock=FIntVector(I,0,0);Block.HasSourceBlock=true;
+        Block.Role=2;Block.Collision=true;Block.BlockId=I==0 ? TEXT("minecraft:stone") : TEXT("minecraft:oak_leaves");
+        Block.Color=I==0 ? 0x777777 : 0x48b518;Block.StateKey=I==0 ? TEXT("") : TEXT("persistent=true");Blocks.Add(Block);
+    }
+    Preview->Replace(Blocks,FVector::ZeroVector,nullptr,nullptr,true);
+    TArray<UInstancedStaticMeshComponent*> Components;Preview->GetComponents(Components);
+    TestEqual(TEXT("Different IDs/colors share one hidden response group"),Components.Num(),1);
+    if(Components.Num()==1) {
+        FBridgeBlock Resolved;
+        TestTrue(TEXT("Second instance resolves"),Preview->ResolveHit(Components[0],1,Resolved));
+        TestEqual(TEXT("Grouping retains actual block ID"),Resolved.BlockId,FString(TEXT("minecraft:oak_leaves")));
+        TestTrue(TEXT("Grouping retains source voxel"),Resolved.SourceBlock==FIntVector(1,0,0));
+        TestEqual(TEXT("Grouping retains native state"),Resolved.StateKey,FString(TEXT("persistent=true")));
+    }
+    auto* Bridge=World->SpawnActor<ABridgeWorld>();
+    if(TestNotNull(TEXT("World bridge"),Bridge)) {
+        FBridgePacket Scope;Scope.Kind=EBridgeKind::WorldScope;Scope.Sequence=1;Scope.Radius=1;Scope.HalfHeight=1;
+        Bridge->Handle(Scope,FVector::ZeroVector,nullptr);
+        FBridgePacket Cell;Cell.Kind=EBridgeKind::WorldCell;Cell.Sequence=2;Cell.SnapshotSequence=2;Cell.SnapshotId=TEXT("biomes");Cell.TotalBatches=1;
+        for(int32 I=0;I<512;++I) {
+            FBridgeBlock Block;Block.Position=FVector(I&7,(I>>6)&7,(I>>3)&7)+FVector(.5);Block.Color=I;Block.BlockId=TEXT("minecraft:grass_block");Cell.Blocks.Add(Block);
+        }
+        TestTrue(TEXT("A complete cell with native blended biome colors imports"),Bridge->Handle(Cell,FVector::ZeroVector,nullptr));
+        TestEqual(TEXT("All 512 owners retained"),Bridge->ShapeCount(),512);
+    }
+    World->DestroyWorld(false);return true;
 }
 #endif

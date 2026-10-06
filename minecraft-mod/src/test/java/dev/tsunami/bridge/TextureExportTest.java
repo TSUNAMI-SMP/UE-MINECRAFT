@@ -18,6 +18,7 @@ public class TextureExportTest {
         put(result,"minecraft:blockstates/grass_block.json","{\"variants\":{\"snowy=true\":{\"model\":\"block/snow\"},\"snowy=false\":{\"model\":\"block/grass\"}}}");
         put(result,"minecraft:models/block/base.json","{\"textures\":{\"bottom\":\"block/dirt\"},\"elements\":[{\"faces\":{\"up\":{\"texture\":\"#top\",\"tintindex\":0},\"north\":{\"texture\":\"#side\"},\"down\":{\"texture\":\"#bottom\"}}}]}");
         put(result,"minecraft:models/block/grass.json","{\"parent\":\"block/base\",\"textures\":{\"top\":\"#upper\",\"upper\":\"block/grass_top\",\"side\":\"block/grass_side\"}}");
+        put(result,"minecraft:models/block/snow.json","{\"parent\":\"block/grass\"}");
         var image=new BufferedImage(2,2,BufferedImage.TYPE_INT_ARGB); image.setRGB(0,0,0xffff0000);
         var out=new ByteArrayOutputStream(); ImageIO.write(image,"png",out);
         for(String id:List.of("grass_top","grass_side","dirt")) result.put("minecraft:textures/block/"+id+".png",out.toByteArray());
@@ -98,5 +99,43 @@ public class TextureExportTest {
         assertEquals(4,manifest.getAsJsonObject("textures").size());
         assertEquals("minecraft:block/dust_only",manifest.getAsJsonObject("blocks").getAsJsonObject("minecraft:grass_block")
                 .getAsJsonObject("particle").get("texture").getAsString());
+    }
+    @Test public void exportsAllVariantModelsAndNativeStateBoxes() throws Exception {
+        var exporter=make(resources());
+        var state=new TextureExport.State(Map.of("snowy","false"),List.of(new double[]{0,0,0,1,.5,1}),List.of(new double[]{0,0,0,1,.5,1}));
+        assertTrue(exporter.export(new TextureExport.Block("minecraft:grass_block",Map.of("snowy","false"),0xffffff,List.of(state),"")));
+        var json=JsonParser.parseString(Files.readString(exporter.finish())).getAsJsonObject();
+        assertEquals(2,json.get("version").getAsInt());
+        assertTrue(json.getAsJsonObject("models").has("minecraft:block/snow"));
+        var box=json.getAsJsonObject("blocks").getAsJsonObject("minecraft:grass_block").getAsJsonObject("states")
+            .getAsJsonObject("snowy=false").getAsJsonArray("collision").get(0).getAsJsonArray();
+        assertEquals(.5,box.get(4).getAsDouble(),0);
+    }
+    @Test public void resolvesMultipartConditionsAndExportsEveryAppliedModel() throws Exception {
+        var map=resources();
+        put(map,"minecraft:blockstates/oak_fence.json","{\"multipart\":[{\"apply\":{\"model\":\"block/grass\"}},{\"when\":{\"OR\":[{\"north\":\"true\"},{\"east\":\"true|low\"}]},\"apply\":{\"model\":\"block/snow\",\"y\":90}}]}");
+        var exporter=make(map); assertTrue(exporter.export(new TextureExport.Block("minecraft:oak_fence",Map.of("north","true"))));
+        var json=JsonParser.parseString(Files.readString(exporter.finish())).getAsJsonObject();
+        assertEquals(2,json.getAsJsonObject("models").size());
+        assertEquals("minecraft:block/grass",json.getAsJsonObject("blockstates").getAsJsonObject("minecraft:oak_fence")
+            .getAsJsonArray("multipart").get(0).getAsJsonObject().getAsJsonObject("apply").get("model").getAsString());
+    }
+    @Test public void excludedBlocksHaveExplicitReasonAndStateKeysAreSorted() throws Exception {
+        var exporter=make(resources());
+        assertFalse(exporter.export(new TextureExport.Block("minecraft:oak_sign",Map.of(),0xffffff,List.of(),"sign")));
+        var json=JsonParser.parseString(Files.readString(exporter.finish())).getAsJsonObject();
+        assertEquals("sign",json.getAsJsonObject("excluded").get("minecraft:oak_sign").getAsString());
+        assertEquals("facing=north,half=top",TextureExport.stateKey(Map.of("half","top","facing","north")));
+    }
+    @Test public void partialAlphaAndBareVanillaTextureVariableArePreserved() throws Exception {
+        var map=resources();
+        put(map,"minecraft:models/block/grass.json","{\"textures\":{\"all\":\"block/grass_top\"},\"elements\":[{\"from\":[4,0,4],\"to\":[12,8,12],\"faces\":{\"north\":{\"texture\":\"all\"}}}]}");
+        var image=new BufferedImage(1,1,BufferedImage.TYPE_INT_ARGB);image.setRGB(0,0,0x80ffffff);
+        var out=new ByteArrayOutputStream();ImageIO.write(image,"png",out);map.put("minecraft:textures/block/grass_top.png",out.toByteArray());
+        var exporter=make(map);assertTrue(exporter.export(grass()));
+        var json=JsonParser.parseString(Files.readString(exporter.finish())).getAsJsonObject();
+        assertEquals("translucent",json.getAsJsonObject("textures").getAsJsonObject("minecraft:block/grass_top").get("alphaMode").getAsString());
+        assertEquals("minecraft:block/grass_top",json.getAsJsonObject("models").getAsJsonObject("minecraft:block/grass")
+            .getAsJsonArray("elements").get(0).getAsJsonObject().getAsJsonObject("faces").getAsJsonObject("north").get("texture").getAsString());
     }
 }

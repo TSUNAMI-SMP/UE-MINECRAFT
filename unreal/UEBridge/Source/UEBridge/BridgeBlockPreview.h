@@ -17,4 +17,5 @@ private:
     TMap<const class UPrimitiveComponent*,TArray<FBridgeBlock>> InstanceBlocks;
     UPROPERTY() TObjectPtr<class UStaticMesh> Cube;
     UPROPERTY() TArray<TObjectPtr<class UInstancedStaticMeshComponent>> Groups;
+    UPROPERTY() TArray<TObjectPtr<class UProceduralMeshComponent>> ModelGroups;
 };

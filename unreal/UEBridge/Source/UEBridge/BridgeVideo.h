@@ -12,6 +12,13 @@ public:
     UBridgeVideo();
     void Start(int32 Port);
     void SetSource(class UCameraComponent* Camera,const FString& Session,uint64 InputSequence);
+    void SetRenderMode(bool Lighting,bool VanillaSky);
+    void SetMinecraftOrigin(const FVector& MinecraftOrigin,const FVector& UEAnchor) {MCOrigin=MinecraftOrigin;Anchor=UEAnchor;}
+    bool IsLightingEnabled() const {return LightingEnabled;}
+    bool IsVanillaSkyEnabled() const {return VanillaSkyEnabled && ClientV3;}
+    int32 GetMaskPixels() const {return LastMaskPixels;}
+    int32 GetMaskForegroundPixels() const {return LastMaskForeground;}
+    int32 GetMaskTranslucentPixels() const {return LastMaskTranslucent;}
     virtual void TickComponent(float DeltaTime,ELevelTick TickType,FActorComponentTickFunction* ThisTickFunction) override;
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Video",meta=(ClampMin="160",ClampMax="1920")) int32 Width=960;
@@ -30,6 +37,13 @@ private:
     class FSocket* Client=nullptr;
     UPROPERTY() TObjectPtr<class USceneCaptureComponent2D> Capture;
     UPROPERTY() TObjectPtr<class UTextureRenderTarget2D> Target;
+    UPROPERTY() TObjectPtr<class USceneCaptureComponent2D> MaskCapture;
+    UPROPERTY() TObjectPtr<class UTextureRenderTarget2D> MaskTarget;
+    FVector MCOrigin=FVector::ZeroVector,Anchor=FVector::ZeroVector;
+    bool LightingEnabled=true,VanillaSkyEnabled=false,ClientV3=false;
+    uint32 ModeRevision=0,EncodeRevision=0;
+    double LastSkyScan=-1;
+    int32 LastMaskPixels=0,LastMaskForeground=0,LastMaskTranslucent=0;
     TFuture<TArray<uint8>> Encoding;
     FString EncodeSession, ClientSession;
     TArray<uint8> Hello, Output;
@@ -38,4 +52,6 @@ private:
     double AcceptedAt=0, LastCapture=-1, LastProgress=0;
     void DropClient();
     void Flush();
+    void ConfigureCapture(class USceneCaptureComponent2D* Component,bool Mask);
+    void RefreshHiddenSky();
 };

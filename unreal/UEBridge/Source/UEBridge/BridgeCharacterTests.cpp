@@ -2,6 +2,7 @@
 // production helper via tools/test_character_math.py, without pretending UE ran.
 #if WITH_DEV_AUTOMATION_TESTS
 #include "BridgeCharacterMath.h"
+#include "BridgeParticleMath.h"
 #include "Misc/AutomationTest.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeCharacterMathTest,"UEBridge.Character.PresentationMath",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -14,6 +15,9 @@ bool FBridgeCharacterMathTest::RunTest(const FString& Parameters) {
     TestTrue(TEXT("Sprint FOV uses one MC tick half-step"),FMath::IsNearlyEqual(SprintFovMultiplier(1,true,.05),1.075));
     const auto Block=FirstPersonBlock(0,1,false);
     TestTrue(TEXT("Vanilla equipped block in camera space"),FVector(Block.Position.X,Block.Position.Y,Block.Position.Z).Equals(FVector(72,56,-52)));
+    const auto Projected=ProjectFirstPersonPoint({50,20,-10},92);
+    TestTrue(TEXT("Sprint world FOV keeps fixed70 hand projection"),FMath::IsNearlyEqual(Projected.Y/std::tan(92*Pi/360),20/std::tan(70*Pi/360)));
+    TestTrue(TEXT("Slab dust follows outline geometry"),BridgeParticleMath::BoxCount(1,.5,1)==32);
     return true;
 }
 #endif

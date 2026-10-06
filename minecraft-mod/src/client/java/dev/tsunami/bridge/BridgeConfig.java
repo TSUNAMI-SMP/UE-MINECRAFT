@@ -25,6 +25,11 @@ public final class BridgeConfig {
     public boolean videoSkipVanilla=true;
     public int videoQuality = 1; // low/balanced/high/ultra
     public double videoExposure = 0;
+    public boolean lighting = true;
+    public boolean vanillaSky = false;
+    public double particleScale = 0.75;
+    public double particleDensity = 1;
+    public double particleLifetime = 0.9;
     private static final Gson JSON = new GsonBuilder().setPrettyPrinting().create();
     public BridgeConfig copy() { return JSON.fromJson(JSON.toJson(this), BridgeConfig.class); }
     public void validate() {
@@ -38,6 +43,11 @@ public final class BridgeConfig {
             throw new IllegalArgumentException("videoMode must be 0..2 / videoPort 1024..65535");
         if (videoQuality < 0 || videoQuality > 3 || !Double.isFinite(videoExposure) || Math.abs(videoExposure)>6)
             throw new IllegalArgumentException("videoQuality must be 0..3 / videoExposure -6..6");
+        if(lighting && vanillaSky) throw new IllegalArgumentException("vanillaSky requires lighting=false");
+        if(!Double.isFinite(particleScale) || particleScale<0.25 || particleScale>2
+                || !Double.isFinite(particleDensity) || particleDensity<0.125 || particleDensity>1
+                || !Double.isFinite(particleLifetime) || particleLifetime<0.25 || particleLifetime>2)
+            throw new IllegalArgumentException("particleScale/lifetime 0.25..2, particleDensity 0.125..1");
     }
     public static BridgeConfig load(Path path) throws IOException {
         if (!Files.exists(path)) return new BridgeConfig();
@@ -52,9 +62,10 @@ public final class BridgeConfig {
                 if (!Double.isFinite(number) || Math.rint(number) != number || number < Integer.MIN_VALUE || number > Integer.MAX_VALUE)
                     throw new IllegalArgumentException(name + " must be an integer");
             }
-            if (object.has("videoExposure") && (!object.get("videoExposure").isJsonPrimitive()
-                    || !object.getAsJsonPrimitive("videoExposure").isNumber())) throw new IllegalArgumentException("videoExposure must be a number");
-            for (String name : new String[]{"enabled", "notifications", "bowEvents", "worldSync", "videoSkipVanilla"}) if (object.has(name)) {
+            for(String name : new String[]{"videoExposure","particleScale","particleDensity","particleLifetime"})
+                if (object.has(name) && (!object.get(name).isJsonPrimitive()
+                    || !object.getAsJsonPrimitive(name).isNumber())) throw new IllegalArgumentException(name+" must be a number");
+            for (String name : new String[]{"enabled", "notifications", "bowEvents", "worldSync", "videoSkipVanilla","lighting","vanillaSky"}) if (object.has(name)) {
                 var value = object.get(name);
                 if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isBoolean()) throw new IllegalArgumentException(name + " must be true/false");
             }

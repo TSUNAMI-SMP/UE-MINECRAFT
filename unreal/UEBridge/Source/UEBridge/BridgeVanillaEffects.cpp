@@ -2,6 +2,8 @@
 #include "BridgeWorld.h"
 #include "BridgeBlockPalette.h"
 #include "BridgeCharacter.h"
+#include "BridgeParticleMath.h"
+#include "BridgeProtocol.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -60,12 +62,20 @@ void ABridgeVanillaEffects::Configure(ABridgeWorld* ImportedTerrain,UBridgeBlock
 void ABridgeVanillaEffects::SetViewCamera(UCameraComponent* Camera) { ViewCamera=Camera; }
 FBridgeDustDiagnostics ABridgeVanillaEffects::GetDiagnostics() const {
     auto Result=Diagnostics; Result.Active=Particles.Num(); Result.Groups=Groups.Num(); Result.Instances=0;
+    Result.SizeMultiplier=BridgeParticleMath::SizeMultiplier(ParticleSizeMultiplier);
+    Result.DensityMultiplier=BridgeParticleMath::DensityMultiplier(ParticleDensityMultiplier);
+    Result.LifetimeMultiplier=BridgeParticleMath::LifetimeMultiplier(ParticleLifetimeMultiplier);
     for(const auto& Entry:Groups) if(IsValid(Entry.Value)) Result.Instances+=Entry.Value->GetInstanceCount();
     if(Result.Reason==TEXT("ready") && !ViewCamera.IsValid()) Result.Reason=TEXT("missing_camera");
     return Result;
 }
 void ABridgeVanillaEffects::ResetMovement() {
-    HaveMovementSample=false; SampledCharacter.Reset(); WalkDistance=0; SprintClock=0;
+    HaveMovementSample=false; SampledCharacter.Reset(); WalkDistance=0; SprintClock=0;SprintDensityAccumulator=0;
+}
+void ABridgeVanillaEffects::ConfigureParticleTuning(float SizeMultiplier,float DensityMultiplier,float LifetimeMultiplier) {
+    ParticleSizeMultiplier=BridgeParticleMath::SizeMultiplier(SizeMultiplier);
+    ParticleDensityMultiplier=BridgeParticleMath::DensityMultiplier(DensityMultiplier);
+    ParticleLifetimeMultiplier=BridgeParticleMath::LifetimeMultiplier(LifetimeMultiplier);
 }
 void ABridgeVanillaEffects::ClearParticles() {
     Particles.Empty(); PhysicsClock=0;
@@ -133,23 +143,43 @@ bool ABridgeVanillaEffects::AddParticle(const FVector& Position,const FVector& V
     // Minecraft Particle adds uniformly random velocity, normalizes it, then adds upward motion.
     FVector RandomDirection=Velocity+FVector(FMath::FRandRange(-.4f,.4f),FMath::FRandRange(-.4f,.4f),FMath::FRandRange(-.4f,.4f));
     Particle.Velocity=RandomDirection.GetSafeNormal()*(FMath::FRand()+FMath::FRand()+1)*120+FVector(0,0,200);
-    Particle.Size=FMath::FRandRange(10.f,20.f);
-    Particle.Lifetime=FMath::FloorToInt(4/(FMath::FRand()*.9f+.1f));
+    Particle.Size=BridgeParticleMath::QuadSizeCm(FMath::FRand(),ParticleSizeMultiplier);
+    Particle.Lifetime=BridgeParticleMath::LifetimeTicks(FMath::FRand(),ParticleLifetimeMultiplier);
     Particle.TextureOffset=FVector2D(FMath::FRand()*.75f,FMath::FRand()*.75f);
     Particles.Add(MoveTemp(Particle));
     CountUp(Diagnostics.Spawned,1); ++Diagnostics.LastSpawned;
     return true;
 }
-void ABridgeVanillaEffects::SpawnBreak(const FVector& Center,const FString& BlockId,FColor Tint) {
-    BeginRequest(TEXT("break"),BlockId,64);
+void ABridgeVanillaEffects::SpawnBreak(const FVector& Center,const FString& BlockId,FColor Tint,const TArray<FBox>& MinecraftShapeBoxes) {
+    TArray<FBox> Boxes=MinecraftShapeBoxes;
+    if(Boxes.IsEmpty()) Boxes.Add(FBox(FVector::ZeroVector,FVector::OneVector));
+    if(Boxes.Num()>64) Boxes.SetNum(64);
+    Boxes.RemoveAll([](const FBox& Box){return !Box.IsValid || Box.Min.ContainsNaN() || Box.Max.ContainsNaN() || Box.GetSize().GetMin()<=0;});
+    int32 NativeCount=0;
+    for(const auto& Box:Boxes) {
+        const FVector Extent=Box.GetSize();NativeCount+=BridgeParticleMath::BoxCount(Extent.X,Extent.Y,Extent.Z);
+    }
+    const int32 Selected=BridgeParticleMath::SelectedCount(NativeCount,ParticleDensityMultiplier);
+    BeginRequest(TEXT("break"),BlockId,Selected);if(Selected==0) return;
     const FString Group=FindGroup(BlockId,Tint); if(Group.IsEmpty()) return;
-    // A full block uses the same four subdivisions per axis as the vanilla break effect.
-    for(int32 X=0;X<4;++X) for(int32 Y=0;Y<4;++Y) for(int32 Z=0;Z<4;++Z) {
-        const FVector Offset((X+.5f)*25-50,(Y+.5f)*25-50,(Z+.5f)*25-50);
-        AddParticle(Center+Offset,Offset*.01f,Group);
+    int32 CellIndex=0;
+    for(const auto& Box:Boxes) {
+        const FVector Extent=Box.GetSize().ComponentMin(FVector::OneVector);
+        const int32 NX=BridgeParticleMath::Subdivisions(Extent.X),NY=BridgeParticleMath::Subdivisions(Extent.Y),NZ=BridgeParticleMath::Subdivisions(Extent.Z);
+        for(int32 X=0;X<NX;++X) for(int32 Y=0;Y<NY;++Y) for(int32 Z=0;Z<NZ;++Z,++CellIndex) {
+            if(!BridgeParticleMath::SelectCell(CellIndex,NativeCount,Selected)) continue;
+            const FVector Fraction((X+.5)/NX,(Y+.5)/NY,(Z+.5)/NZ);
+            const FVector Local=Box.Min+Fraction*Extent;
+            const FVector Offset=BridgeProtocol::ToDirection(Local-FVector(.5))*100;
+            const FVector Velocity=BridgeProtocol::ToDirection(Fraction-FVector(.5));
+            AddParticle(Center+Offset,Velocity,Group);
+        }
     }
 }
 void ABridgeVanillaEffects::SpawnSprint(const FVector& Feet,const FVector& Velocity,const FString& BlockId,FColor Tint) {
+    SprintDensityAccumulator+=BridgeParticleMath::DensityMultiplier(ParticleDensityMultiplier);
+    if(SprintDensityAccumulator<1) {BeginRequest(TEXT("sprint"),BlockId,0);return;}
+    SprintDensityAccumulator-=1;
     BeginRequest(TEXT("sprint"),BlockId,1);
     const FString Group=FindGroup(BlockId,Tint); if(Group.IsEmpty()) return;
     // Entity's -4*motion / 1.5 upward inputs still pass through Particle's random normalization.
@@ -184,7 +214,7 @@ void ABridgeVanillaEffects::SampleCharacter(ABridgeCharacter* Character,float De
         if(!Landed && WalkDistance>=100/.6f) { WalkDistance=FMath::Fmod(WalkDistance,100/.6f); auto Event=Surface; Event.Type=TEXT("step"); OutEvents.Add(MoveTemp(Event)); }
         if(Character->IsAuthoritySprinting()) {
             SprintClock+=FMath::Clamp(DeltaSeconds,0.f,.1f);
-            if(SprintClock>=.05f) { SprintClock=FMath::Fmod(SprintClock,.05f); SpawnSprint(Surface.Position,Velocity,Surface.BlockId,Surface.Tint); }
+            while(SprintClock>=.05f) { SprintClock-=.05f; SpawnSprint(Surface.Position,Velocity,Surface.BlockId,Surface.Tint); }
         } else SprintClock=0;
     } else if(Grounded && !HasSurface && Character->IsAuthoritySprinting() && HorizontalDistance>.01f && Velocity.SizeSquared2D()>25) {
         SprintClock+=FMath::Clamp(DeltaSeconds,0.f,.1f);

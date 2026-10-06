@@ -16,15 +16,18 @@ public final class VideoClient implements AutoCloseable {
     private volatile int width,height;
     private volatile double fps;
     public VideoClient(int port, String session) {
-        worker = new Thread(() -> run(port,session), "UE-Bridge-Video"); worker.setDaemon(true); worker.start();
+        this(port,session,false);
     }
-    private void run(int port, String session) {
+    public VideoClient(int port,String session,boolean maskCapable) {
+        worker = new Thread(() -> run(port,session,maskCapable), "UE-Bridge-Video"); worker.setDaemon(true); worker.start();
+    }
+    private void run(int port, String session,boolean maskCapable) {
         while (!stopped) {
             try (Socket connection = new Socket()) {
                 socket = connection; if (stopped) break;
                 connection.connect(new InetSocketAddress("127.0.0.1",port),1000);
                 connection.setReceiveBufferSize(64*1024);connection.setSoTimeout(2000); connection.setTcpNoDelay(true);
-                connection.getOutputStream().write(("UEBH"+session).getBytes(StandardCharsets.US_ASCII));
+                connection.getOutputStream().write(((maskCapable ? "UEB3" : "UEBH")+session).getBytes(StandardCharsets.US_ASCII));
                 DataInputStream input = new DataInputStream(new BufferedInputStream(connection.getInputStream()));
                 long windowStart=System.nanoTime(); int frames=0;
                 while (!stopped) {

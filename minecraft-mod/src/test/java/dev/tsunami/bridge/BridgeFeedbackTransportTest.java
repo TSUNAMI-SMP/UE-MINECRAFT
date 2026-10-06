@@ -69,4 +69,20 @@ public class BridgeFeedbackTransportTest {
             try {receive(ue);fail("Invalid effect ACKed");} catch(java.net.SocketTimeoutException expected) { }
         }
     }
+    @Test public void uppercaseUnrealIdsAndMobSoundsAreDeliveredAndDeduplicated() throws Exception {
+        try(DatagramSocket ue=new DatagramSocket(0,InetAddress.getLoopbackAddress());BridgeTransport mc=new BridgeTransport(ue.getLocalPort())) {
+            DatagramPacket destination=connect(ue,mc);
+            for(boolean mob:new boolean[]{false,true}) {
+                JsonObject p=effect(mc);p.addProperty("effectId","ABCDEF01-2345-4678-9ABC-DEF012345678");
+                if(mob) {
+                    p.addProperty("effectId","ABCDEF02-2345-4678-9ABC-DEF012345678");
+                    p.addProperty("kind","mob_feedback");p.addProperty("type","mob");p.addProperty("sound","minecraft:entity.zombie.hurt");
+                    p.addProperty("lx",2);p.addProperty("ly",0);p.addProperty("lz",3);
+                }
+                send(ue,destination,p);pump(mc);assertEquals(p.get("effectId"),json(receive(ue)).get("effectId"));
+                assertEquals(p,mc.pollFeedback());
+                send(ue,destination,p);pump(mc);assertEquals(p.get("effectId"),json(receive(ue)).get("effectId"));assertNull(mc.pollFeedback());
+            }
+        }
+    }
 }

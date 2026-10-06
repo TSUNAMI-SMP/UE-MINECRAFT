@@ -4,6 +4,7 @@
 #include "BridgeCharacter.h"
 #include "BridgeWorld.h"
 #include "BridgeVideo.h"
+#include "BridgeBlockPalette.h"
 #include "Sockets.h"
 #include "SocketSubsystem.h"
 #include "IPAddress.h"
@@ -49,7 +50,7 @@ void ABridgeReceiver::BeginPlay() {
         return;
     }
     int32 ActualBuffer; Socket->SetReceiveBufferSize(256 * 1024, ActualBuffer);
-    UE_LOG(LogTemp, Display, TEXT("Bridge 0.3.0 listening on 127.0.0.1:%d"), Port);
+    UE_LOG(LogTemp, Display, TEXT("Bridge 0.4.0 listening on 127.0.0.1:%d"), Port);
     Video->Start(VideoPort);
     if (!TargetCharacter) UE_LOG(LogTemp, Warning, TEXT("Bridge: waiting for player Character; will retry every tick"));
     if (!ExplosionSystem) UE_LOG(LogTemp, Warning, TEXT("Bridge: ExplosionSystem is unset; Niagara will not play"));
@@ -140,11 +141,14 @@ void ABridgeReceiver::Process(const FBridgePacket& P, const TSharedRef<FInternet
             }
             case EBridgeKind::Snapshot: if (!HandleSnapshot(P)) return; break;
             case EBridgeKind::ClearPreview: if (P.Sequence >= PreviewGeneration) ClearPreview(P.Sequence); break;
+            case EBridgeKind::VideoConfig:
+                Video->Width=P.VideoWidth; Video->Height=P.VideoHeight; Video->FramesPerSecond=P.VideoFps;
+                Video->Quality=P.VideoQuality; Video->ExposureCompensation=float(P.VideoExposure); break;
             case EBridgeKind::WorldCell:
             case EBridgeKind::WorldScope:
             case EBridgeKind::WorldClear:
                 if (!IsValid(SyncedWorld)) SyncedWorld=GetWorld()->SpawnActor<ABridgeWorld>();
-                if (!SyncedWorld || !SyncedWorld->Handle(P,Anchor,PreviewMaterial)) return;
+                if (!SyncedWorld || !SyncedWorld->Handle(P,Anchor,PreviewMaterial,TexturePalette)) return;
                 break;
             default: return;
         }
@@ -172,9 +176,11 @@ void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
     Reply->SetBoolField(TEXT("cameraReady"), Camera && Camera->IsActive() && TargetCharacter->GetController());
     Reply->SetBoolField(TEXT("vfxReady"), IsValid(ExplosionSystem)); Reply->SetNumberField(TEXT("walls"), Walls);
     Reply->SetNumberField(TEXT("previewBlocks"), PreviewBlocks);
-    Reply->SetStringField(TEXT("build"),TEXT("0.3.0"));
+    Reply->SetStringField(TEXT("build"),TEXT("0.4.0"));
     Reply->SetStringField(TEXT("receiverId"),InstanceId);
     Reply->SetBoolField(TEXT("worldV1"),true); Reply->SetBoolField(TEXT("videoV1"),true);
+    Reply->SetBoolField(TEXT("blockTexturesV1"),true); Reply->SetBoolField(TEXT("videoControlsV1"),true);
+    Reply->SetNumberField(TEXT("textureMaterials"),TexturePalette ? TexturePalette->Materials.Num() : 0);
     Reply->SetNumberField(TEXT("worldCells"),SyncedWorld ? SyncedWorld->CellCount() : 0);
     Reply->SetNumberField(TEXT("worldShapes"),SyncedWorld ? SyncedWorld->ShapeCount() : 0);
     Reply->SetBoolField(TEXT("videoReady"),Video->Streaming); SendJson(Reply, Sender);

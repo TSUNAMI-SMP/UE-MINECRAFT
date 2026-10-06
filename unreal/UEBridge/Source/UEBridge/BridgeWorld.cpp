@@ -15,7 +15,7 @@ void ABridgeWorld::Tick(float DeltaSeconds) {
     Super::Tick(DeltaSeconds); const double Now=FPlatformTime::Seconds();
     for (auto It=Stages.CreateIterator();It;++It) if (Now>It.Value().Deadline) It.RemoveCurrent();
 }
-bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterialInterface* Material) {
+bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterialInterface* Material,UBridgeBlockPalette* Palette) {
     if (P.Kind==EBridgeKind::WorldClear) { if (P.Sequence>=FMath::Max(ScopeSequence,ClearBarrier)) Clear(P.Sequence); return true; }
     if (P.Kind==EBridgeKind::WorldScope) {
         if (P.Sequence<=FMath::Max(ScopeSequence,ClearBarrier)) return true;
@@ -40,11 +40,11 @@ bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterial
     if (Stage->Id!=P.SnapshotId || Stage->Total!=P.TotalBatches) return false;
     if (!Stage->Batches.Contains(P.BatchIndex)) Stage->Batches.Add(P.BatchIndex,P.Blocks);
     if (Stage->Batches.Num()!=Stage->Total) return true;
-    TArray<FBridgeBlock> Blocks; TSet<int32> Colors;
+    TArray<FBridgeBlock> Blocks; TSet<int32> Colors; TSet<FString> Groups;
     for (int32 I=0;I<Stage->Total;++I) { const auto* Batch=Stage->Batches.Find(I); if (!Batch) return false; Blocks.Append(*Batch); }
-    for (const auto& Block:Blocks) Colors.Add(Block.Color);
+    for (const auto& Block:Blocks) { Colors.Add(Block.Color); Groups.Add(FString::Printf(TEXT("%s#%d"),*Block.BlockId,Block.Color)); }
     const int32 NewCount=Shapes-Counts.FindRef(P.Cell)+Blocks.Num();
-    if (Blocks.Num()>8192 || Colors.Num()>64 || NewCount>131072) return false;
+    if (Blocks.Num()>8192 || Colors.Num()>64 || Groups.Num()>256 || NewCount>131072) return false;
     if (Blocks.IsEmpty()) {
         if (auto* Existing=Cells.Find(P.Cell)) { if (IsValid(*Existing)) (*Existing)->Destroy(); Cells.Remove(P.Cell); }
         Counts.Remove(P.Cell);
@@ -52,7 +52,7 @@ bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterial
         auto& Cell=Cells.FindOrAdd(P.Cell);
         if (!IsValid(Cell)) Cell=GetWorld()->SpawnActor<ABridgeBlockPreview>();
         if (!Cell) return false;
-        Cell->Replace(Blocks,Anchor,Material); Counts.Add(P.Cell,Blocks.Num());
+        Cell->Replace(Blocks,Anchor,Material,Palette); Counts.Add(P.Cell,Blocks.Num());
     }
     Shapes=NewCount; Revisions.Add(P.Cell,P.SnapshotSequence); Stages.Remove(P.Cell); return true;
 }

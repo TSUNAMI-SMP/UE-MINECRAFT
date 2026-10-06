@@ -18,7 +18,7 @@ class UEBRIDGE_API ABridgeWorld : public AActor {
     GENERATED_BODY()
 public:
     ABridgeWorld();
-    bool Handle(const FBridgePacket& P,const FVector& Anchor,class UMaterialInterface* Material);
+    bool Handle(const FBridgePacket& P,const FVector& Anchor,class UMaterialInterface* Material,class UBridgeBlockPalette* Palette=nullptr);
     void Clear(uint64 Barrier=0);
     virtual void Tick(float DeltaSeconds) override;
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;

@@ -1,6 +1,6 @@
 # 起動・テスト
 
-0.3.0のワールド・映像・しゃがみの導入/実機テストは [UPGRADE_0.3.0.md](UPGRADE_0.3.0.md)。
+最新版のテクスチャ・映像品質の導入/実機テストは [UPGRADE_0.4.0.md](UPGRADE_0.4.0.md)。
 
 ## 先に必要なこと
 
@@ -10,7 +10,7 @@
 
 ## 最初の成功条件
 
-1. UE Playを開始。Output Logに `Bridge 0.3.0 listening on 127.0.0.1:7779` が出ること。
+1. UE Playを開始。Output Logに `Bridge 0.4.0 listening on 127.0.0.1:7779` が出ること。
    `ExplosionSystem is unset` やTargetCharacter不在のエラーを解消する。
 2. Minecraftの新しいクリエイティブワールドへ入る。
 3. Minecraftのマウスで左右・上下を向く。UEカメラが同方向へ追従すること。
@@ -71,6 +71,6 @@ Pythonはテストツール自身のloopback往復を確認します。UE実装�
 
 ## 未検証
 
-UE 5.8のC++ビルド、Minecraft GUI起動、UEカメラ追従、実アセットによるNiagara/Chaos、
-周辺ブロックプレビュー、弓の描画、実機の遅延測定。GUI/UEがないクラウドの制限です。
+0.4.0のUE 5.8 C++ビルド、Python素材取り込み、テクスチャ/映像品質、実機の遅延測定。
+以前のカメラ・左右修正・0.3.0ワールド/映像はユーザー実機で確認済み。GUI/UEがないクラウドの制限です。
 0.2.0の追加テストとコマンドは [UPGRADE_0.2.0.md](UPGRADE_0.2.0.md) を参照してください。

@@ -12,3 +12,4 @@ DerivedDataCache/
 .vs/
 *.sln
 .local/
+uebridge-export/

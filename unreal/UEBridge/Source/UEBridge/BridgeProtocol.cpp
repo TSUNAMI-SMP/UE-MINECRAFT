@@ -47,6 +47,13 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
                 || !FMath::IsNearlyEqual(R.Direction.SizeSquared(), 1.0, 0.02)) return false;
         } else if (Event == TEXT("block_preview_clear")) R.Kind = EBridgeKind::ClearPreview;
         else if (Event == TEXT("world_clear")) R.Kind = EBridgeKind::WorldClear;
+        else if (Event==TEXT("video_config")) {
+            uint64 W,H,F,Q;
+            if (!Integer(P,TEXT("width"),160,1920,W) || !Integer(P,TEXT("height"),90,1080,H)
+                || !Integer(P,TEXT("fps"),1,30,F) || !Integer(P,TEXT("quality"),30,95,Q)
+                || !Number(P,TEXT("exposure"),-6,6,R.VideoExposure)) return false;
+            R.Kind=EBridgeKind::VideoConfig; R.VideoWidth=int32(W); R.VideoHeight=int32(H); R.VideoFps=int32(F); R.VideoQuality=int32(Q);
+        }
         else if (Event == TEXT("world_scope")) {
             R.Kind = EBridgeKind::WorldScope; double X,Y,Z; uint64 Radius,Height;
             if (!Number(P,TEXT("cellX"),-4000000,4000000,X) || !Number(P,TEXT("cellY"),-4000000,4000000,Y)
@@ -54,8 +61,9 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
                 || !Integer(P,TEXT("radius"),1,3,Radius) || !Integer(P,TEXT("halfHeight"),1,2,Height)) return false;
             R.Cell = FIntVector(int32(X),int32(Y),int32(Z)); R.Radius=int32(Radius); R.HalfHeight=int32(Height);
         }
-        else if (Event == TEXT("block_snapshot") || Event == TEXT("world_cell")) {
-            const bool WorldCell = Event == TEXT("world_cell");
+        else if (Event == TEXT("block_snapshot") || Event == TEXT("world_cell") || Event==TEXT("world_cell_textured")) {
+            const bool Textured=Event==TEXT("world_cell_textured");
+            const bool WorldCell = Event == TEXT("world_cell") || Textured;
             R.Kind = WorldCell ? EBridgeKind::WorldCell : EBridgeKind::Snapshot; uint64 Index, Total;
             if (WorldCell) {
                 double X,Y,Z;
@@ -67,14 +75,14 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
             if (!Guid(P, TEXT("snapshotId"), R.SnapshotId)
                 || !Integer(P, TEXT("snapshotSeq"), 1, 9007199254740991.0, R.SnapshotSequence)
                 || R.SnapshotSequence > R.Sequence
-                || !Integer(P, TEXT("batchIndex"), 0, (WorldCell ? 1024 : MaxBatches) - 1, Index)
-                || !Integer(P, TEXT("totalBatches"), 1, WorldCell ? 1024 : MaxBatches, Total) || Index >= Total
-                || !P->TryGetArrayField(TEXT("blocks"), Rows) || Rows->Num() > (WorldCell ? 8 : 12)) return false;
+                || !Integer(P, TEXT("batchIndex"), 0, (Textured ? 2048 : (WorldCell ? 1024 : MaxBatches)) - 1, Index)
+                || !Integer(P, TEXT("totalBatches"), 1, Textured ? 2048 : (WorldCell ? 1024 : MaxBatches), Total) || Index >= Total
+                || !P->TryGetArrayField(TEXT("blocks"), Rows) || Rows->Num() > (Textured ? 4 : (WorldCell ? 8 : 12))) return false;
             R.BatchIndex = int32(Index); R.TotalBatches = int32(Total);
             for (const auto& Row : *Rows) {
                 const TArray<TSharedPtr<FJsonValue>>* Values;
                 const int32 Fields = WorldCell ? 7 : 4;
-                if (!Row.IsValid() || !Row->TryGetArray(Values) || Values->Num() != Fields) return false;
+                if (!Row.IsValid() || !Row->TryGetArray(Values) || Values->Num() != Fields+(Textured ? 1 : 0)) return false;
                 double V[7];
                 for (int32 I = 0; I < Fields; ++I) if (!(*Values)[I].IsValid() || (*Values)[I]->Type != EJson::Number
                     || !(*Values)[I]->TryGetNumber(V[I]) || !FMath::IsFinite(V[I])) return false;
@@ -85,7 +93,19 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
                     if (V[4]<=0 || V[5]<=0 || V[6]<=0 || V[4]>4 || V[5]>4 || V[6]>4) return false;
                     Size=FVector(V[4],V[5],V[6]);
                 }
-                R.Blocks.Add(FBridgeBlock{FVector(V[0], V[1], V[2]), int32(V[3]), Size});
+                FString BlockId;
+                if(Textured) {
+                    if(!(*Values)[7].IsValid() || (*Values)[7]->Type!=EJson::String || !(*Values)[7]->TryGetString(BlockId)
+                        || BlockId.IsEmpty() || BlockId.Len()>128) return false;
+                    int32 Colon=INDEX_NONE;
+                    if(!BlockId.FindChar(TCHAR(':'),Colon) || Colon<=0 || Colon>=BlockId.Len()-1) return false;
+                    for(int32 I=0;I<BlockId.Len();++I) {
+                        const TCHAR C=BlockId[I];
+                        if(I==Colon) continue;
+                        if(!((C>='a' && C<='z') || (C>='0' && C<='9') || C=='_' || C=='-' || C=='.' || (I>Colon && C=='/'))) return false;
+                    }
+                }
+                R.Blocks.Add(FBridgeBlock{FVector(V[0], V[1], V[2]), int32(V[3]), Size, BlockId});
             }
         } else return false;
     } else return false;

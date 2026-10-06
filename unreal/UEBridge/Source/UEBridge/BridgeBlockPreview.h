@@ -10,7 +10,7 @@ class UEBRIDGE_API ABridgeBlockPreview : public AActor {
     GENERATED_BODY()
 public:
     ABridgeBlockPreview();
-    void Replace(const TArray<FBridgeBlock>& Blocks, const FVector& Anchor, class UMaterialInterface* Material);
+    void Replace(const TArray<FBridgeBlock>& Blocks, const FVector& Anchor, class UMaterialInterface* Material, class UBridgeBlockPalette* Palette=nullptr);
     void Clear();
 private:
     UPROPERTY() TObjectPtr<class UStaticMesh> Cube;

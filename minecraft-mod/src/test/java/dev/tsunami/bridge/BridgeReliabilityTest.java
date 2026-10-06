@@ -83,10 +83,12 @@ public class BridgeReliabilityTest {
                 JsonObject status=new JsonObject(); status.addProperty("v",1); status.addProperty("kind","status");
                 status.add("session",data.get("session")); status.add("seq",data.get("seq"));
                 status.addProperty("cameraReady",true); status.addProperty("vfxReady",false); status.addProperty("walls",0);
-                status.addProperty("build","0.3.0"); status.addProperty("receiverId",id); status.addProperty("worldV1",true); status.addProperty("videoV1",true);
+                status.addProperty("build","0.4.0"); status.addProperty("receiverId",id); status.addProperty("worldV1",true); status.addProperty("videoV1",true);
+                status.addProperty("blockTexturesV1",true); status.addProperty("videoControlsV1",true); status.addProperty("textureMaterials",42);
                 reply(ue,input,status); pumpReplies(mc);
-                assertEquals("0.3.0",mc.diagnostics().build()); assertEquals(id,mc.diagnostics().receiverId());
+                assertEquals("0.4.0",mc.diagnostics().build()); assertEquals(id,mc.diagnostics().receiverId());
                 assertTrue(mc.diagnostics().worldSupported()); assertTrue(mc.diagnostics().videoSupported());
+                assertTrue(mc.diagnostics().texturesSupported()); assertTrue(mc.diagnostics().videoControlsSupported()); assertEquals(42,mc.diagnostics().textureMaterials());
             }
         }
     }

@@ -18,6 +18,8 @@ with zipfile.ZipFile(output, "x", zipfile.ZIP_DEFLATED) as archive:
         if path.startswith(prefix + "Source/") or path in (prefix + "Build-UEBridge.cmd", prefix + "Build-UEBridge.ps1"):
             archive.write(root / path, path[len(prefix):])
     archive.write(root / "tools/setup_world_bridge.py", "setup_world_bridge.py")
+    if (root / "tools/import_minecraft_textures.py").is_file():
+        archive.write(root / "tools/import_minecraft_textures.py", "import_minecraft_textures.py")
     archive.write(root / f"docs/UPGRADE_{version}.md", "UPDATE_INSTRUCTIONS.md")
 with zipfile.ZipFile(output) as archive:
     if archive.testzip() is not None:

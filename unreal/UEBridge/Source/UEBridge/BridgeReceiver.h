@@ -22,6 +22,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge") float Strain = 500000.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge") float Force = 200000.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Preview") TObjectPtr<class UMaterialInterface> PreviewMaterial;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Textures") TObjectPtr<class UBridgeBlockPalette> TexturePalette;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Bow") bool SpawnBowProjectiles = true;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") bool Connected = false;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") int32 InvalidPackets = 0;

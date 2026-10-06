@@ -47,4 +47,23 @@ public class WorldSnapshotTest {
         try { WorldSnapshot.encode(new WorldSnapshot.Cell(0,0,0),Collections.nCopies(8193,new WorldSnapshot.Shape(0,0,0,0,1,1,1))); fail(); }
         catch (IllegalArgumentException expected) { }
     }
+    @Test public void texturedRowsRemainBoundedAndCarryBlockIdentity() {
+        String id="minecraft:"+"a".repeat(118);
+        var shape=new WorldSnapshot.Shape(99999.123456789,-99999.123456789,99999.123456789,0xffffff,.123456789,.123456789,.123456789,id);
+        var packets=WorldSnapshot.encode(new WorldSnapshot.Cell(-3750000,3750000,-3750000),Collections.nCopies(8,shape),true);
+        assertEquals(2,packets.size());
+        for(var p:packets) {
+            assertEquals("world_cell_textured",p.get("event").getAsString());
+            assertEquals(id,p.getAsJsonArray("blocks").get(0).getAsJsonArray().get(7).getAsString());
+            p.addProperty("v",1); p.addProperty("kind","event"); p.addProperty("session",UUID.randomUUID().toString());
+            p.addProperty("eventId",UUID.randomUUID().toString()); p.addProperty("seq",9007199254740991L);
+            p.addProperty("snapshotSeq",9007199254740000L); p.addProperty("x",0); p.addProperty("y",0); p.addProperty("z",0);
+            assertTrue(p.toString().getBytes(StandardCharsets.UTF_8).length<=BridgeTransport.MAX_PACKET_BYTES);
+        }
+    }
+    @Test public void sameColorDifferentBlockTriggersNewFingerprint() {
+        var a=new WorldSnapshot.Shape(0,0,0,0xaaaaaa,1,1,1,"minecraft:stone");
+        var b=new WorldSnapshot.Shape(0,0,0,0xaaaaaa,1,1,1,"minecraft:cobblestone");
+        assertNotEquals(WorldSnapshot.fingerprint(List.of(a)),WorldSnapshot.fingerprint(List.of(b)));
+    }
 }

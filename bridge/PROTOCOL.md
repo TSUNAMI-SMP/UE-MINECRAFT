@@ -178,3 +178,35 @@ MC receives/decodes on a dedicated daemon, retains only the latest decoded frame
 uploads textures on the render thread, and draws a HUD layer before the crosshair.
 Timeout/disconnect retries do not block input. Aspect ratio is preserved. GPU
 capture/JPEG means this is a bounded prototype, not a zero-copy streaming pipeline.
+
+## Block textures and video settings (0.4.0, additive v1)
+
+Status adds `build:"0.4.0"`, `blockTexturesV1:true`, `videoControlsV1:true`,
+`textureMaterials:0..4096`. The MOD gates these features on the capability flags;
+older receivers still get legacy world_cell rows without block IDs.
+
+`world_cell_textured` has the same world_cell envelope, plus an eighth row field
+containing the registry block ID, for example
+`[0.5,0.5,0.5,8355711,1,1,1,"minecraft:stone"]`.
+IDs contain one namespace colon and valid lowercase registry characters, <=128
+characters. Max 4 rows/batch, 2048 batches, 8192 shapes/cell. Complete cells are
+limited to 256 ID/color groups, 64 colors; the global 131072-shape cap is unchanged.
+The cell fingerprint includes block identity. Textures themselves do not cross UDP.
+UE resolves IDs against its local BridgeBlockPalette; missing IDs use the existing
+color material. The manual preview remains unchanged and uses no textures.
+
+`video_config` is a reliable event with the common x/y/z envelope and integer
+`width:160..1920`, `height:90..1080`, `fps:1..30`, `quality:30..95`, and finite
+`exposure:-6..6`. UE applies it on its game thread and ACKs normally. Settings are
+resent on receiver restart/reconnect or event expiry. The video wire protocol and
+2 MiB frame limit remain unchanged. The 0.4.0 default is 960x540 / 20fps / quality85.
+SceneCapture retains its exposure history, uses an explicit 2.2 output gamma and
+allows an additive exposure bias. Capture/JPEG overhead still limits actual FPS.
+
+Local export format: JSON `format:"uebridge-block-textures"`, `version:1`,
+`blocks` maps block IDs to top/side/bottom `{texture,tint}`; `textures` maps resource
+IDs to relative PNG file, width, height and SHA256. The UE import script validates
+paths, dimensions, file size, PNG CRC and hash before creating assets. Export uses
+active client resources and default block state, not the live variant of each
+placed block. Multipart/complex models fall back; animations use a static tile.
+Generated assets and exports are local and are not included in source bundles.

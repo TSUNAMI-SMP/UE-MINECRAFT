@@ -88,4 +88,32 @@ bool FBridgeWorldProtocolTest::RunTest(const FString& Parameters) {
     P->SetStringField(TEXT("event"),TEXT("world_clear")); TestTrue(TEXT("World clear"),BridgeProtocol::Parse(P,Out));
     return true;
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeVideoConfigTest, "UEBridge.Protocol.VideoConfig", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBridgeVideoConfigTest::RunTest(const FString& Parameters) {
+    auto P=PacketJson(Input); FBridgePacket Out;
+    P->SetStringField(TEXT("kind"),TEXT("event")); P->SetStringField(TEXT("event"),TEXT("video_config"));
+    P->SetStringField(TEXT("eventId"),TEXT("00000000-0000-4000-8000-000000000002"));
+    P->SetNumberField(TEXT("width"),960); P->SetNumberField(TEXT("height"),540);
+    P->SetNumberField(TEXT("fps"),20); P->SetNumberField(TEXT("quality"),85); P->SetNumberField(TEXT("exposure"),1);
+    TestTrue(TEXT("Quality configuration"),BridgeProtocol::Parse(P,Out));
+    TestEqual(TEXT("Width"),Out.VideoWidth,960); TestEqual(TEXT("Exposure"),Out.VideoExposure,1.0);
+    P->SetNumberField(TEXT("fps"),31); TestFalse(TEXT("FPS bound"),BridgeProtocol::Parse(P,Out));
+    P->SetNumberField(TEXT("fps"),20); P->SetStringField(TEXT("exposure"),TEXT("1"));
+    TestFalse(TEXT("Typed exposure"),BridgeProtocol::Parse(P,Out));
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeTextureProtocolTest, "UEBridge.Protocol.TexturedCell", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBridgeTextureProtocolTest::RunTest(const FString& Parameters) {
+    const FString Text=TEXT("{\"v\":1,\"kind\":\"event\",\"session\":\"00000000-0000-4000-8000-000000000001\",\"seq\":5,\"eventId\":\"00000000-0000-4000-8000-000000000002\",\"event\":\"world_cell_textured\",\"cellX\":0,\"cellY\":0,\"cellZ\":0,\"x\":0,\"y\":0,\"z\":0,\"snapshotId\":\"00000000-0000-4000-8000-000000000003\",\"snapshotSeq\":3,\"batchIndex\":0,\"totalBatches\":2048,\"blocks\":[[1,2,3,16711680,1,1,1,\"minecraft:stone\"]]}");
+    auto P=PacketJson(Text); FBridgePacket Out;
+    TestTrue(TEXT("Textured row"),BridgeProtocol::Parse(P,Out));
+    TestTrue(TEXT("Block identity"),Out.Blocks.Num()==1 && Out.Blocks[0].BlockId==TEXT("minecraft:stone"));
+    P->SetStringField(TEXT("event"),TEXT("world_cell"));
+    TestFalse(TEXT("Legacy row cannot carry an ID"),BridgeProtocol::Parse(P,Out));
+    P=PacketJson(Text.Replace(TEXT("minecraft:stone"),TEXT("minecraft:bad:id")));
+    TestFalse(TEXT("Invalid block identifier"),BridgeProtocol::Parse(P,Out));
+    P=PacketJson(Text); P->SetNumberField(TEXT("totalBatches"),2049);
+    TestFalse(TEXT("Textured batch bound"),BridgeProtocol::Parse(P,Out));
+    return true;
+}
 #endif

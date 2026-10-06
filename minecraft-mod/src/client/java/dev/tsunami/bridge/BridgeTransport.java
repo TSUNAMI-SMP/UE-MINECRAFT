@@ -29,10 +29,13 @@ public final class BridgeTransport implements AutoCloseable {
     private String build = "unknown";
     private String receiverId = "";
     private boolean worldSupported, videoSupported;
+    private boolean texturesSupported, videoControlsSupported;
+    private int textureMaterials;
     private record Pending(byte[] bytes, long created, long sent, boolean attempted) {}
     public record Diagnostics(boolean connected, boolean cameraReady, boolean vfxReady, int walls,
                               int pending, long sentInputs, long acknowledged, long expired, double rttMillis, String receiver,
-                              String build, boolean worldSupported, boolean videoSupported, String receiverId) {}
+                              String build, boolean worldSupported, boolean videoSupported, String receiverId,
+                              boolean texturesSupported,boolean videoControlsSupported,int textureMaterials) {}
 
     public BridgeTransport(int port) throws IOException { this(port, System::nanoTime); }
     BridgeTransport(int port, LongSupplier clock) throws IOException {
@@ -79,7 +82,8 @@ public final class BridgeTransport implements AutoCloseable {
         boolean connected = hasStatus && clock.getAsLong() - lastStatus <= 1_000_000_000L;
         return new Diagnostics(connected, connected && cameraReady, connected && vfxReady, connected ? walls : 0,
                 pending.size(), sentInputs, acknowledged, expired, lastRtt / 1_000_000.0, receiver,
-                build, connected && worldSupported, connected && videoSupported, receiverId);
+                build, connected && worldSupported, connected && videoSupported, receiverId,
+                connected && texturesSupported,connected && videoControlsSupported,connected ? textureMaterials : 0);
     }
     private static boolean number(JsonObject p, String name) {
         return p.has(name) && p.get(name).isJsonPrimitive() && p.getAsJsonPrimitive(name).isNumber();
@@ -107,6 +111,10 @@ public final class BridgeTransport implements AutoCloseable {
                     ? p.get("build").getAsString() : "unknown";
             worldSupported=bool(p,"worldV1") && p.get("worldV1").getAsBoolean();
             videoSupported=bool(p,"videoV1") && p.get("videoV1").getAsBoolean();
+            texturesSupported=bool(p,"blockTexturesV1") && p.get("blockTexturesV1").getAsBoolean();
+            videoControlsSupported=bool(p,"videoControlsV1") && p.get("videoControlsV1").getAsBoolean();
+            double materials=number(p,"textureMaterials") ? p.get("textureMaterials").getAsDouble() : 0;
+            textureMaterials=Double.isFinite(materials) && materials==Math.rint(materials) && materials>=0 && materials<=4096 ? (int)materials : 0;
             receiverId=p.has("receiverId") && p.get("receiverId").isJsonPrimitive() && p.getAsJsonPrimitive("receiverId").isString()
                     ? p.get("receiverId").getAsString() : "";
         }

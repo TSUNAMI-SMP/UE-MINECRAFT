@@ -6,6 +6,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.registry.Registries;
 import java.io.IOException;
 import java.util.*;
 
@@ -96,19 +97,21 @@ public final class WorldSync {
             List<Box> boxes = state.getOutlineShape(mc.world, p).getBoundingBoxes();
             if (boxes.isEmpty() && !state.getFluidState().isEmpty()) boxes = List.of(new Box(0,0,0,1,state.getFluidState().getHeight(mc.world,p),1));
             int color = state.getMapColor(mc.world, p).color & 0xffffff;
+            String blockId=Registries.BLOCK.getId(state.getBlock()).toString();
+            if(blockId.length()>128) blockId="uebridge:unknown";
             for (Box b : boxes) {
                 double sx=b.maxX-b.minX, sy=b.maxY-b.minY, sz=b.maxZ-b.minZ;
                 if (sx <= 0 || sy <= 0 || sz <= 0 || sx > 4 || sy > 4 || sz > 4) continue;
                 if (shapes.size() >= WorldSnapshot.MAX_SHAPES) break;
                 shapes.add(new WorldSnapshot.Shape(x+(b.minX+b.maxX)/2-origin.x, y+(b.minY+b.maxY)/2-origin.y,
-                        z+(b.minZ+b.maxZ)/2-origin.z, color, sx,sy,sz));
+                        z+(b.minZ+b.maxZ)/2-origin.z, color, sx,sy,sz,blockId));
             }
         }
         if (index < 512) return;
         String fingerprint=WorldSnapshot.fingerprint(shapes);
         if (!fingerprint.equals(confirmed.get(sampling))) {
             sending = sampling; sentFingerprint = fingerprint; generation = 0;
-            expiredAtStart = transport.diagnostics().expired(); outgoing.addAll(WorldSnapshot.encode(sending, shapes));
+            expiredAtStart = transport.diagnostics().expired(); outgoing.addAll(WorldSnapshot.encode(sending, shapes,transport.diagnostics().texturesSupported()));
         }
         sampling = null; shapes = null;
     }

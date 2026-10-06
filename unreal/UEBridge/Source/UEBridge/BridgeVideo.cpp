@@ -27,7 +27,7 @@ void UBridgeVideo::Start(int32 Port) {
         if (Listener) { Listener->Close(); S->DestroySocket(Listener); Listener=nullptr; } return;
     }
     FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-    UE_LOG(LogTemp,Display,TEXT("Bridge 0.3.0 video listening on 127.0.0.1:%d (TCP)"),Port);
+    UE_LOG(LogTemp,Display,TEXT("Bridge 0.4.0 video listening on 127.0.0.1:%d (TCP)"),Port);
 }
 void UBridgeVideo::DropClient() {
     if (Client) { Client->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Client); Client=nullptr; }
@@ -85,15 +85,22 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session) {
     if (!Capture) {
         Capture=NewObject<USceneCaptureComponent2D>(GetOwner());
         Capture->bCaptureEveryFrame=false; Capture->bCaptureOnMovement=false;
+        Capture->bAlwaysPersistRenderingState=true; // Keep exposure/TAA history between explicit captures.
         Capture->CaptureSource=ESceneCaptureSource::SCS_FinalColorLDR; Capture->RegisterComponent();
     }
     if (!Target || Target->SizeX!=W || Target->SizeY!=H) {
-        Target=NewObject<UTextureRenderTarget2D>(this); Target->RenderTargetFormat=ETextureRenderTargetFormat::RTF_RGBA8;
-        Target->ClearColor=FLinearColor::Black; Target->InitAutoFormat(W,H); Capture->TextureTarget=Target;
+        Target=NewObject<UTextureRenderTarget2D>(this);
+        Target->ClearColor=FLinearColor::Black; Target->TargetGamma=2.2f;
+        Target->InitCustomFormat(W,H,PF_B8G8R8A8,false); Capture->TextureTarget=Target;
     }
     FMinimalViewInfo View; Camera->GetCameraView(0,View);
     Capture->SetWorldLocationAndRotation(View.Location,View.Rotation); Capture->FOVAngle=View.FOV;
     Capture->PostProcessSettings=View.PostProcessSettings; Capture->PostProcessBlendWeight=View.PostProcessBlendWeight;
+    if (!FMath::IsNearlyZero(ExposureCompensation)) {
+        Capture->PostProcessSettings.bOverride_AutoExposureBias=true;
+        Capture->PostProcessSettings.AutoExposureBias=View.PostProcessSettings.AutoExposureBias+FMath::Clamp(ExposureCompensation,-6.f,6.f);
+        Capture->PostProcessBlendWeight=1;
+    }
     Capture->CaptureScene();
     TArray<FColor> Pixels; FReadSurfaceDataFlags Flags(RCM_UNorm); Flags.SetLinearToGamma(false);
     if (!Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags) || Pixels.Num()!=W*H) return;

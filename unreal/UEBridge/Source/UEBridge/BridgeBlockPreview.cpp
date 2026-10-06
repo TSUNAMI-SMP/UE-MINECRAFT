@@ -4,6 +4,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/StaticMesh.h"
+#include "BridgeBlockPalette.h"
 
 ABridgeBlockPreview::ABridgeBlockPreview() {
     RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
@@ -14,18 +15,20 @@ void ABridgeBlockPreview::Clear() {
     for (auto& Group : Groups) if (Group) Group->DestroyComponent();
     Groups.Empty();
 }
-void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Blocks, const FVector& Anchor, UMaterialInterface* Material) {
+void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Blocks, const FVector& Anchor, UMaterialInterface* Material,UBridgeBlockPalette* Palette) {
     Clear(); if (!Cube) return;
-    TMap<int32, UInstancedStaticMeshComponent*> ByColor;
+    TMap<FString, UInstancedStaticMeshComponent*> ByMaterial;
     for (const auto& Block : Blocks) {
-        UInstancedStaticMeshComponent*& Group = ByColor.FindOrAdd(Block.Color);
+        UMaterialInterface* Textured=Palette ? Palette->Find(Block.BlockId) : nullptr;
+        const FString Key=FString::Printf(TEXT("%s#%d"),Textured ? *Block.BlockId : TEXT(""),Block.Color);
+        UInstancedStaticMeshComponent*& Group = ByMaterial.FindOrAdd(Key);
         if (!Group) {
             Group = NewObject<UInstancedStaticMeshComponent>(this);
             Group->SetMobility(EComponentMobility::Movable); Group->SetupAttachment(RootComponent);
             Group->SetStaticMesh(Cube); Group->SetCollisionEnabled(ECollisionEnabled::NoCollision);
             Group->SetCanEverAffectNavigation(false); Group->SetGenerateOverlapEvents(false);
-            if (Material) {
-                UMaterialInstanceDynamic* Tint = UMaterialInstanceDynamic::Create(Material, this);
+            if (Textured || Material) {
+                UMaterialInstanceDynamic* Tint = UMaterialInstanceDynamic::Create(Textured ? Textured : Material, this);
                 Tint->SetVectorParameterValue(TEXT("BlockColor"), FLinearColor::FromSRGBColor(
                     FColor((Block.Color >> 16) & 255, (Block.Color >> 8) & 255, Block.Color & 255)));
                 Group->SetMaterial(0, Tint);

@@ -2,6 +2,7 @@ package dev.tsunami.bridge;
 
 import com.google.gson.JsonObject;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.DoubleArgumentType;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientEntityEvents;
@@ -19,6 +20,8 @@ import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.util.Identifier;
+import net.minecraft.registry.Registries;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.io.IOException;
@@ -52,6 +55,8 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
     private long lastFrame, lastError, lastRetry, reportedExpired, snapshotSequence;
     private boolean lastConnected;
     private String lastReceiverId = "";
+    private String lastVideoConfig = "";
+    private TextureExportJob textureJob;
 
     @Override public void onInitializeClient() {
         instance = this; reload(); commands(); videoOverlay.register();
@@ -73,7 +78,7 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
             }
         });
         ClientTickEvents.END_CLIENT_TICK.register(mc -> tick(mc));
-        ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> disconnect());
+        ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> { disconnect(); if(textureJob!=null) textureJob.close(); });
     }
     private void reload() {
         disconnect();
@@ -119,13 +124,21 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
             transport.pump();
             var ready=transport.diagnostics();
             if (ready.connected() && (!lastConnected || !ready.receiverId().equals(lastReceiverId))) {
-                lastReceiverId=ready.receiverId(); worldSync.reset();
+                lastReceiverId=ready.receiverId(); lastVideoConfig=""; worldSync.reset();
             }
             if (config.worldSync) worldSync.tick(mc, origin, config, transport);
             if (config.videoMode != 0 && video == null && transport.diagnostics().cameraReady() && transport.diagnostics().videoSupported())
                 video = new VideoClient(config.videoPort, transport.session());
             if (config.videoMode == 0 && video != null) { video.close(); video = null; }
             videoOverlay.setClient(video, config.videoMode);
+            String videoSettings=config.videoQuality+":"+config.videoExposure;
+            if(config.videoMode!=0 && ready.videoControlsSupported() && !videoSettings.equals(lastVideoConfig) && transport.availableEvents()>0) {
+                int[][] presets={{480,270,15,75},{960,540,20,85},{1280,720,30,90}}; int[] preset=presets[config.videoQuality];
+                JsonObject p=transport.packet("event"); p.addProperty("event","video_config"); position(p,origin);
+                p.addProperty("width",preset[0]); p.addProperty("height",preset[1]); p.addProperty("fps",preset[2]);
+                p.addProperty("quality",preset[3]); p.addProperty("exposure",config.videoExposure);
+                transport.event(p); lastVideoConfig=videoSettings;
+            }
             // Leave 16 slots for gameplay events. Bulk work never blocks the input path.
             for (int i = 0; i < 4 && !snapshotQueue.isEmpty() && transport.availableEvents() > 16; i++) {
                 JsonObject payload = snapshotQueue.removeFirst(); JsonObject p = transport.packet("event");
@@ -142,6 +155,7 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
                         : "UE Bridge: 受信側の応答が途絶えました");
             }
             if (d.expired() > reportedExpired) {
+                lastVideoConfig="";
                 reportedExpired = d.expired();
                 LOG.warn("UE Bridge: {} event(s) expired without ACK", reportedExpired);
                 if (config.notifications) notifyPlayer("UE Bridge: 未確認イベントあり。/uebridge status で確認してください");
@@ -201,6 +215,23 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         if (transport != null && origin != null) sendEvent("world_clear", origin, null);
         return feedback("周辺ワールドを再送信します。/uebridge world on で自動同期を有効にしてください");
     }
+    private int exportTextures() {
+        if(textureJob!=null && textureJob.running()) return feedback(textureJob.status());
+        MinecraftClient mc=MinecraftClient.getInstance(); var resources=mc.getResourceManager();
+        ArrayList<TextureExport.Block> blocks=new ArrayList<>();
+        for(var block:Registries.BLOCK) {
+            java.util.Map<String,String> properties=new java.util.LinkedHashMap<>();
+            block.getDefaultState().getEntries().forEach((key,value)->properties.put(key.getName(),value.toString()));
+            blocks.add(new TextureExport.Block(Registries.BLOCK.getId(block).toString(),properties));
+        }
+        blocks.sort(java.util.Comparator.comparing(TextureExport.Block::id));
+        textureJob=new TextureExportJob(name->{
+            var resource=resources.getResource(Identifier.of(name)); if(resource.isEmpty()) return null;
+            try(var stream=resource.get().getInputStream()) { return stream.readNBytes(4*1024*1024+1); }
+        },java.util.List.copyOf(blocks),FabricLoader.getInstance().getGameDir().resolve("uebridge-export"),
+                message->mc.execute(()->feedback(message)));
+        return feedback("使用中のブロックテクスチャを別スレッドで書き出します。/uebridge textures で進捗を確認できます");
+    }
     private int change(Consumer<BridgeConfig> update, boolean reconnect) {
         if (configError != null) return feedback(configError + "。設定を修正して /uebridge reload を実行してください");
         BridgeConfig next = config.copy(); update.accept(next);
@@ -232,8 +263,15 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
                 .then(literal("pip").executes(c -> change(v -> v.videoMode = 1, false)))
                 .then(literal("fullscreen").executes(c -> change(v -> v.videoMode = 2, false)))
                 .then(literal("off").executes(c -> change(v -> v.videoMode = 0, false)))
+                .then(literal("quality").then(literal("low").executes(c -> change(v -> v.videoQuality=0,false)))
+                    .then(literal("balanced").executes(c -> change(v -> v.videoQuality=1,false)))
+                    .then(literal("high").executes(c -> change(v -> v.videoQuality=2,false))))
+                .then(literal("exposure").then(argument("value",DoubleArgumentType.doubleArg(-6,6))
+                    .executes(c -> change(v -> v.videoExposure=DoubleArgumentType.getDouble(c,"value"),false))))
                 .then(literal("port").then(argument("value", IntegerArgumentType.integer(1024,65535))
                     .executes(c -> change(v -> v.videoPort = IntegerArgumentType.getInteger(c,"value"), true)))))
+            .then(literal("textures").executes(c -> feedback(textureJob==null ? "未書き出し。/uebridge textures export" : textureJob.status()))
+                .then(literal("export").executes(c -> exportTextures())))
             .then(literal("preview").executes(c -> snapshot()).then(literal("clear").executes(c -> clearPreview())))));
     }
     private String status() {
@@ -246,7 +284,9 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
                 d.rttMillis(), d.pending(), d.expired(), config.inputHz)
                 + " / World=" + worldSync.synchronizedCells()+"/"+worldSync.targetCells()
                 + " / UE=" + d.build() + (config.worldSync && !d.worldSupported() ? "（ワールド同期対応UEを待っています）" : "")
-                + " / Video=" + (video == null ? "OFF" : video.status());
+                + " / Video=" + (video == null ? "OFF" : video.status())
+                + " / 画質="+new String[]{"low","balanced","high"}[config.videoQuality]+" 露出="+config.videoExposure
+                + " / テクスチャ="+d.textureMaterials()+"種類";
     }
     private int feedback(String text) {
         MinecraftClient mc = MinecraftClient.getInstance();
@@ -267,7 +307,7 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         if (video != null) video.close(); video = null; videoOverlay.setClient(null, 0); worldSync.reset();
         if (transport != null) try { transport.close(); } catch (IOException e) { report(e); }
         transport = null; origin = null; ignition.clear(); snapshotQueue.clear(); snapshotSequence = 0; lastConnected = false;
-        lastReceiverId = "";
+        lastReceiverId = ""; lastVideoConfig="";
         lastRetry = 0;
     }
 }

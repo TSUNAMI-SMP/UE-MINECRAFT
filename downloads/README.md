@@ -1,5 +1,19 @@
 # ダウンロード
 
+## 最新版 0.4.0
+
+[Minecraft MOD 0.4.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/minecraft-ue-bridge-0.4.0.jar)
+
+[UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-update-0.4.0.zip)
+
+[ソース＋MOD一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UE-Minecraft-MVP-0.4.0.zip)
+
+ブロックテクスチャのローカル書き出し/UE取り込み、映像品質3段階、露出調整。バニラ素材は配布物に含めません。
+**MODとUEを両方更新し、UEを閉じた状態で再ビルド**してください。
+[導入・素材取り込み・テスト手順](../docs/UPGRADE_0.4.0.md)。既存のレベルを保持する更新パッチです。
+0.3.1のPythonパス修正を含みます。Java/Pythonテスト成功。今回のUE実機ビルド・描画確認は必要です。
+
+
 ## マテリアル設定スクリプト修正版 0.3.1
 
 [設定スクリプト修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-material-setup-fix-0.3.1.zip)
@@ -8,7 +22,7 @@ UEの`Paths.project_file_path`のAttributeErrorを修正。ZIP内の`setup_world
 Pythonモードで再実行してください。MOD 0.3.0とUE C++はそのままで、再ビルドは不要です。
 下の0.3.0 ZIPは以前のスクリプトを含むため、この修正も適用してください。実UE実行の確認は必要です。
 
-## 最新版 0.3.0
+## 過去版 0.3.0
 
 [Minecraft MOD 0.3.0のJAR](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/minecraft-ue-bridge-0.3.0.jar)
 

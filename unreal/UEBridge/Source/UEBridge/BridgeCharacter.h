@@ -12,6 +12,11 @@ public:
     void SetAuthorityEnabled(bool Enabled);
     void ApplyUEInput(float Forward,float Right,bool JumpHeld,bool Sneak,bool Sprint=false);
     void ConfigureVisuals(class UMaterialInterface* Material,class UBridgeBlockPalette* Palette,const FString& Item,const FString& Block,int32 Color);
+    void ConfigureAppearance(class UBridgePlayerAppearance* Appearance);
+    void ApplyPlayerVisuals(int32 Perspective,float SwingProgress,float EquipProgress,bool UsingItem,const FString& UseAction,float UseProgress,bool LeftHanded,int32 SkinLayers,bool SlimArms);
+    /** Gameplay always aims from the eyes, also when the display camera is in third person. */
+    void GetEyeAim(FVector& EyePosition,FRotator& AimRotation) const;
+    void SetMinecraftFov(float VerticalFov);
     void SetInteractionWorld(class ABridgeWorld* Imported);
     void SwingHand() { SwingRemaining=.22f; }
     UPROPERTY(BlueprintReadOnly,Category="Bridge") bool UEAuthority=false;
@@ -28,8 +33,21 @@ private:
     UPROPERTY() TObjectPtr<class UMaterialInterface> VisualMaterial;
     UPROPERTY() TObjectPtr<class UBridgeBlockPalette> VisualPalette;
     UPROPERTY() TObjectPtr<class ABridgeWorld> InteractionWorld;
+    UPROPERTY() TObjectPtr<class UBridgePlayerAppearance> PlayerAppearance;
+    UPROPERTY() TObjectPtr<class USceneComponent> AvatarRoot;
+    UPROPERTY() TArray<TObjectPtr<class UProceduralMeshComponent>> AvatarParts;
+    UPROPERTY() TArray<TObjectPtr<class UProceduralMeshComponent>> AvatarLayers;
+    UPROPERTY() TObjectPtr<class UProceduralMeshComponent> SkinArm;
+    UPROPERTY() TObjectPtr<class UProceduralMeshComponent> SkinSleeve;
     FString VisualItem, VisualBlock;
     int32 VisualColor=-1;
     bool VisualsConfigured=false;
     float BobPhase=0, SwingRemaining=0;
+    int32 CameraPerspective=0,PlayerSkinLayers=127;
+    float PlayerSwing=0,PlayerEquip=1,PlayerUseProgress=0,RemoteEyeHeight=162;
+    bool PlayerUsingItem=false,PlayerLeftHanded=false,PlayerSlim=false,HasPlayerVisuals=false,AvatarGeometryReady=false;
+    FString PlayerUseAction;
+    void BuildAvatarGeometry();
+    void UpdatePlayerCamera();
+    void UpdateAvatar(float Bob);
 };

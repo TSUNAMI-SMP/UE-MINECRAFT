@@ -4,7 +4,7 @@ public class UEBridge : ModuleRules {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
         PublicDependencyModuleNames.AddRange(new string[] {
             "Core", "CoreUObject", "Engine", "InputCore", "Sockets", "Networking",
-            "Json", "Niagara", "GeometryCollectionEngine", "FieldSystemEngine", "ChaosSolverEngine", "ImageWrapper", "RenderCore", "RHI"
+            "Json", "Niagara", "GeometryCollectionEngine", "FieldSystemEngine", "ChaosSolverEngine", "ImageWrapper", "RenderCore", "RHI", "ProceduralMeshComponent"
         });
     }
 }

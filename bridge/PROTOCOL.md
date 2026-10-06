@@ -321,3 +321,72 @@ Input-to-upload latency uses MC's retained input send timestamp echoed by the
 captured frame, without cross-process clock subtraction. It ends at GPU upload
 submission, excluding upload completion, VSync and scanout. GPU-readback timing
 includes fence-poll scheduling; it is not a pure hardware copy measurement.
+
+## Player appearance, perspective and vanilla feedback (0.7.0)
+
+Status adds `playerVisualsV1:true`, `vanillaFeedbackV1:true`, `skinReady` and
+`particlesReady` configuration flags. MOD gates appearance fields on the first
+capability. Inputs optionally contain `perspective:0|1|2` (first/rear/front),
+`skinLayers:0..127` (vanilla PlayerModelPart mask), `slimArms:boolean`,
+`leftHanded:boolean`, `swingProgress:0..1`, `equipProgress:0..1` (1 raised),
+`usingItem:boolean`, `useAction` and `useProgress:0..1`.
+`cameraFov:30..110` is Minecraft's vertical base FOV; UE converts to horizontal
+FOV for the video stream's 16:9 aspect. Defaults are first person, all layers,
+classic right arm, swing 0, equip 1, unused, and FOV 70.
+UseAction accepts none/eat/drink/block/bow/spear/trident/crossbow/spyglass/
+toot_horn/brush/bundle. This visual state does not grant item gameplay effects.
+Additional currently unused client metadata is ignored (offItem/equipOff/useTicks).
+
+Perspective samples `options.getPerspective()` after Minecraft handles its own
+key binding; the bridge never consumes a second toggle or hardcodes F5. Third
+person offsets the display camera 400cm and sweeps against colliders. Aiming and
+block edits use the authoritative eye position and facing, independently of that
+display camera. Native swing/equip interpolation is sampled; native swing ticks
+are explicitly advanced while vanilla player movement is frozen.
+
+`/uebridge player export` writes the already loaded skin to a new local export
+directory. Manifest `kind:"player",version:1` identifies a checksummed normalized
+64x64 PNG, classic/slim model, player UUID and name. UE's local Python importer
+validates all metadata/path/size/hash/PNG CRCs before writes, creates local
+skin material/appearance assets, and assigns the saved level's sole receiver.
+It adds no binary asset traffic to the high-frequency input socket.
+Block texture manifests now optionally include `particle:{texture,tint,color}`;
+palette particle maps are distinct from the world face material maps. Old
+manifests remain readable. Tints sample the export location; grass dust is untinted.
+
+UE emits outcome feedback after successful break/place and measured grounded
+walking/landing, without replaying a Minecraft world action:
+
+```json
+{"v":1,"kind":"feedback","session":"00000000-0000-4000-8000-000000000001","receiverId":"00000000-0000-4000-8000-000000000002","effectId":"00000000-0000-4000-8000-000000000003","seq":20,"type":"break","block":"minecraft:stone","x":0.5,"y":0.5,"z":3.5,"listenerX":0,"listenerY":1.62,"listenerZ":0,"listenerYaw":0,"listenerPitch":0,"fallDistance":0}
+```
+
+Positions are relative MC-space source/camera in blocks, yaw/pitch in MC degrees.
+Finite source/listener coordinates are bounded +/-100000, pitch +/-90,
+fallDistance 0..1000, block is a registry ID, and IDs are UUIDs. `seq` echoes a
+sent input <=1s old; retransmissions refresh the echoed seq but retain effectId
+and outcome coordinates. MC requires the active session/receiver/capability,
+validates the entire payload before ACK, and bounds queued feedback to64.
+Duplicate effect IDs are ACKed again without delivery (dedup256). Overflow is
+not ACKed, allowing retry. Sound playback independently deduplicates256 IDs.
+
+```json
+{"v":1,"kind":"feedback_ack","session":"00000000-0000-4000-8000-000000000001","seq":21,"effectId":"00000000-0000-4000-8000-000000000003"}
+```
+
+ACK has no position/eventId. It only removes an existing pending effect for the
+current session/source endpoint; it cannot acquire/renew the input lease or edit
+terrain. UE retains at most64 effects, retries every100ms for1s, and clears them
+on disconnect, controller stop or session takeover. This is bounded retry, not
+persistent guaranteed delivery. MC uses its active registry SoundGroup and
+SoundManager, rebasing source relative to the UE view onto its actual audio
+listener. Block sounds use vanilla volume/pitch formulas. No audio files are
+exported. Ordinary jumps and creative landing have no invented fall sound.
+
+UE renders block dust so it remains visible while vanilla world rendering is
+skipped. A full-cube break emits64 fragments; sprint dust samples20Hz, normal
+walking emits none. Quarter-sprite UVs, lifetime, gravity, drag and brightness
+follow the Minecraft particle values; lighting and collision use UE. At most384
+particles and64 material groups. Movement events use imported block metadata;
+unsupported world objects are silent. Special block sound branches, arbitrary
+shape subdivision and per-voxel biome tints remain future extensions.

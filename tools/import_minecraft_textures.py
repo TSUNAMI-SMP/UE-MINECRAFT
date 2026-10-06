@@ -87,6 +87,12 @@ def load_texture_manifest(filename):
             item = entry.get(face)
             if not isinstance(item, dict) or item.get("texture") not in textures or type(item.get("tint")) is not bool:
                 raise ValueError("Invalid block face/texture reference")
+        particle = entry.get("particle")
+        if particle is not None:
+            if (not isinstance(particle, dict) or particle.get("texture") not in textures
+                    or type(particle.get("tint")) is not bool
+                    or type(particle.get("color")) is not int or not 0 <= particle["color"] <= 0xffffff):
+                raise ValueError("Invalid block particle texture/tint")
     return manifest
 
 
@@ -95,7 +101,7 @@ def import_minecraft_textures(filename):
     manifest = load_texture_manifest(filename)  # Validate all files before mutating UE assets.
     project = pathlib.Path(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()))
     if not (project / "UEBridge.uproject").is_file() or not (project / "Source/UEBridge/BridgeBlockPalette.h").is_file():
-        raise RuntimeError("Use the updated UEBridge 0.4.0 project only")
+        raise RuntimeError("Use the updated UEBridge 0.7.0 project only")
     if unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world() is not None:
         raise RuntimeError("Stop Play before importing textures")
     if unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages():
@@ -103,7 +109,13 @@ def import_minecraft_textures(filename):
     receiver_class = getattr(unreal, "BridgeReceiver", None)
     palette_class = getattr(unreal, "BridgeBlockPalette", None)
     if receiver_class is None or palette_class is None:
-        raise RuntimeError("Build UEBridge 0.4.0 first")
+        raise RuntimeError("Build UEBridge 0.7.0 first")
+    try:
+        palette_defaults = unreal.get_default_object(palette_class)
+        for field in ("particle_textures", "particle_tints", "particle_colors"):
+            palette_defaults.get_editor_property(field)
+    except Exception as error:
+        raise RuntimeError("Build UEBridge 0.7.0 and reopen the editor before importing particles") from error
     actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
     receivers = [actor for actor in actors.get_all_level_actors() if isinstance(actor, receiver_class)]
     if len(receivers) != 1:
@@ -265,8 +277,22 @@ def import_minecraft_textures(filename):
     materials = dict(palette.get_editor_property("materials")); materials.update(palette_materials)
     if len(materials) > 4096:
         raise RuntimeError("Combined palette exceeds the bridge limit of 4096 block IDs")
+    # This is a separate sprite map: block dust must not reuse the block's three-face material.
+    # Older texture exports have no particle entry and remain usable with their side texture.
+    particle_textures = dict(palette.get_editor_property("particle_textures"))
+    particle_tints = dict(palette.get_editor_property("particle_tints"))
+    particle_colors = dict(palette.get_editor_property("particle_colors"))
+    for identifier, entry in manifest["blocks"].items():
+        particle = entry.get("particle", {"texture": entry["side"]["texture"], "tint": False, "color": 0xffffff})
+        particle_textures[identifier] = imported[particle["texture"]]
+        particle_tints[identifier] = particle["tint"]
+        value = particle["color"] if particle["tint"] else 0xffffff
+        particle_colors[identifier] = unreal.Color((value >> 16) & 255, (value >> 8) & 255, value & 255, 255)
     with unreal.ScopedEditorTransaction("Assign Minecraft texture palette"):
         palette.set_editor_property("materials", materials)
+        palette.set_editor_property("particle_textures", particle_textures)
+        palette.set_editor_property("particle_tints", particle_tints)
+        palette.set_editor_property("particle_colors", particle_colors)
         if not assets.save_loaded_asset(palette, False):
             raise RuntimeError("Cannot save texture palette")
         receivers[0].set_editor_property("texture_palette", palette)

@@ -23,6 +23,8 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge") float Force = 200000.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Preview") TObjectPtr<class UMaterialInterface> PreviewMaterial;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Textures") TObjectPtr<class UBridgeBlockPalette> TexturePalette;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Player") TObjectPtr<class UBridgePlayerAppearance> PlayerAppearance;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Particles") TObjectPtr<class UMaterialInterface> VanillaParticleMaterial;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Bow") bool SpawnBowProjectiles = true;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") bool Connected = false;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") int32 InvalidPackets = 0;
@@ -54,6 +56,9 @@ private:
     int32 PeerPort = 0;
     UPROPERTY() TObjectPtr<class ABridgeBlockPreview> Preview;
     UPROPERTY() TObjectPtr<class ABridgeWorld> SyncedWorld;
+    UPROPERTY() TObjectPtr<class ABridgeVanillaEffects> VanillaEffects;
+    struct FPendingFeedback { TSharedPtr<FJsonObject> Json; double Created=0,Sent=-1; };
+    TMap<FString,FPendingFeedback> PendingFeedback;
     UPROPERTY() TArray<TObjectPtr<class ABridgeArrow>> Arrows;
     FBridgePacket LatestInput;
     uint64 LastActionSequence=0;
@@ -73,6 +78,8 @@ private:
     void ClearPreview(uint64 Generation);
     void SendJson(const TSharedRef<class FJsonObject>& Json, const TSharedRef<class FInternetAddr>& Sender);
     void SendPose();
+    void QueueFeedback(const FString& Type,const FString& BlockId,const FVector& Position,float FallDistance=0);
+    void PumpFeedback(double Now);
     void SendStatus(const TSharedRef<class FInternetAddr>& Sender);
     void Explode(const FVector& Position);
 };

@@ -83,6 +83,17 @@ class TextureManifestTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.load(manifest)
 
+    def test_particle_sprite_and_tint_are_optional_and_checked(self):
+        block = self.manifest["blocks"]["minecraft:stone"]
+        block["particle"] = {"texture": "minecraft:block/stone", "tint": False, "color": 0xffffff}
+        self.assertEqual(0xffffff, self.load()["blocks"]["minecraft:stone"]["particle"]["color"])
+        for key, value in (("texture", "minecraft:block/missing"), ("tint", 1), ("color", True), ("color", -1), ("color", 0x1000000)):
+            with self.subTest(key=key, value=value):
+                manifest = copy.deepcopy(self.manifest)
+                manifest["blocks"]["minecraft:stone"]["particle"][key] = value
+                with self.assertRaises(ValueError):
+                    self.load(manifest)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.ArrayDeque;
 import java.util.UUID;
 import java.util.function.LongSupplier;
 
@@ -22,6 +23,11 @@ public final class BridgeTransport implements AutoCloseable {
     private final ByteBuffer receive = ByteBuffer.allocate(MAX_PACKET_BYTES + 1);
     private final LinkedHashMap<String, Pending> pending = new LinkedHashMap<>();
     private final LinkedHashMap<Long, Long> inputTimes = new LinkedHashMap<>();
+    private final ArrayDeque<JsonObject> feedback = new ArrayDeque<>();
+    private final LinkedHashMap<String, Boolean> seenFeedback = new LinkedHashMap<>();
+    private boolean playerVisualsSupported, feedbackSupported;
+    public boolean playerVisualsSupported() { return diagnostics().connected() && playerVisualsSupported; }
+    public JsonObject pollFeedback() { return feedback.pollFirst(); }
     private long sequence, lastStatus, lastStatusSequence, sentInputs, acknowledged, expired, lastRtt;
     private boolean hasStatus, cameraReady, vfxReady;
     private int walls;
@@ -105,12 +111,25 @@ public final class BridgeTransport implements AutoCloseable {
     private static boolean bool(JsonObject p, String name) {
         return p.has(name) && p.get(name).isJsonPrimitive() && p.getAsJsonPrimitive(name).isBoolean();
     }
-    private void reply(JsonObject p) {
+    private void reply(JsonObject p) throws IOException {
         if (!number(p, "v") || p.get("v").getAsDouble() != 1
                 || !session.equals(p.get("session").getAsString())) return;
         String kind = p.get("kind").getAsString();
         if ("ack".equals(kind)) {
             if (pending.remove(p.get("eventId").getAsString()) != null) ++acknowledged;
+        } else if ("feedback".equals(kind)) {
+            if(!feedbackSupported || !diagnostics().connected()) return;
+            var effect=VanillaFeedbackData.parse(p); if(effect==null) return;
+            if(!receiverId.equals(p.get("receiverId").getAsString())) return;
+            long seq=p.get("seq").getAsLong(); Long sent=inputTimes.get(seq);
+            if(sent==null || clock.getAsLong()-sent>1_000_000_000L) return;
+            String id=p.get("effectId").getAsString();
+            if(!seenFeedback.containsKey(id)) {
+                if(feedback.size()>=64) return; // Sender retries; never ACK a discarded effect.
+                feedback.addLast(p.deepCopy());seenFeedback.put(id,true);
+                if(seenFeedback.size()>256) seenFeedback.remove(seenFeedback.keySet().iterator().next());
+            }
+            JsonObject ack=packet("feedback_ack");ack.addProperty("effectId",id);send(encode(ack));
         } else if("pose".equals(kind)) {
             if(!p.has("receiverId") || !receiverId.equals(p.get("receiverId").getAsString()) || !authoritySupported
                     || !number(p,"seq") || !number(p,"poseSeq") || !number(p,"x") || !number(p,"y") || !number(p,"z") || !bool(p,"grounded")) return;
@@ -135,6 +154,8 @@ public final class BridgeTransport implements AutoCloseable {
                     ? p.get("build").getAsString() : "unknown";
             actionsSupported=bool(p,"blockActionsV1") && p.get("blockActionsV1").getAsBoolean();
             videoV2=bool(p,"videoV2") && p.get("videoV2").getAsBoolean();
+            playerVisualsSupported=bool(p,"playerVisualsV1") && p.get("playerVisualsV1").getAsBoolean();
+            feedbackSupported=bool(p,"vanillaFeedbackV1") && p.get("vanillaFeedbackV1").getAsBoolean();
             lastAction=p.has("lastAction") && p.get("lastAction").isJsonPrimitive() && p.getAsJsonPrimitive("lastAction").isString() ? p.get("lastAction").getAsString() : "";
             authoritySupported=bool(p,"authorityV1") && p.get("authorityV1").getAsBoolean();
             worldSealed=bool(p,"worldSealed") && p.get("worldSealed").getAsBoolean();
@@ -150,7 +171,7 @@ public final class BridgeTransport implements AutoCloseable {
             textureMaterials=Double.isFinite(materials) && materials==Math.rint(materials) && materials>=0 && materials<=4096 ? (int)materials : 0;
             String nextReceiver=p.has("receiverId") && p.get("receiverId").isJsonPrimitive() && p.getAsJsonPrimitive("receiverId").isString()
                     ? p.get("receiverId").getAsString() : "";
-            if(!receiverId.equals(nextReceiver)) { pose=null; poseSequence=0; }
+            if(!receiverId.equals(nextReceiver)) { pose=null; poseSequence=0; feedback.clear();seenFeedback.clear(); }
             receiverId=nextReceiver;
         }
     }
@@ -174,5 +195,5 @@ public final class BridgeTransport implements AutoCloseable {
             }
         }
     }
-    @Override public void close() throws IOException { pending.clear(); inputTimes.clear(); channel.close(); }
+    @Override public void close() throws IOException { pending.clear(); inputTimes.clear(); feedback.clear();seenFeedback.clear();channel.close(); }
 }

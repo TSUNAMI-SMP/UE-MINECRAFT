@@ -46,8 +46,12 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
     FBridgePacket R; double Version; FString Kind;
     if (!Number(P, TEXT("v"), 1, 1, Version) || !P->TryGetStringField(TEXT("kind"), Kind)
         || !Guid(P, TEXT("session"), R.Session)
-        || !Integer(P, TEXT("seq"), 1, 9007199254740991.0, R.Sequence)
-        || !Vector(P, TEXT("x"), TEXT("y"), TEXT("z"), R.Position, 100000)) return false;
+        || !Integer(P, TEXT("seq"), 1, 9007199254740991.0, R.Sequence)) return false;
+    if (Kind==TEXT("feedback_ack")) {
+        if(!Guid(P,TEXT("effectId"),R.EventId)) return false;
+        R.Kind=EBridgeKind::FeedbackAck; Out=MoveTemp(R); return true;
+    }
+    if(!Vector(P, TEXT("x"), TEXT("y"), TEXT("z"), R.Position, 100000)) return false;
     if (Kind == TEXT("input")) {
         R.Kind = EBridgeKind::Input;
         if(!Selection(P,R)) return false;
@@ -59,6 +63,22 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
         if (P->HasField(TEXT("sneak")) && (!P->HasTypedField<EJson::Boolean>(TEXT("sneak")) || !P->TryGetBoolField(TEXT("sneak"), R.Sneak))) return false;
         if (P->HasField(TEXT("eyeHeight")) && !Number(P,TEXT("eyeHeight"),0.1,2.5,R.EyeHeight)) return false;
         if (P->HasField(TEXT("bodyHeight")) && !Number(P,TEXT("bodyHeight"),0.2,3,R.BodyHeight)) return false;
+        uint64 Perspective=0,Layers=127;
+        if(P->HasField(TEXT("perspective")) && !Integer(P,TEXT("perspective"),0,2,Perspective)) return false;
+        if(P->HasField(TEXT("skinLayers")) && !Integer(P,TEXT("skinLayers"),0,127,Layers)) return false;
+        R.Perspective=int32(Perspective);R.SkinLayers=int32(Layers);
+        if(P->HasField(TEXT("swingProgress")) && !Number(P,TEXT("swingProgress"),0,1,R.SwingProgress)) return false;
+        if(P->HasField(TEXT("equipProgress")) && !Number(P,TEXT("equipProgress"),0,1,R.EquipProgress)) return false;
+        if(P->HasField(TEXT("useProgress")) && !Number(P,TEXT("useProgress"),0,1,R.UseProgress)) return false;
+        if(P->HasField(TEXT("cameraFov")) && !Number(P,TEXT("cameraFov"),30,110,R.CameraFov)) return false;
+        if(P->HasField(TEXT("usingItem")) && (!P->HasTypedField<EJson::Boolean>(TEXT("usingItem")) || !P->TryGetBoolField(TEXT("usingItem"),R.UsingItem))) return false;
+        if(P->HasField(TEXT("leftHanded")) && (!P->HasTypedField<EJson::Boolean>(TEXT("leftHanded")) || !P->TryGetBoolField(TEXT("leftHanded"),R.LeftHanded))) return false;
+        if(P->HasField(TEXT("slimArms")) && (!P->HasTypedField<EJson::Boolean>(TEXT("slimArms")) || !P->TryGetBoolField(TEXT("slimArms"),R.SlimArms))) return false;
+        if(P->HasField(TEXT("useAction"))) {
+            if(!P->TryGetStringField(TEXT("useAction"),R.UseAction)) return false;
+            const TSet<FString> Actions{TEXT("none"),TEXT("eat"),TEXT("drink"),TEXT("block"),TEXT("bow"),TEXT("spear"),TEXT("trident"),TEXT("crossbow"),TEXT("spyglass"),TEXT("toot_horn"),TEXT("brush"),TEXT("bundle")};
+            if(!Actions.Contains(R.UseAction)) return false;
+        }
     } else if (Kind == TEXT("event")) {
         FString Event;
         if (!Guid(P, TEXT("eventId"), R.EventId) || !P->TryGetStringField(TEXT("event"), Event)) return false;

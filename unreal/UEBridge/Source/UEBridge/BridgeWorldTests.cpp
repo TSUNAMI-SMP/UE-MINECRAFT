@@ -39,9 +39,14 @@ bool FBridgeWorldSealTest::RunTest(const FString& Parameters) {
     const FIntVector Position(2,2,2);
     TestEqual(TEXT("Place in imported empty cell"),Bridge->PlaceBlock(Position,TEXT("minecraft:stone"),0x777777),FString(TEXT("placed")));
     TestEqual(TEXT("Collision and visual shape stored"),Bridge->ShapeCount(),1);
+    FString SurfaceId; FColor SurfaceTint;
+    TestTrue(TEXT("Authoritative sound and dust resolve block metadata"),Bridge->GetBlockInfo(Position,SurfaceId,SurfaceTint));
+    TestEqual(TEXT("Surface sound resolves actual block"),SurfaceId,FString(TEXT("minecraft:stone")));
+    TestEqual(TEXT("Surface retains imported color"),SurfaceTint,FColor(0x77,0x77,0x77));
     TestEqual(TEXT("Occupied cell rejected"),Bridge->PlaceBlock(Position,TEXT("minecraft:dirt"),0x888888),FString(TEXT("occupied")));
     TestEqual(TEXT("Placement beyond import blocked"),Bridge->PlaceBlock(FIntVector(99,99,99),TEXT("minecraft:stone"),0),FString(TEXT("outside import")));
     TestTrue(TEXT("Break imported block"),Bridge->BreakBlock(Position));TestEqual(TEXT("Break removes collision and visual"),Bridge->ShapeCount(),0);
+    TestFalse(TEXT("Broken block cannot emit a stale support effect"),Bridge->GetBlockInfo(Position,SurfaceId,SurfaceTint));
     TestFalse(TEXT("Repeated break cannot mutate twice"),Bridge->BreakBlock(Position));
     Begin.Sequence=100;Bridge->BeginImport(Begin,FVector::ZeroVector);
     TestTrue(TEXT("Same import retry keeps sealed data"),Bridge->IsSealed());

@@ -13,9 +13,12 @@ import javax.imageio.stream.MemoryCacheImageInputStream;
 public final class TextureExport {
     private static final class Unsupported extends IOException { Unsupported(String message) { super(message); } Unsupported(String message, Throwable cause) { super(message,cause); } }
     public interface Resources { byte[] read(String resourceId) throws IOException; }
-    public record Block(String id, Map<String,String> properties) {}
+    /** Particle colour is sampled from the active world's vanilla BlockColors before the worker starts. */
+    public record Block(String id, Map<String,String> properties, int particleColor) {
+        public Block(String id,Map<String,String> properties) { this(id,properties,0xffffff); }
+    }
     public record Face(String texture, boolean tint) {}
-    public record Faces(Face top, Face side, Face bottom) {}
+    public record Faces(Face top, Face side, Face bottom, Face particle) {}
     private record Model(Map<String,String> textures, JsonArray elements) {}
     private final Resources source;
     private final Path directory;
@@ -90,7 +93,12 @@ public final class TextureExport {
         if(chosen==null) throw new Unsupported("Default block state variant missing");
         if(chosen.isJsonArray()) chosen=chosen.getAsJsonArray().get(0); // Weighted/random variant: first model.
         Model m=model(chosen.getAsJsonObject().get("model").getAsString(),new HashSet<>());
-        return new Faces(face(m,"up"),face(m,"north"),face(m,"down"));
+        Face top=face(m,"up"),side=face(m,"north"),bottom=face(m,"down");
+        // Vanilla block dust uses the model's particle sprite, which can differ from all three faces.
+        // Grass dust is explicitly untinted in BlockDustParticle, even though its top face is tinted.
+        String particleTexture=m.textures.containsKey("particle") ? texture("#particle",m.textures) : side.texture;
+        boolean particleTint=!blockId.equals("minecraft:grass_block") && (block.particleColor & 0xffffff)!=0xffffff;
+        return new Faces(top,side,bottom,new Face(particleTexture,particleTint));
     }
     private void exportTexture(String texture) throws IOException {
         if(textures.has(texture)) return;
@@ -133,8 +141,11 @@ public final class TextureExport {
     private JsonObject faceJson(Face face) { JsonObject p=new JsonObject(); p.addProperty("texture",face.texture); p.addProperty("tint",face.tint); return p; }
     public boolean export(Block block) throws IOException {
         try {
-            Faces faces=resolve(block); exportTexture(faces.top.texture); exportTexture(faces.side.texture); exportTexture(faces.bottom.texture);
+            Faces faces=resolve(block); exportTexture(faces.top.texture); exportTexture(faces.side.texture); exportTexture(faces.bottom.texture); exportTexture(faces.particle.texture);
             JsonObject p=new JsonObject(); p.add("top",faceJson(faces.top)); p.add("side",faceJson(faces.side)); p.add("bottom",faceJson(faces.bottom));
+            JsonObject particle=faceJson(faces.particle);
+            particle.addProperty("color",faces.particle.tint ? block.particleColor & 0xffffff : 0xffffff);
+            p.add("particle",particle);
             blocks.add(id(block.id),p); return true;
         } catch(Unsupported | RuntimeException unsupported) { skipped++; return false; }
     }

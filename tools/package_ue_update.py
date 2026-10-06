@@ -20,6 +20,9 @@ with zipfile.ZipFile(output, "x", zipfile.ZIP_DEFLATED) as archive:
     archive.write(root / "tools/setup_world_bridge.py", "setup_world_bridge.py")
     if (root / "tools/import_minecraft_textures.py").is_file():
         archive.write(root / "tools/import_minecraft_textures.py", "import_minecraft_textures.py")
+    for helper in ("import_minecraft_player.py", "setup_vanilla_effects.py"):
+        if (root / "tools" / helper).is_file():
+            archive.write(root / "tools" / helper, helper)
     archive.write(root / f"docs/UPGRADE_{version}.md", "UPDATE_INSTRUCTIONS.md")
 with zipfile.ZipFile(output) as archive:
     if archive.testzip() is not None:

@@ -69,4 +69,34 @@ public class TextureExportTest {
         assertEquals(2,entry.get("height").getAsInt()); var png=ImageIO.read(manifest.getParent().resolve(entry.get("file").getAsString()).toFile());
         assertEquals(0xffff0000,png.getRGB(0,0));
     }
+    @Test public void exportsInheritedParticleSpriteAndVanillaGrassTintException() throws Exception {
+        var map=resources();
+        put(map,"minecraft:models/block/base.json","{\"textures\":{\"bottom\":\"block/dirt\",\"particle\":\"#bottom\"},\"elements\":[{\"faces\":{\"up\":{\"texture\":\"#top\",\"tintindex\":0},\"north\":{\"texture\":\"#side\"},\"down\":{\"texture\":\"#bottom\"}}}]}");
+        var exporter=make(map);
+        assertTrue(exporter.export(new TextureExport.Block("minecraft:grass_block",Map.of("snowy","false"),0x91bd59)));
+        var particle=JsonParser.parseString(Files.readString(exporter.finish())).getAsJsonObject().getAsJsonObject("blocks")
+                .getAsJsonObject("minecraft:grass_block").getAsJsonObject("particle");
+        assertEquals("minecraft:block/dirt",particle.get("texture").getAsString());
+        assertFalse(particle.get("tint").getAsBoolean()); assertEquals(0xffffff,particle.get("color").getAsInt());
+    }
+    @Test public void particlesKeepSampledVanillaBiomeColorForOtherBlocks() throws Exception {
+        var map=resources();
+        put(map,"minecraft:blockstates/oak_leaves.json","{\"variants\":{\"\":{\"model\":\"block/grass\"}}}");
+        var exporter=make(map);
+        assertTrue(exporter.export(new TextureExport.Block("minecraft:oak_leaves",Map.of(),0x48b518)));
+        var particle=JsonParser.parseString(Files.readString(exporter.finish())).getAsJsonObject().getAsJsonObject("blocks")
+                .getAsJsonObject("minecraft:oak_leaves").getAsJsonObject("particle");
+        assertEquals("minecraft:block/grass_side",particle.get("texture").getAsString());
+        assertTrue(particle.get("tint").getAsBoolean()); assertEquals(0x48b518,particle.get("color").getAsInt());
+    }
+    @Test public void exportsDistinctParticleSpriteEvenWhenNoCubeFaceUsesIt() throws Exception {
+        var map=resources();
+        put(map,"minecraft:models/block/grass.json","{\"parent\":\"block/base\",\"textures\":{\"top\":\"block/grass_top\",\"side\":\"block/grass_side\",\"particle\":\"block/dust_only\"}}");
+        map.put("minecraft:textures/block/dust_only.png",map.get("minecraft:textures/block/dirt.png"));
+        var exporter=make(map); assertTrue(exporter.export(grass()));
+        var manifest=JsonParser.parseString(Files.readString(exporter.finish())).getAsJsonObject();
+        assertEquals(4,manifest.getAsJsonObject("textures").size());
+        assertEquals("minecraft:block/dust_only",manifest.getAsJsonObject("blocks").getAsJsonObject("minecraft:grass_block")
+                .getAsJsonObject("particle").get("texture").getAsString());
+    }
 }

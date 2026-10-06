@@ -32,6 +32,9 @@ public:
     UFUNCTION(BlueprintCallable,Category="Bridge|World") int32 RemoveBlocksInSphere(FVector Position,float RemovalRadius);
     bool Aim(const FVector& Start,const FRotator& Rotation,float Reach,FIntVector& Block,FVector& Normal,const AActor* Ignored=nullptr) const;
     FVector BlockCenter(const FIntVector& Block) const;
+    /** Resolve source metadata without relying on the frozen Minecraft player. */
+    bool GetBlockInfo(const FIntVector& SourceVoxel,FString& BlockId,FColor& Tint) const;
+    bool GetSupportingBlock(const FVector& Feet,FIntVector& SourceVoxel,FString& BlockId,FColor& Tint,FVector& ImpactPoint,const AActor* Ignored=nullptr) const;
     bool BreakBlock(const FIntVector& Block);
     FString PlaceBlock(const FIntVector& Block,const FString& BlockId,int32 Color);
     int32 CellCount() const { return Cells.Num(); }

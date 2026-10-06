@@ -117,6 +117,29 @@ FIntVector ABridgeWorld::OwnerOf(const FBridgeBlock& Block) const {
 FVector ABridgeWorld::BlockCenter(const FIntVector& Block) const {
     return BridgeProtocol::ToUnreal(FVector(Block)+FVector(.5)-ImportOrigin,ImportAnchor);
 }
+bool ABridgeWorld::GetBlockInfo(const FIntVector& SourceVoxel,FString& BlockId,FColor& Tint) const {
+    if(!Sealed) return false;
+    const auto* Data=Stored.Find(CellOf(SourceVoxel)); if(!Data) return false;
+    for(const auto& Shape:*Data) if(OwnerOf(Shape)==SourceVoxel) {
+        BlockId=Shape.BlockId;
+        Tint=FColor((Shape.Color>>16)&255,(Shape.Color>>8)&255,Shape.Color&255);
+        return !BlockId.IsEmpty();
+    }
+    return false;
+}
+bool ABridgeWorld::GetSupportingBlock(const FVector& Feet,FIntVector& SourceVoxel,FString& BlockId,FColor& Tint,FVector& ImpactPoint,const AActor* Ignored) const {
+    if(!Sealed || !GetWorld()) return false;
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(BridgeSurface),false);
+    if(Ignored) Params.AddIgnoredActor(Ignored);
+    FHitResult Hit;
+    if(!GetWorld()->LineTraceSingleByChannel(Hit,Feet+FVector(0,0,8),Feet-FVector(0,0,35),ECC_Visibility,Params)) return false;
+    const auto* PreviewActor=Cast<ABridgeBlockPreview>(Hit.GetActor());
+    FBridgeBlock Shape;
+    if(!PreviewActor || !PreviewActor->ResolveHit(Hit.GetComponent(),Hit.Item,Shape)) return false;
+    SourceVoxel=OwnerOf(Shape);
+    if(!GetBlockInfo(SourceVoxel,BlockId,Tint)) return false;
+    ImpactPoint=Hit.ImpactPoint; return true;
+}
 bool ABridgeWorld::Aim(const FVector& Start,const FRotator& Rotation,float Reach,FIntVector& Block,FVector& Normal,const AActor* Ignored) const {
     if(!Sealed) return false;
     FHitResult Hit;

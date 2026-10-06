@@ -1,6 +1,21 @@
 # ダウンロード
 
-## 最新版 0.6.0
+## 最新版 0.7.0
+
+[MOD 0.7.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/minecraft-ue-bridge-0.7.0.jar)
+
+[UE更新ZIP 0.7.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-update-0.7.0.zip)
+
+[ソース＋MOD一式ZIP 0.7.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UE-Minecraft-MVP-0.7.0.zip)
+
+自分のスキン付き腕・全身、Minecraftの設定済みキーでの視点切り替え、バニラの音とブロック粒子。
+[更新・書き出し・取り込み・テスト手順](../docs/UPGRADE_0.7.0.md)。MODとUE両方の更新・UE再ビルドが必要。
+保存済みレベルを使用し、Sourceを削除せずZIP内のファイルを統合コピーしてください。
+ビルド補助は必要なProceduralMeshComponentプラグインのみuprojectへ追加し、元ファイルをバックアップします。
+今回はスキンと粒子のために素材を書き出し直します。配布物にユーザーのスキン・Minecraft音声/画像は含みません。
+Java63件/Python21件成功。UE5.8のビルド・統合テストは実機で必要です。
+
+## 過去版 0.6.0
 
 **UEビルドには[修正パッチ0.6.1](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-build-fix-0.6.1.zip)も適用してください。** C4458のMesh/Owner名前衝突を修正。MOD0.6.0はそのまま。[適用手順](../docs/BUILD_FIX_0.6.1.md)。
 

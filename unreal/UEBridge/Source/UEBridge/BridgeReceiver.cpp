@@ -5,6 +5,8 @@
 #include "BridgeWorld.h"
 #include "BridgeVideo.h"
 #include "BridgeBlockPalette.h"
+#include "BridgePlayerAppearance.h"
+#include "BridgeVanillaEffects.h"
 #include "Sockets.h"
 #include "SocketSubsystem.h"
 #include "IPAddress.h"
@@ -54,7 +56,8 @@ void ABridgeReceiver::BeginPlay() {
         return;
     }
     int32 ActualBuffer; Socket->SetReceiveBufferSize(256 * 1024, ActualBuffer);
-    UE_LOG(LogTemp, Display, TEXT("Bridge 0.6.0 listening on 127.0.0.1:%d"), Port);
+    VanillaEffects=GetWorld()->SpawnActor<ABridgeVanillaEffects>();
+    UE_LOG(LogTemp, Display, TEXT("Bridge 0.7.0 listening on 127.0.0.1:%d"), Port);
     Video->Start(VideoPort);
     if (!TargetCharacter) UE_LOG(LogTemp, Warning, TEXT("Bridge: waiting for player Character; will retry every tick"));
     if (!ExplosionSystem) UE_LOG(LogTemp, Warning, TEXT("Bridge: ExplosionSystem is unset; Niagara will not play"));
@@ -62,6 +65,8 @@ void ABridgeReceiver::BeginPlay() {
 void ABridgeReceiver::EndPlay(const EEndPlayReason::Type Reason) {
     if (IsValid(Preview)) Preview->Destroy();
     if (IsValid(SyncedWorld)) SyncedWorld->Destroy();
+    if (IsValid(VanillaEffects)) VanillaEffects->Destroy();
+    PendingFeedback.Empty();
     for (auto& Arrow : Arrows) if (IsValid(Arrow)) Arrow->Destroy();
     if (Socket) { Socket->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Socket); Socket = nullptr; }
     Super::EndPlay(Reason);
@@ -105,12 +110,26 @@ void ABridgeReceiver::Tick(float DeltaSeconds) {
         UEControl=Connected && Sealed && LatestInput.Controller;
         Bridge->SetAuthorityEnabled(UEControl);
         Bridge->ConfigureVisuals(PreviewMaterial,TexturePalette,LatestInput.HeldItem,LatestInput.HeldBlock,LatestInput.HeldColor);
+        Bridge->ConfigureAppearance(PlayerAppearance);
+        Bridge->SetMinecraftFov(float(LatestInput.CameraFov));
+        Bridge->ApplyPlayerVisuals(LatestInput.Perspective,float(LatestInput.SwingProgress),float(LatestInput.EquipProgress),LatestInput.UsingItem,
+            LatestInput.UseAction,float(LatestInput.UseProgress),LatestInput.LeftHanded,LatestInput.SkinLayers,LatestInput.SlimArms);
         Bridge->SetInteractionWorld(SyncedWorld);
         if(UEControl) {
             if(auto* C=Bridge->GetController()) C->SetControlRotation(BridgeProtocol::ToRotation(LatestInput.Yaw,LatestInput.Pitch));
             Bridge->ApplyUEInput(ForwardInput,RightInput,JumpHeld,SneakHeld,LatestInput.Sprint);
         }
+        if(IsValid(VanillaEffects)) {
+            VanillaEffects->Configure(SyncedWorld,TexturePalette,VanillaParticleMaterial);
+            VanillaEffects->SetViewCamera(Bridge->BridgeCamera);
+            VanillaEffects->AddTickPrerequisiteActor(Bridge);
+            if(UEControl) {
+                TArray<FBridgeVanillaEvent> Events;VanillaEffects->SampleCharacter(Bridge,DeltaSeconds,Events);
+                for(const auto& Effect:Events) QueueFeedback(Effect.Type,Effect.BlockId,Effect.Position,Effect.FallDistance);
+            } else VanillaEffects->ResetMovement();
+        }
     } else UEControl=false;
+    PumpFeedback(Now);
     if(Sealed && Peer.IsValid() && (LastPose<0 || Now-LastPose>=1.0/60)) { LastPose=Now; SendPose(); }
     Video->SetSource(TargetCharacter ? TargetCharacter->FindComponentByClass<UCameraComponent>() : nullptr, Connected ? Session : FString(),LastSequence);
     for (auto It = SeenEvents.CreateIterator(); It; ++It) if (Now - It.Value() > 10) It.RemoveCurrent();
@@ -121,10 +140,16 @@ void ABridgeReceiver::Tick(float DeltaSeconds) {
 }
 void ABridgeReceiver::Process(const FBridgePacket& P, const TSharedRef<FInternetAddr>& Sender) {
     const double Now = FPlatformTime::Seconds(); uint32 SenderIp = 0; Sender->GetIp(SenderIp);
+    if(P.Kind==EBridgeKind::FeedbackAck) {
+        // ACKs cannot acquire or renew an input lease and cannot mutate terrain.
+        if(Session==P.Session && PeerPort==Sender->GetPort() && PeerAddress==SenderIp) PendingFeedback.Remove(P.EventId);
+        return;
+    }
     if (Session != P.Session || PeerPort != Sender->GetPort() || PeerAddress != SenderIp) {
         if (!Session.IsEmpty() && Now - LastPacket < 0.5) return;
         Session = P.Session; PeerPort = Sender->GetPort(); PeerAddress = SenderIp;
-        LastSequence = 0; LastInput = 0; LastStatus = -1; SeenEvents.Empty(); HasNewInput = false;
+        LastSequence = 0; LastInput = 0; LastStatus = -1; SeenEvents.Empty();PendingFeedback.Empty();HasNewInput = false;
+        if(IsValid(VanillaEffects)) VanillaEffects->ResetMovement();
         JumpHeld = SneakHeld = false; ForwardInput = RightInput = 0; ClearPreview(0);
         if (IsValid(SyncedWorld)) { if(!SyncedWorld->IsSealed()) SyncedWorld->Clear(); else SyncedWorld->NewSource(); }
         LatestInput=FBridgePacket(); LastActionSequence=0;LastActionAt=-1; PoseSequence=0; LastPose=-1; Peer=Sender;
@@ -212,11 +237,14 @@ void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
     Reply->SetBoolField(TEXT("cameraReady"), Camera && Camera->IsActive() && TargetCharacter->GetController());
     Reply->SetBoolField(TEXT("vfxReady"), IsValid(ExplosionSystem)); Reply->SetNumberField(TEXT("walls"), Walls);
     Reply->SetNumberField(TEXT("previewBlocks"), PreviewBlocks);
-    Reply->SetStringField(TEXT("build"),TEXT("0.6.0"));
+    Reply->SetStringField(TEXT("build"),TEXT("0.7.0"));
     Reply->SetStringField(TEXT("receiverId"),InstanceId);
     Reply->SetBoolField(TEXT("worldV1"),true); Reply->SetBoolField(TEXT("videoV1"),true);
     Reply->SetBoolField(TEXT("blockTexturesV1"),true); Reply->SetBoolField(TEXT("videoControlsV1"),true);
     Reply->SetBoolField(TEXT("blockActionsV1"),true);Reply->SetBoolField(TEXT("videoV2"),true);
+    Reply->SetBoolField(TEXT("playerVisualsV1"),true);Reply->SetBoolField(TEXT("vanillaFeedbackV1"),true);
+    Reply->SetBoolField(TEXT("skinReady"),IsValid(PlayerAppearance));
+    Reply->SetBoolField(TEXT("particlesReady"),IsValid(VanillaParticleMaterial));
     Reply->SetStringField(TEXT("lastAction"),LastAction);
     Reply->SetBoolField(TEXT("authorityV1"),Cast<ABridgeCharacter>(TargetCharacter)!=nullptr);
     Reply->SetBoolField(TEXT("ueControl"),UEControl);
@@ -301,14 +329,50 @@ void ABridgeReceiver::BlockAction(const FBridgePacket& P) {
     if(!Character || !UEControl || !Connected || Now-LastInput>.25 || !IsValid(SyncedWorld) || P.ImportId!=SyncedWorld->GetImportId()) {LastAction=TEXT("controller not ready");return;}
     if(LastActionAt>=0 && Now-LastActionAt<.08) {LastAction=TEXT("rate limited");return;}
     LastActionAt=Now;Character->SwingHand();
-    FMinimalViewInfo View;Character->BridgeCamera->GetCameraView(0,View);
+    FVector EyePosition;FRotator EyeRotation;Character->GetEyeAim(EyePosition,EyeRotation);
     FIntVector Block;FVector Normal;
-    if(!SyncedWorld->Aim(View.Location,BridgeProtocol::ToRotation(P.Yaw,P.Pitch),500.f,Block,Normal,Character)) {LastAction=TEXT("no imported block in reach");return;}
-    if(P.Action==TEXT("break")) {LastAction=SyncedWorld->BreakBlock(Block) ? TEXT("broken") : TEXT("no block");return;}
+    if(!SyncedWorld->Aim(EyePosition,BridgeProtocol::ToRotation(P.Yaw,P.Pitch),500.f,Block,Normal,Character)) {LastAction=TEXT("no imported block in reach");return;}
+    if(P.Action==TEXT("break")) {
+        FString BrokenId;FColor BrokenTint;const bool Known=SyncedWorld->GetBlockInfo(Block,BrokenId,BrokenTint);
+        const FVector Center=SyncedWorld->BlockCenter(Block);
+        const bool Broken=SyncedWorld->BreakBlock(Block);LastAction=Broken ? TEXT("broken") : TEXT("no block");
+        if(Broken && Known) {
+            QueueFeedback(TEXT("break"),BrokenId,Center);
+            if(IsValid(VanillaEffects)) VanillaEffects->SpawnBreak(Center,BrokenId,BrokenTint);
+        }
+        return;
+    }
     if(P.HeldBlock.IsEmpty()) {LastAction=TEXT("select a full cube block");return;}
     const FVector MinecraftNormal(-Normal.Y,Normal.Z,Normal.X);
     int32 Axis=0;if(FMath::Abs(MinecraftNormal.Y)>FMath::Abs(MinecraftNormal.X)) Axis=1;
     if(FMath::Abs(MinecraftNormal.Z)>FMath::Abs(MinecraftNormal[Axis])) Axis=2;
     FIntVector Adjacent=Block;Adjacent[Axis]+=MinecraftNormal[Axis]>=0 ? 1 : -1;
     LastAction=SyncedWorld->PlaceBlock(Adjacent,P.HeldBlock,P.HeldColor);
+    if(LastAction==TEXT("placed")) QueueFeedback(TEXT("place"),P.HeldBlock,SyncedWorld->BlockCenter(Adjacent));
+}
+
+void ABridgeReceiver::QueueFeedback(const FString& Type,const FString& BlockId,const FVector& Position,float FallDistance) {
+    if(!Connected || !UEControl || !Peer.IsValid() || PendingFeedback.Num()>=64 || BlockId.IsEmpty()) return;
+    const FString Id=FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
+    const FVector Relative=(Position-Anchor)/100;
+    FMinimalViewInfo View;CastChecked<ABridgeCharacter>(TargetCharacter)->BridgeCamera->GetCameraView(0,View);
+    const FVector Listener=(View.Location-Anchor)/100;
+    auto Reply=MakeShared<FJsonObject>();Reply->SetNumberField(TEXT("v"),1);Reply->SetStringField(TEXT("kind"),TEXT("feedback"));
+    Reply->SetStringField(TEXT("session"),Session);Reply->SetStringField(TEXT("receiverId"),InstanceId);Reply->SetStringField(TEXT("effectId"),Id);
+    Reply->SetNumberField(TEXT("seq"),double(LastSequence));Reply->SetStringField(TEXT("type"),Type);Reply->SetStringField(TEXT("block"),BlockId);
+    Reply->SetNumberField(TEXT("x"),-Relative.Y);Reply->SetNumberField(TEXT("y"),Relative.Z);Reply->SetNumberField(TEXT("z"),Relative.X);
+    Reply->SetNumberField(TEXT("listenerX"),-Listener.Y);Reply->SetNumberField(TEXT("listenerY"),Listener.Z);Reply->SetNumberField(TEXT("listenerZ"),Listener.X);
+    Reply->SetNumberField(TEXT("listenerYaw"),View.Rotation.Yaw);Reply->SetNumberField(TEXT("listenerPitch"),-View.Rotation.Pitch);
+    Reply->SetNumberField(TEXT("fallDistance"),FallDistance);
+    PendingFeedback.Add(Id,FPendingFeedback{Reply,FPlatformTime::Seconds(),-1});
+}
+void ABridgeReceiver::PumpFeedback(double Now) {
+    for(auto It=PendingFeedback.CreateIterator();It;++It) {
+        auto& Effect=It.Value();
+        if(!Connected || !UEControl || Now-Effect.Created>1) {It.RemoveCurrent();continue;}
+        if(Peer.IsValid() && (Effect.Sent<0 || Now-Effect.Sent>=.1)) {
+            Effect.Json->SetNumberField(TEXT("seq"),double(LastSequence));
+            SendJson(Effect.Json.ToSharedRef(),Peer.ToSharedRef());Effect.Sent=Now;
+        }
+    }
 }

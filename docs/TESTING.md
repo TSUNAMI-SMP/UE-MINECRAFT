@@ -43,7 +43,7 @@ MCワールドから退出して、UE Playを開始。同じPCで:
 python bridge/smoke.py send --seconds 3 --tnt
 ```
 
-合成Yawがカメラを回し、UE spawnFeetから `(350,50,50)` cm の位置で爆発します。
+合成Yawがカメラを回し、UE spawnFeetから `(350,-50,50)` cm の位置で爆発します。
 ACKが返ることに加え、Niagaraと壁を目視確認。テスト後はUE Playを再開始してMCへ接続。
 
 ## 自動チェック（クラウドで実行済み）

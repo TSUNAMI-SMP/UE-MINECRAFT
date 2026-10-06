@@ -20,7 +20,7 @@ state (UE exposes rising-edge notification). Input gets no ACK; old/reordered
 input is discarded. After 250 ms without valid input, key states reset and pose
 holds. GUI/pause sends neutral keys. World disconnect stops transmission.
 
-UE mapping: `(X,Y,Z) = spawnFeet + 100 * (mcZ,mcX,mcY)`, yaw `-mcYaw`, pitch
+UE mapping: `(X,Y,Z) = spawnFeet + 100 * (mcZ,-mcX,mcY)`, yaw `mcYaw`, pitch
 `-mcPitch`. Character capsule center adds its half height above feet. First-person
 camera is 162 cm above feet. Movement authority stays in Minecraft: position is
 mirrored directly; UE does not simulate a second player movement controller or
@@ -76,7 +76,7 @@ Old UE still accepts new MOD inputs/TNT events but cannot report status or new e
 
 Optional bow event (`/uebridge bow on`, default off): common event envelope plus
 `event:"bow_fire"`, `x/y/z` at MC eye relative to origin, normalized Minecraft
-`dx/dy/dz`, `pull` in 0.1..1. UE swaps direction axes `(dz,dx,dy)` without scaling
+`dx/dy/dz`, `pull` in 0.1..1. UE swaps direction axes `(dz,-dx,dy)` without scaling
 and may launch a local prototype arrow at `6000*pull` cm/s. No MC entity tracking,
 damage, Mob or HP synchronization. The vanilla BowItem return is client-side
 success; server permission/arrow-hit authority is not replicated.

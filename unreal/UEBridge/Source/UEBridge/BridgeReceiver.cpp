@@ -74,8 +74,8 @@ void ABridgeReceiver::Tick(float DeltaSeconds) {
     if (HasNewInput && TargetCharacter) {
         const FVector Capsule(0, 0, TargetCharacter->GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
         TargetCharacter->SetActorLocation(BridgeProtocol::ToUnreal(LatestInput.Position, Anchor) + Capsule, false, nullptr, ETeleportType::TeleportPhysics);
-        TargetCharacter->SetActorRotation(FRotator(0, -LatestInput.Yaw, 0));
-        if (AController* C = TargetCharacter->GetController()) C->SetControlRotation(FRotator(-LatestInput.Pitch, -LatestInput.Yaw, 0));
+        TargetCharacter->SetActorRotation(BridgeProtocol::ToRotation(LatestInput.Yaw, 0));
+        if (AController* C = TargetCharacter->GetController()) C->SetControlRotation(BridgeProtocol::ToRotation(LatestInput.Yaw, LatestInput.Pitch));
     }
     HasNewInput = false;
     const double Now = FPlatformTime::Seconds(); Connected = !Session.IsEmpty() && LastSequence > 0 && Now - LastInput <= 0.25;
@@ -110,7 +110,7 @@ void ABridgeReceiver::Process(const FBridgePacket& P, const TSharedRef<FInternet
         switch (P.Kind) {
             case EBridgeKind::Tnt: Explode(Position); break;
             case EBridgeKind::Bow: {
-                const FVector Direction(P.Direction.Z, P.Direction.X, P.Direction.Y);
+                const FVector Direction = BridgeProtocol::ToDirection(P.Direction);
                 if (SpawnBowProjectiles && Arrows.Num() < 64) {
                     FActorSpawnParameters Params; Params.Owner = TargetCharacter; Params.Instigator = TargetCharacter;
                     Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;

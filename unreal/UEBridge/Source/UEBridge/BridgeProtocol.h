@@ -25,6 +25,12 @@ namespace BridgeProtocol {
     /** Validate the entire packet before renewing a session lease or mutating UE state. */
     bool Parse(const TSharedPtr<FJsonObject>& Json, FBridgePacket& Out);
     inline FVector ToUnreal(const FVector& Minecraft, const FVector& FeetAnchor) {
-        return FeetAnchor + FVector(Minecraft.Z, Minecraft.X, Minecraft.Y) * 100.0;
+        return FeetAnchor + FVector(Minecraft.Z, -Minecraft.X, Minecraft.Y) * 100.0;
+    }
+    inline FVector ToDirection(const FVector& Minecraft) {
+        return FVector(Minecraft.Z, -Minecraft.X, Minecraft.Y);
+    }
+    inline FRotator ToRotation(double MinecraftYaw, double MinecraftPitch) {
+        return FRotator(-MinecraftPitch, MinecraftYaw, 0);
     }
 }

@@ -14,7 +14,7 @@ const TCHAR* Input = TEXT("{\"v\":1,\"kind\":\"input\",\"session\":\"00000000-00
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeInputTest, "UEBridge.Protocol.InputAndAxes", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FBridgeInputTest::RunTest(const FString& Parameters) {
     FBridgePacket P; TestTrue(TEXT("Valid input"), BridgeProtocol::Parse(PacketJson(Input), P));
-    TestTrue(TEXT("Axes and 100cm scale"), BridgeProtocol::ToUnreal(P.Position, FVector(10,20,30)).Equals(FVector(310,120,230)));
+    TestTrue(TEXT("Axes and 100cm scale"), BridgeProtocol::ToUnreal(P.Position, FVector(10,20,30)).Equals(FVector(310,-80,230)));
     TestTrue(TEXT("Jump"), P.Jump); TestEqual(TEXT("Yaw"), P.Yaw, 90.0);
     auto Object = PacketJson(Input); Object->SetStringField(TEXT("yaw"), TEXT("90"));
     TestFalse(TEXT("String numbers rejected"), BridgeProtocol::Parse(Object, P));
@@ -24,6 +24,18 @@ bool FBridgeInputTest::RunTest(const FString& Parameters) {
     TestFalse(TEXT("Pitch outside range rejected"), BridgeProtocol::Parse(Object, P));
     Object = PacketJson(Input); Object->SetStringField(TEXT("jump"), TEXT("true"));
     TestFalse(TEXT("String boolean rejected"), BridgeProtocol::Parse(Object, P));
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeHandednessTest, "UEBridge.Protocol.CameraHandedness", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBridgeHandednessTest::RunTest(const FString& Parameters) {
+    TestTrue(TEXT("MC south maps to UE forward"), BridgeProtocol::ToDirection(FVector(0,0,1)).Equals(FVector(1,0,0)));
+    TestTrue(TEXT("MC right at yaw zero maps to UE right"), BridgeProtocol::ToDirection(FVector(-1,0,0)).Equals(FVector(0,1,0)));
+    for (double Yaw : {0.0, 45.0, 90.0, -90.0, 180.0}) for (double Pitch : {0.0, -30.0, 30.0}) {
+        const double Y = FMath::DegreesToRadians(Yaw), P = FMath::DegreesToRadians(Pitch);
+        const FVector MinecraftForward(-FMath::Sin(Y)*FMath::Cos(P), -FMath::Sin(P), FMath::Cos(Y)*FMath::Cos(P));
+        TestTrue(TEXT("Camera forward matches converted world/projectile direction"),
+            BridgeProtocol::ToRotation(Yaw, Pitch).Vector().Equals(BridgeProtocol::ToDirection(MinecraftForward), 1e-6));
+    }
     return true;
 }
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeEventTest, "UEBridge.Protocol.Events", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

@@ -1,4 +1,3 @@
-import importlib.util
 import pathlib
 import socket
 import subprocess
@@ -36,5 +35,26 @@ class SmokeToolTest(unittest.TestCase):
                                 capture_output=True, text=True, timeout=3)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("No input received", result.stderr)
+
+    def test_optional_bow_and_preview_events_round_trip(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
+        listener = subprocess.Popen([sys.executable, str(SCRIPT), "listen", "--port", str(port), "--seconds", "2"],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            time.sleep(0.2)
+            sent = subprocess.run([sys.executable, str(SCRIPT), "send", "--port", str(port), "--seconds", "0.2", "--bow", "--preview"],
+                                  capture_output=True, text=True, timeout=4)
+            out, err = listener.communicate(timeout=5)
+            self.assertEqual(sent.returncode, 0, sent.stderr); self.assertEqual(listener.returncode, 0, err)
+            self.assertIn("unique events=2", out)
+            self.assertIn("bow_fire", sent.stdout); self.assertIn("block_snapshot", sent.stdout)
+        finally:
+            if listener.poll() is None: listener.kill(); listener.communicate()
+
+    def test_bad_port_and_duration_rejected(self):
+        for args in [["--port", "0"], ["--seconds", "nan"], ["--seconds", "-1"]]:
+            result = subprocess.run([sys.executable, str(SCRIPT), "send", *args], capture_output=True, text=True, timeout=3)
+            self.assertNotEqual(result.returncode, 0); self.assertIn("port must be", result.stderr)
 
 if __name__ == "__main__": unittest.main()

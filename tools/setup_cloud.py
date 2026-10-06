@@ -21,7 +21,8 @@ if not jdks:
         archive = pathlib.Path(temporary) / "jdk.tar.gz"
         with urllib.request.urlopen(url, timeout=180) as response, archive.open("wb") as output:
             while chunk := response.read(1024 * 1024): output.write(chunk)
-        digest = hashlib.file_digest(archive.open("rb"), "sha256").hexdigest()
+        with archive.open("rb") as downloaded:
+            digest = hashlib.file_digest(downloaded, "sha256").hexdigest()
         if digest != expected: sys.exit("JDK checksum mismatch; refusing extraction")
         with tarfile.open(archive) as contents: contents.extractall(toolchains, filter="data")
     jdks = sorted(p for p in toolchains.glob("jdk-21*") if (p / "bin/javac").is_file())

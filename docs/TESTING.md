@@ -8,7 +8,7 @@
 
 ## 最初の成功条件
 
-1. UE Playを開始。Output Logに `Bridge listening on 127.0.0.1:7779` が出ること。
+1. UE Playを開始。Output Logに `Bridge 0.2.0 listening on 127.0.0.1:7779` が出ること。
    `ExplosionSystem is unset` やTargetCharacter不在のエラーを解消する。
 2. Minecraftの新しいクリエイティブワールドへ入る。
 3. Minecraftのマウスで左右・上下を向く。UEカメラが同方向へ追従すること。
@@ -32,7 +32,7 @@ python bridge/smoke.py listen --seconds 30
 ```
 
 MCで視点を動かしTNTを着火。input packetsが0でなく、last inputにyaw/pitchが含まれ、
-unique eventsが増えること。これはMOD→UDPの確認で、UEの確認ではありません。
+unique eventsが増えること。これはMOD→UDPの確認で、UEの確認ではありません。0.2.0ではMCに「UDP診断ツール」と表示されます。
 終了したらUE Playを再開します。このツールとUEは同じ7779ポートを同時には使えません。
 
 ## UE受信だけを切り分け
@@ -70,4 +70,5 @@ Pythonはテストツール自身のloopback往復を確認します。UE実装�
 ## 未検証
 
 UE 5.8のC++ビルド、Minecraft GUI起動、UEカメラ追従、実アセットによるNiagara/Chaos、
-実機の遅延測定。GUI/UEがないクラウドの制限です。弓/Mob/HP/ブロック同期は未実装です。
+周辺ブロックプレビュー、弓の描画、実機の遅延測定。GUI/UEがないクラウドの制限です。
+0.2.0の追加テストとコマンドは [UPGRADE_0.2.0.md](UPGRADE_0.2.0.md) を参照してください。

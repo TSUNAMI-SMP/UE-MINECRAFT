@@ -6,12 +6,12 @@ Fabric **Minecraft Java 1.21.11 / Java 21** と **Unreal Engine 5.8** を同じP
 
 ## 現在の状態
 
-- Fabric MOD：ビルド済み。UDPトランスポートのJUnitテスト3件成功。
+- Fabric MOD：ビルド済み。JUnitテスト16件とPythonテスト4件成功。
 - UE：C++プロジェクトと受信・同期・Niagara/Chaos連携コードを作成。
 - **UE Editorがクラウドにないため、UE 5.8でのコンパイル、Niagara/Geometry Collection
   アセット作成、両ゲームを使う成功条件は未検証です。完成済みMVPとはまだ言えません。**
 - UEに設定する `.uasset` / `.umap` は未作成。下記のエディタ手順が必要です。
-- Minecraftの全ワールドをUEへ転送する機能はありません。UEのデモ壁・床を使います。
+- Minecraftの全ワールド転送は未実装。0.2.0では周辺フルキューブの手動プレビューと任意の弓試作を追加しました。
 
 ## 保存先
 
@@ -48,7 +48,7 @@ cd minecraft-mod
 ./gradlew build
 ```
 
-`build/libs/minecraft-ue-bridge-0.1.0.jar` がMOD本体です（`-sources.jar`ではありません）。
+`build/libs/minecraft-ue-bridge-0.2.0.jar` がMOD本体です（`-sources.jar`ではありません）。
 Minecraft Launcherに **1.21.11 / Fabric Loader 0.19.5** の専用インストールを作り、
 ゲームディレクトリを新しい `MC-UE-Test` フォルダに設定してください。その `mods/` に
 本MODと **Fabric API 0.141.6+1.21.11** を配置します。新しいシングルプレイ・クリエイティブ
@@ -74,6 +74,9 @@ TNTを置くだけでは発火しません。レッドストーン・連鎖爆�
 
 詳しいチェックと障害切り分けは [TESTING.md](docs/TESTING.md)。
 
+**0.2.0の新機能・コマンド・更新手順は [UPGRADE_0.2.0.md](docs/UPGRADE_0.2.0.md)。**
+旧版ダウンロードZIPは保持しています。最新版のMODとUEを両方揃えてください。
+
 ## 設計上の範囲
 
 - localhost UDP `127.0.0.1:7779`。カメラ入力は最大120Hz（実FPS以下）。
@@ -84,7 +87,7 @@ TNTを置くだけでは発火しません。レッドストーン・連鎖爆�
 - TNTイベントだけ再送/ACK・重複排除。通常の視点入力にはACK待ちなし。
 - 接続の基準位置はMCワールド入場時とUE PlayerStart。両方再起動すると基準を揃え直せます。
 - 壁破壊は `BridgeWall` タグ付きGeometry Collectionのみ。床や既存シーン全体を対象にしません。
-- 弓、Mob、設置/破壊、HP同期は未実装。通信イベント種別を追加する設計。
+- 弓の送信/簡易UE矢は任意の試作。Mob・HP・常時ブロック差分は未実装。
 
 ## クラウドでの再ビルド
 

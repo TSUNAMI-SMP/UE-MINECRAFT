@@ -1,6 +1,7 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "BridgeProtocol.h"
 #include "BridgeReceiver.generated.h"
 
 /** Socket polling and UE mutations both occur on the game thread. */
@@ -18,21 +19,45 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge") float ExplosionRadius = 400.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge") float Strain = 500000.f;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge") float Force = 200000.f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Preview") TObjectPtr<class UMaterialInterface> PreviewMaterial;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Bow") bool SpawnBowProjectiles = true;
+    UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") bool Connected = false;
+    UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") int32 InvalidPackets = 0;
+    UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") int32 PreviewBlocks = 0;
+    UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") int32 LastExplosionWalls = 0;
     UPROPERTY(BlueprintReadOnly, Category="Bridge") float ForwardInput = 0;
     UPROPERTY(BlueprintReadOnly, Category="Bridge") float RightInput = 0;
     UPROPERTY(BlueprintReadOnly, Category="Bridge") bool JumpHeld = false;
     UFUNCTION(BlueprintImplementableEvent, Category="Bridge") void OnJumpPressed();
     UFUNCTION(BlueprintImplementableEvent, Category="Bridge") void OnTntExplosion(FVector Position);
+    UFUNCTION(BlueprintImplementableEvent, Category="Bridge") void OnBowFired(FVector Position, FVector Direction, float Pull);
 private:
     class FSocket* Socket = nullptr;
     FString Session;
     uint64 LastSequence = 0;
     TMap<FString, double> SeenEvents;
     FVector Anchor = FVector::ZeroVector;
+    bool Anchored = false;
     double LastInput = 0;
     double LastPacket = 0;
+    double LastStatus = -1;
     uint32 PeerAddress = 0;
     int32 PeerPort = 0;
-    void Process(const TSharedPtr<class FJsonObject>& Packet, const TSharedRef<class FInternetAddr>& Sender);
+    UPROPERTY() TObjectPtr<class ABridgeBlockPreview> Preview;
+    UPROPERTY() TArray<TObjectPtr<class ABridgeArrow>> Arrows;
+    FBridgePacket LatestInput;
+    bool HasNewInput = false;
+    uint64 PreviewGeneration = 0;
+    FString StagingId;
+    int32 ExpectedBatches = 0;
+    bool SnapshotCompleted = false;
+    double StagingDeadline = 0;
+    TMap<int32, TArray<FBridgeBlock>> StagedBatches;
+    void AcquireTarget();
+    void Process(const FBridgePacket& Packet, const TSharedRef<class FInternetAddr>& Sender);
+    bool HandleSnapshot(const FBridgePacket& Packet);
+    void ClearPreview(uint64 Generation);
+    void SendJson(const TSharedRef<class FJsonObject>& Json, const TSharedRef<class FInternetAddr>& Sender);
+    void SendStatus(const TSharedRef<class FInternetAddr>& Sender);
     void Explode(const FVector& Position);
 };

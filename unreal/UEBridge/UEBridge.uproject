@@ -1,0 +1,8 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.8",
+  "Category": "Experiments",
+  "Description": "Minecraft loopback UDP bridge MVP",
+  "Modules": [{"Name": "UEBridge", "Type": "Runtime", "LoadingPhase": "Default"}],
+  "Plugins": [{"Name": "Niagara", "Enabled": true}, {"Name": "GeometryCollectionPlugin", "Enabled": true}]
+}

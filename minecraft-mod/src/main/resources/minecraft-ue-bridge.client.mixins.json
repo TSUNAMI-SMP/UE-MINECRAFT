@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "dev.tsunami.bridge",
+  "compatibilityLevel": "JAVA_21",
+  "client": ["RenderMixin"],
+  "injectors": {"defaultRequire": 1}
+}

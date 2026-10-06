@@ -1,0 +1,14 @@
+.gradle/
+build/
+run/
+.idea/
+*.iml
+.DS_Store
+__pycache__/
+Saved/
+Intermediate/
+Binaries/
+DerivedDataCache/
+.vs/
+*.sln
+.local/

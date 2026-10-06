@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "minecraft_ue_bridge",
+  "version": "${version}",
+  "name": "Minecraft UE Bridge",
+  "description": "Loopback UDP input and TNT bridge",
+  "environment": "client",
+  "mixins": [{"config": "minecraft-ue-bridge.client.mixins.json", "environment": "client"}],
+  "entrypoints": { "client": ["dev.tsunami.bridge.MinecraftBridgeClient"] },
+  "depends": { "fabricloader": ">=0.19.5", "minecraft": "~1.21.11", "java": ">=21", "fabric-api": "*" }
+}

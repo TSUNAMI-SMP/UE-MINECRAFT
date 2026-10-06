@@ -57,12 +57,17 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
     private String lastReceiverId = "";
     private String lastVideoConfig = "";
     private TextureExportJob textureJob;
+    private final InitialImport initialImport=new InitialImport();
+    private boolean controllerFrozen, controllerRequested;
+    public static boolean controllerMode() {
+        return instance!=null && instance.controllerFrozen && MinecraftClient.getInstance().player!=null;
+    }
 
     @Override public void onInitializeClient() {
         instance = this; reload(); commands(); videoOverlay.register();
         UseBlockCallback.EVENT.register((player, w, hand, hit) -> {
             MinecraftClient mc = MinecraftClient.getInstance();
-            if (w.isClient() && w == world && player == mc.player && transport != null && origin != null
+            if (!controllerMode() && w.isClient() && w == world && player == mc.player && transport != null && origin != null
                     && !player.isSpectator() && !player.isSneaking()
                     && w.getBlockState(hit.getBlockPos()).isOf(Blocks.TNT)
                     && (player.getStackInHand(hand).isOf(Items.FLINT_AND_STEEL)
@@ -72,7 +77,7 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
             return ActionResult.PASS; // Never intercept vanilla interaction or mutate world/server state.
         });
         ClientEntityEvents.ENTITY_LOAD.register((entity, w) -> {
-            if (w == world && entity instanceof TntEntity && transport != null && origin != null) {
+            if (!controllerMode() && w == world && entity instanceof TntEntity && transport != null && origin != null) {
                 var p = ignition.primed(entity.getX(), entity.getY(), entity.getZ(), System.nanoTime());
                 if (p != null) sendEvent("tnt_ignite", new Vec3d(p.x() + 0.5, p.y() + 0.5, p.z() + 0.5), null);
             }
@@ -113,7 +118,8 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
             p.addProperty("forward", active ? axis(mc.options.forwardKey.isPressed(), mc.options.backKey.isPressed()) : 0);
             p.addProperty("right", active ? axis(mc.options.rightKey.isPressed(), mc.options.leftKey.isPressed()) : 0);
             p.addProperty("jump", active && mc.options.jumpKey.isPressed());
-            p.addProperty("sneak", mc.player.isSneaking());
+            p.addProperty("controller",controllerRequested && initialImport.phase()==InitialImport.Phase.READY);
+            p.addProperty("sneak", active && (controllerMode() ? mc.options.sneakKey.isPressed() : mc.player.isSneaking()));
             p.addProperty("eyeHeight", mc.player.getEyeHeight(mc.player.getPose()));
             p.addProperty("bodyHeight", mc.player.getHeight()); transport.input(p);
         } catch (IOException e) { report(e); }
@@ -124,9 +130,23 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
             transport.pump();
             var ready=transport.diagnostics();
             if (ready.connected() && (!lastConnected || !ready.receiverId().equals(lastReceiverId))) {
-                lastReceiverId=ready.receiverId(); lastVideoConfig=""; worldSync.reset();
+                lastReceiverId=ready.receiverId(); lastVideoConfig=""; if(!initialImport.ownsWorld()) worldSync.reset();
             }
-            if (config.worldSync) worldSync.tick(mc, origin, config, transport);
+            initialImport.observe(ready.receiverId(),ready.importId(),ready.worldSealed());
+            if(initialImport.phase()==InitialImport.Phase.LOST) controllerRequested=false;
+            String request=initialImport.request(System.nanoTime());
+            if(!request.isEmpty() && ready.authoritySupported() && transport.diagnostics().pending()==0) {
+                JsonObject p=transport.packet("event"); p.addProperty("event",request); position(p,origin);
+                p.addProperty("importId",initialImport.id());
+                if(request.equals("world_begin")) {
+                    p.addProperty("ox",origin.x); p.addProperty("oy",origin.y); p.addProperty("oz",origin.z);
+                } else p.addProperty("cells",worldSync.targetCells());
+                transport.event(p);
+            }
+            if(initialImport.phase()==InitialImport.Phase.COPYING) {
+                worldSync.tick(mc,origin,config,transport);
+                if(worldSync.complete()) initialImport.copied();
+            } else if(config.worldSync && !initialImport.ownsWorld() && !ready.worldSealed()) worldSync.tick(mc,origin,config,transport);
             if (config.videoMode != 0 && video == null && transport.diagnostics().cameraReady() && transport.diagnostics().videoSupported())
                 video = new VideoClient(config.videoPort, transport.session());
             if (config.videoMode == 0 && video != null) { video.close(); video = null; }
@@ -163,7 +183,7 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         } catch (IOException e) { report(e); }
     }
     private void bow(LivingEntity user, float pull) {
-        if (!config.bowEvents || user != MinecraftClient.getInstance().player || transport == null || origin == null) return;
+        if (controllerMode() || !config.bowEvents || user != MinecraftClient.getInstance().player || transport == null || origin == null) return;
         sendEvent("bow_fire", user.getEyePos(), p -> {
             Vec3d direction = user.getRotationVec(1);
             p.addProperty("dx", direction.x); p.addProperty("dy", direction.y); p.addProperty("dz", direction.z);
@@ -202,7 +222,26 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         snapshotQueue.clear(); snapshotSequence = 0;
         sendEvent("block_preview_clear", origin, null); return feedback("UEプレビューの消去を送信しました");
     }
+    private int startImport() {
+        MinecraftClient mc=MinecraftClient.getInstance();
+        if(transport==null || !transport.diagnostics().authoritySupported()) return feedback("UE 0.5.0へ接続してから実行してください");
+        if(!mc.isInSingleplayer() || mc.player==null || !mc.player.isCreative()) return feedback("専用シングルプレイ・クリエイティブで実行してください");
+        if(!mc.player.isOnGround() || mc.player.isSneaking()) return feedback("飛行を止め、地面に立ってしゃがまずに実行してください");
+        if(transport.diagnostics().pending()!=0) return feedback("未ACKイベントが完了してから再実行してください");
+        initialImport.start(transport.diagnostics().receiverId()); worldSync.beginInitial();
+        controllerFrozen=true; controllerRequested=false; snapshotQueue.clear(); ignition.clear();
+        return feedback("UE初期地形転送を開始。Minecraftの移動を固定します。/uebridge import で進捗、完了後 /uebridge control ue");
+    }
+    private int control(boolean enabled) {
+        if(enabled && (transport==null || initialImport.phase()!=InitialImport.Phase.READY || !transport.diagnostics().worldSealed()))
+            return feedback("先に /uebridge import start を実行し、READYまで待ってください");
+        controllerRequested=enabled; controllerFrozen=enabled;
+        if(!enabled) change(v->v.videoMode=0,false);
+        else change(v->v.videoMode=2,false);
+        return feedback(enabled ? "UE移動・衝突モード：WASD / Space / Shift。通常のアイテム操作は無効です" : "UE入力を停止し、Minecraft操作へ戻しました。UE地形は保持します");
+    }
     private int worldEnabled(boolean enabled) {
+        if(initialImport.ownsWorld() || (transport!=null && transport.diagnostics().worldSealed())) return feedback("UE初期地形を保持中。置換する場合のみ /uebridge import start を使用してください");
         int result = change(v -> v.worldSync = enabled, false);
         if (config.worldSync == enabled) {
             worldSync.reset();
@@ -211,6 +250,7 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         return result;
     }
     private int refreshWorld() {
+        if(initialImport.ownsWorld() || (transport!=null && transport.diagnostics().worldSealed())) return feedback("初期転送後のUE地形を保持しています。再転送は /uebridge import start（UE変更を置換）");
         worldSync.reset();
         if (transport != null && origin != null) sendEvent("world_clear", origin, null);
         return feedback("周辺ワールドを再送信します。/uebridge world on で自動同期を有効にしてください");
@@ -252,6 +292,10 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
                 .executes(c -> change(v -> v.inputHz = IntegerArgumentType.getInteger(c, "value"), false))))
             .then(literal("bow").then(literal("on").executes(c -> change(v -> v.bowEvents = true, false)))
                 .then(literal("off").executes(c -> change(v -> v.bowEvents = false, false))))
+            .then(literal("import").executes(c -> feedback("初期地形="+initialImport.phase()+" / "+worldSync.synchronizedCells()+"/"+worldSync.targetCells()))
+                .then(literal("start").executes(c -> startImport())))
+            .then(literal("control").then(literal("ue").executes(c -> control(true)))
+                .then(literal("off").executes(c -> control(false))))
             .then(literal("world").executes(c -> feedback("自動同期="+config.worldSync+" / 領域="+worldSync.synchronizedCells()+"/"+worldSync.targetCells()))
                 .then(literal("on").executes(c -> worldEnabled(true)))
                 .then(literal("off").executes(c -> worldEnabled(false)))
@@ -286,7 +330,9 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
                 + " / UE=" + d.build() + (config.worldSync && !d.worldSupported() ? "（ワールド同期対応UEを待っています）" : "")
                 + " / Video=" + (video == null ? "OFF" : video.status())
                 + " / 画質="+new String[]{"low","balanced","high"}[config.videoQuality]+" 露出="+config.videoExposure
-                + " / テクスチャ="+d.textureMaterials()+"種類";
+                + " / テクスチャ="+d.textureMaterials()+"種類"
+                + " / 初期地形="+initialImport.phase()+" UE判定="+d.ueControl()+" 保持="+d.worldSealed()
+                + (transport.authorityPose()==null ? "" : " / UE位置="+transport.authorityPose());
     }
     private int feedback(String text) {
         MinecraftClient mc = MinecraftClient.getInstance();
@@ -306,6 +352,7 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
     private void disconnect() {
         if (video != null) video.close(); video = null; videoOverlay.setClient(null, 0); worldSync.reset();
         if (transport != null) try { transport.close(); } catch (IOException e) { report(e); }
+        initialImport.reset(); controllerFrozen=controllerRequested=false;
         transport = null; origin = null; ignition.clear(); snapshotQueue.clear(); snapshotSequence = 0; lastConnected = false;
         lastReceiverId = ""; lastVideoConfig="";
         lastRetry = 0;

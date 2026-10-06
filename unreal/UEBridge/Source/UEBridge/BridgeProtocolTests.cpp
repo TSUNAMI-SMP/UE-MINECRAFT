@@ -116,4 +116,27 @@ bool FBridgeTextureProtocolTest::RunTest(const FString& Parameters) {
     TestFalse(TEXT("Textured batch bound"),BridgeProtocol::Parse(P,Out));
     return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeAuthorityProtocolTest, "UEBridge.Protocol.Authority", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBridgeAuthorityProtocolTest::RunTest(const FString& Parameters) {
+    auto P=PacketJson(Input); FBridgePacket Out;
+    P->SetBoolField(TEXT("controller"),true);
+    TestTrue(TEXT("Controller input"),BridgeProtocol::Parse(P,Out)); TestTrue(TEXT("Controller flag"),Out.Controller);
+    P->SetStringField(TEXT("controller"),TEXT("true")); TestFalse(TEXT("Typed controller"),BridgeProtocol::Parse(P,Out));
+    P=PacketJson(Input); P->SetStringField(TEXT("kind"),TEXT("event"));
+    P->SetStringField(TEXT("eventId"),TEXT("00000000-0000-4000-8000-000000000002"));
+    P->SetStringField(TEXT("event"),TEXT("world_begin"));
+    TestFalse(TEXT("Import ID required"),BridgeProtocol::Parse(P,Out));
+    P->SetStringField(TEXT("importId"),TEXT("00000000-0000-4000-8000-000000000003"));
+    P->SetNumberField(TEXT("ox"),1);P->SetNumberField(TEXT("oy"),2);P->SetNumberField(TEXT("oz"),3);
+    TestTrue(TEXT("Import begin"),BridgeProtocol::Parse(P,Out));
+    P->SetStringField(TEXT("event"),TEXT("world_commit"));P->SetNumberField(TEXT("cells"),75);
+    TestTrue(TEXT("Import commit"),BridgeProtocol::Parse(P,Out));
+    P->SetNumberField(TEXT("cells"),75.5);TestFalse(TEXT("Fractional count"),BridgeProtocol::Parse(P,Out));
+    const FString Cell=TEXT("{\"v\":1,\"kind\":\"event\",\"session\":\"00000000-0000-4000-8000-000000000001\",\"seq\":5,\"eventId\":\"00000000-0000-4000-8000-000000000002\",\"event\":\"world_cell_physics\",\"cellX\":0,\"cellY\":0,\"cellZ\":0,\"x\":0,\"y\":0,\"z\":0,\"snapshotId\":\"00000000-0000-4000-8000-000000000003\",\"snapshotSeq\":3,\"batchIndex\":0,\"totalBatches\":1,\"blocks\":[[1,2,3,16711680,1,1,1,\"minecraft:stone\",true]]}");
+    TestTrue(TEXT("Physics row"),BridgeProtocol::Parse(PacketJson(Cell),Out));
+    TestTrue(TEXT("Collision flag"),Out.Blocks.Num()==1 && Out.Blocks[0].Collision);
+    TestFalse(TEXT("Collision type"),BridgeProtocol::Parse(PacketJson(Cell.Replace(TEXT("true"),TEXT("1"))),Out));
+    return true;
+}
 #endif

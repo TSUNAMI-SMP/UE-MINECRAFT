@@ -21,16 +21,19 @@ public final class WorldSync {
     private String sentFingerprint;
     private int radius, height, cursor, index, synchronizedCells;
     private long generation, expiredAtStart;
-    private boolean scopeNeeded, scopeInFlight;
+    private boolean scopeNeeded, scopeInFlight, initial;
 
     public void reset() {
         confirmed.clear(); dirty.clear(); wanted = List.of(); outgoing.clear();
         center = sampling = sending = null; shapes = null; sentFingerprint = null;
-        cursor = index = synchronizedCells = 0; generation = 0; scopeNeeded = scopeInFlight = false;
+        cursor = index = synchronizedCells = 0; generation = 0; initial=false; scopeNeeded = scopeInFlight = false;
     }
+    public void beginInitial() { reset(); initial=true; }
+    public boolean complete() { return !wanted.isEmpty() && confirmed.size()==wanted.size() && sending==null && !scopeInFlight && !scopeNeeded; }
     public int synchronizedCells() { return synchronizedCells; }
     public int targetCells() { return wanted.size(); }
     public void changed(BlockPos pos) {
+        if(initial) return;
         // A changed block can expose a face in an adjacent cell.
         mark(WorldSnapshot.Cell.at(pos.getX(), pos.getY(), pos.getZ()));
         for (Direction d : Direction.values()) { BlockPos q = pos.offset(d); mark(WorldSnapshot.Cell.at(q.getX(), q.getY(), q.getZ())); }
@@ -43,7 +46,7 @@ public final class WorldSync {
                 || !transport.diagnostics().worldSupported()) return;
         BlockPos player = mc.player.getBlockPos();
         WorldSnapshot.Cell next = WorldSnapshot.Cell.at(player.getX(), player.getY(), player.getZ());
-        if (!next.equals(center) || radius != config.worldRadius || height != config.worldHalfHeight) {
+        if (center==null || (!initial && (!next.equals(center) || radius != config.worldRadius || height != config.worldHalfHeight))) {
             center = next; radius = config.worldRadius; height = config.worldHalfHeight;
             ArrayList<WorldSnapshot.Cell> cells = new ArrayList<>();
             for (int x = -radius; x <= radius; x++) for (int z = -radius; z <= radius; z++)
@@ -78,10 +81,16 @@ public final class WorldSync {
             p.addProperty("x", 0); p.addProperty("y", 0); p.addProperty("z", 0);
             expiredAtStart = transport.diagnostics().expired(); transport.event(p); scopeNeeded = false; scopeInFlight = true; return;
         }
+        if(initial && complete()) return;
         if (sampling == null) {
             if (transport.diagnostics().pending() != 0) return;
             if (!dirty.isEmpty()) { var it = dirty.iterator(); sampling = it.next(); it.remove(); }
             else { sampling = wanted.get(cursor); cursor = (cursor+1) % wanted.size(); }
+            if(initial && confirmed.containsKey(sampling)) { sampling=null; return; }
+            if(initial && (!mc.world.isChunkLoaded(sampling.x()*8 >> 4,sampling.z()*8 >> 4)
+                    || !mc.world.isChunkLoaded((sampling.x()*8+7) >> 4,(sampling.z()*8+7) >> 4))) {
+                sampling=null; return; // Never commit unloaded chunks as empty during a one-shot import.
+            }
             shapes = new ArrayList<>(); index = 0;
         }
         // 128 blocks/tick, 512 per cell. Chunk-unloaded cells are sent empty, then resampled later.
@@ -93,8 +102,10 @@ public final class WorldSync {
             if (state.isAir()) continue;
             boolean buried = state.isOpaqueFullCube();
             if (buried) for (Direction d : Direction.values()) if (!mc.world.getBlockState(p.offset(d)).isOpaqueFullCube()) { buried = false; break; }
-            if (buried) continue;
-            List<Box> boxes = state.getOutlineShape(mc.world, p).getBoundingBoxes();
+            if (buried && !initial) continue;
+            var collisionShape=state.getCollisionShape(mc.world,p);
+            boolean collision=initial && !collisionShape.isEmpty();
+            List<Box> boxes = (collision ? collisionShape : state.getOutlineShape(mc.world,p)).getBoundingBoxes();
             if (boxes.isEmpty() && !state.getFluidState().isEmpty()) boxes = List.of(new Box(0,0,0,1,state.getFluidState().getHeight(mc.world,p),1));
             int color = state.getMapColor(mc.world, p).color & 0xffffff;
             String blockId=Registries.BLOCK.getId(state.getBlock()).toString();
@@ -104,14 +115,14 @@ public final class WorldSync {
                 if (sx <= 0 || sy <= 0 || sz <= 0 || sx > 4 || sy > 4 || sz > 4) continue;
                 if (shapes.size() >= WorldSnapshot.MAX_SHAPES) break;
                 shapes.add(new WorldSnapshot.Shape(x+(b.minX+b.maxX)/2-origin.x, y+(b.minY+b.maxY)/2-origin.y,
-                        z+(b.minZ+b.maxZ)/2-origin.z, color, sx,sy,sz,blockId));
+                        z+(b.minZ+b.maxZ)/2-origin.z, color, sx,sy,sz,blockId,collision));
             }
         }
         if (index < 512) return;
         String fingerprint=WorldSnapshot.fingerprint(shapes);
         if (!fingerprint.equals(confirmed.get(sampling))) {
             sending = sampling; sentFingerprint = fingerprint; generation = 0;
-            expiredAtStart = transport.diagnostics().expired(); outgoing.addAll(WorldSnapshot.encode(sending, shapes,transport.diagnostics().texturesSupported()));
+            expiredAtStart = transport.diagnostics().expired(); outgoing.addAll(WorldSnapshot.encode(sending, shapes,transport.diagnostics().texturesSupported(),initial));
         }
         sampling = null; shapes = null;
     }

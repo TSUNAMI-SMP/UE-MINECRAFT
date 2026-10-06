@@ -92,4 +92,27 @@ public class BridgeReliabilityTest {
             }
         }
     }
+
+    @Test public void authorityPoseRejectsWrongReceiverReplayAndExpires() throws Exception {
+        AtomicLong time=new AtomicLong(1_000_000_000L);
+        try(DatagramSocket ue=new DatagramSocket(0,InetAddress.getLoopbackAddress()); BridgeTransport mc=new BridgeTransport(ue.getLocalPort(),time::get)) {
+            ue.setSoTimeout(500); mc.input(mc.packet("input")); var input=receive(ue); var data=json(input);
+            var status=new JsonObject(); status.addProperty("v",1);status.addProperty("kind","status");
+            status.add("session",data.get("session"));status.add("seq",data.get("seq"));
+            status.addProperty("cameraReady",true);status.addProperty("vfxReady",false);status.addProperty("walls",0);
+            status.addProperty("authorityV1",true);status.addProperty("worldSealed",true);status.addProperty("ueControl",true);
+            status.addProperty("receiverId","receiver");status.addProperty("importId","import");status.addProperty("importedCells",75);
+            reply(ue,input,status);pumpReplies(mc);
+            assertTrue(mc.diagnostics().authoritySupported());assertTrue(mc.diagnostics().worldSealed());assertTrue(mc.diagnostics().ueControl());
+            assertEquals(75,mc.diagnostics().importedCells());
+            var pose=status.deepCopy();pose.addProperty("kind","pose");pose.addProperty("poseSeq",1);
+            pose.addProperty("x",1);pose.addProperty("y",2);pose.addProperty("z",3);pose.addProperty("grounded",true);
+            pose.addProperty("receiverId","wrong");reply(ue,input,pose);pumpReplies(mc);assertNull(mc.authorityPose());
+            pose.addProperty("receiverId","receiver");pose.addProperty("grounded","true");reply(ue,input,pose);pumpReplies(mc);assertNull(mc.authorityPose());
+            pose.addProperty("grounded",true);reply(ue,input,pose);pumpReplies(mc);assertEquals(1,mc.authorityPose().x(),0);
+            pose.addProperty("x",9);reply(ue,input,pose);pumpReplies(mc);assertEquals(1,mc.authorityPose().x(),0);
+            pose.addProperty("poseSeq",2);pose.addProperty("seq",999);reply(ue,input,pose);pumpReplies(mc);assertEquals(1,mc.authorityPose().x(),0);
+            time.addAndGet(1_000_000_001L);assertNull(mc.authorityPose());
+        }
+    }
 }

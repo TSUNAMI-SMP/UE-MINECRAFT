@@ -4,13 +4,13 @@
 #include "BridgeProtocol.h"
 #include "BridgeBlockPreview.generated.h"
 
-/** Visual-only, bounded block snapshot. Never collides with the player/Chaos walls. */
+/** Bounded block cells; optional solid collision for UE-owned initial imports. */
 UCLASS()
 class UEBRIDGE_API ABridgeBlockPreview : public AActor {
     GENERATED_BODY()
 public:
     ABridgeBlockPreview();
-    void Replace(const TArray<FBridgeBlock>& Blocks, const FVector& Anchor, class UMaterialInterface* Material, class UBridgeBlockPalette* Palette=nullptr);
+    void Replace(const TArray<FBridgeBlock>& Blocks, const FVector& Anchor, class UMaterialInterface* Material, class UBridgeBlockPalette* Palette=nullptr, bool Physics=false);
     void Clear();
 private:
     UPROPERTY() TObjectPtr<class UStaticMesh> Cube;

@@ -1,13 +1,17 @@
 #include "BridgeWorld.h"
 #include "BridgeBlockPreview.h"
 #include "Engine/World.h"
+#include "Components/BoxComponent.h"
+#include "Components/SceneComponent.h"
 
-ABridgeWorld::ABridgeWorld() { PrimaryActorTick.bCanEverTick=true; }
+ABridgeWorld::ABridgeWorld() { PrimaryActorTick.bCanEverTick=true; RootComponent=CreateDefaultSubobject<USceneComponent>(TEXT("Root")); }
 bool ABridgeWorld::Inside(const FIntVector& C) const {
     return Scoped && FMath::Abs(C.X-Center.X)<=Radius && FMath::Abs(C.Y-Center.Y)<=HalfHeight && FMath::Abs(C.Z-Center.Z)<=Radius;
 }
 void ABridgeWorld::Clear(uint64 Barrier) {
     for (auto& Pair:Cells) if (IsValid(Pair.Value)) Pair.Value->Destroy();
+    for(auto& Box:Boundary) if(Box) Box->DestroyComponent(); Boundary.Empty();
+    Sealed=false; ImportId.Empty(); Stored.Empty();
     Cells.Empty(); Counts.Empty(); Revisions.Empty(); Stages.Empty(); Shapes=0; Scoped=false; ScopeSequence=0; ClearBarrier=Barrier;
 }
 void ABridgeWorld::EndPlay(const EEndPlayReason::Type Reason) { Clear(); Super::EndPlay(Reason); }
@@ -16,6 +20,8 @@ void ABridgeWorld::Tick(float DeltaSeconds) {
     for (auto It=Stages.CreateIterator();It;++It) if (Now>It.Value().Deadline) It.RemoveCurrent();
 }
 bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterialInterface* Material,UBridgeBlockPalette* Palette) {
+    if(Sealed) return true; // ACK stale source updates without overwriting UE-owned geometry.
+    if(IsImporting() && P.Kind==EBridgeKind::WorldClear) return true;
     if (P.Kind==EBridgeKind::WorldClear) { if (P.Sequence>=FMath::Max(ScopeSequence,ClearBarrier)) Clear(P.Sequence); return true; }
     if (P.Kind==EBridgeKind::WorldScope) {
         if (P.Sequence<=FMath::Max(ScopeSequence,ClearBarrier)) return true;
@@ -25,7 +31,7 @@ bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterial
         }
         for (auto It=Revisions.CreateIterator();It;++It) if (!Inside(It.Key())) It.RemoveCurrent();
         // A sender completes its current cell before publishing a new scope.
-        Stages.Empty(); return true;
+        Stages.Empty(); if(IsImporting()) BuildBoundary(); return true;
     }
     if (P.Kind!=EBridgeKind::WorldCell) return false;
     if (!Inside(P.Cell) || P.SnapshotSequence<ScopeSequence || P.SnapshotSequence<=ClearBarrier
@@ -42,7 +48,7 @@ bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterial
     if (Stage->Batches.Num()!=Stage->Total) return true;
     TArray<FBridgeBlock> Blocks; TSet<int32> Colors; TSet<FString> Groups;
     for (int32 I=0;I<Stage->Total;++I) { const auto* Batch=Stage->Batches.Find(I); if (!Batch) return false; Blocks.Append(*Batch); }
-    for (const auto& Block:Blocks) { Colors.Add(Block.Color); Groups.Add(FString::Printf(TEXT("%s#%d"),*Block.BlockId,Block.Color)); }
+    for (const auto& Block:Blocks) { Colors.Add(Block.Color); Groups.Add(FString::Printf(TEXT("%s#%d#%d"),*Block.BlockId,Block.Color,Block.Collision)); }
     const int32 NewCount=Shapes-Counts.FindRef(P.Cell)+Blocks.Num();
     if (Blocks.Num()>8192 || Colors.Num()>64 || Groups.Num()>256 || NewCount>131072) return false;
     if (Blocks.IsEmpty()) {
@@ -52,7 +58,48 @@ bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterial
         auto& Cell=Cells.FindOrAdd(P.Cell);
         if (!IsValid(Cell)) Cell=GetWorld()->SpawnActor<ABridgeBlockPreview>();
         if (!Cell) return false;
-        Cell->Replace(Blocks,Anchor,Material,Palette); Counts.Add(P.Cell,Blocks.Num());
+        Cell->Replace(Blocks,Anchor,Material,Palette,IsImporting()); Counts.Add(P.Cell,Blocks.Num());
     }
+    if(IsImporting()) { Stored.Add(P.Cell,Blocks); SavedMaterial=Material; SavedPalette=Palette; }
     Shapes=NewCount; Revisions.Add(P.Cell,P.SnapshotSequence); Stages.Remove(P.Cell); return true;
+}
+
+bool ABridgeWorld::BeginImport(const FBridgePacket& P,const FVector& Anchor) {
+    if(P.ImportId==ImportId) return true; // Retrying the same handshake must never clear received cells.
+    if(P.Sequence<=ClearBarrier) return true;
+    Clear(P.Sequence); ImportId=P.ImportId; ImportOrigin=P.MinecraftOrigin; ImportAnchor=Anchor; return true;
+}
+bool ABridgeWorld::CommitImport(const FBridgePacket& P) {
+    if(P.ImportId!=ImportId || !Scoped) return false;
+    const int32 Expected=(Radius*2+1)*(Radius*2+1)*(HalfHeight*2+1);
+    if(P.ImportCells!=Expected || Revisions.Num()!=Expected || !Stages.IsEmpty()) return false;
+    Sealed=true; return true;
+}
+void ABridgeWorld::BuildBoundary() {
+    for(auto& Box:Boundary) if(Box) Box->DestroyComponent(); Boundary.Empty();
+    const FVector Low((Center.X-Radius)*8,(Center.Y-HalfHeight)*8,(Center.Z-Radius)*8);
+    const FVector High((Center.X+Radius+1)*8,(Center.Y+HalfHeight+1)*8,(Center.Z+Radius+1)*8);
+    const FVector Middle=BridgeProtocol::ToUnreal((Low+High)*.5-ImportOrigin,ImportAnchor);
+    const FVector Span=High-Low; const FVector Half(Span.Z*50,Span.X*50,Span.Y*50);
+    // Invisible perimeter prevents falling into unimported space. Terrain itself supplies interior collision.
+    for(int32 Axis=0;Axis<3;++Axis) for(int32 Side : {-1,1}) {
+        auto* Box=NewObject<UBoxComponent>(this); Box->SetupAttachment(RootComponent);
+        FVector Extent=Half; Extent[Axis]=10; Box->SetBoxExtent(Extent);
+        FVector Location=Middle; Location[Axis]+=Side*(Half[Axis]+10);
+        Box->SetWorldLocation(Location); Box->SetCollisionProfileName(TEXT("BlockAll"));
+        Box->SetHiddenInGame(true); Box->SetCanEverAffectNavigation(false); Box->RegisterComponent(); Boundary.Add(Box);
+    }
+}
+int32 ABridgeWorld::RemoveBlocksInSphere(FVector Position,float Radius) {
+    if(!Sealed || !FMath::IsFinite(Radius) || Radius<=0 || Radius>5000) return 0;
+    int32 Removed=0;
+    for(auto& Pair:Stored) {
+        const int32 Before=Pair.Value.Num();
+        Pair.Value.RemoveAll([&](const FBridgeBlock& B){ return FVector::DistSquared(BridgeProtocol::ToUnreal(B.Position,ImportAnchor),Position)<=Radius*Radius; });
+        const int32 Difference=Before-Pair.Value.Num(); if(!Difference) continue;
+        Removed+=Difference; Shapes-=Difference;
+        if(auto* Cell=Cells.Find(Pair.Key())) if(IsValid(*Cell)) (*Cell)->Replace(Pair.Value,ImportAnchor,SavedMaterial,SavedPalette,true);
+        Counts.Add(Pair.Key(),Pair.Value.Num());
+    }
+    return Removed;
 }

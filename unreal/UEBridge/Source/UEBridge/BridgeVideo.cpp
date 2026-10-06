@@ -27,7 +27,7 @@ void UBridgeVideo::Start(int32 Port) {
         if (Listener) { Listener->Close(); S->DestroySocket(Listener); Listener=nullptr; } return;
     }
     FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-    UE_LOG(LogTemp,Display,TEXT("Bridge 0.4.0 video listening on 127.0.0.1:%d (TCP)"),Port);
+    UE_LOG(LogTemp,Display,TEXT("Bridge 0.5.0 video listening on 127.0.0.1:%d (TCP)"),Port);
 }
 void UBridgeVideo::DropClient() {
     if (Client) { Client->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Client); Client=nullptr; }

@@ -15,17 +15,19 @@ void ABridgeBlockPreview::Clear() {
     for (auto& Group : Groups) if (Group) Group->DestroyComponent();
     Groups.Empty();
 }
-void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Blocks, const FVector& Anchor, UMaterialInterface* Material,UBridgeBlockPalette* Palette) {
+void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Blocks, const FVector& Anchor, UMaterialInterface* Material,UBridgeBlockPalette* Palette,bool Physics) {
     Clear(); if (!Cube) return;
     TMap<FString, UInstancedStaticMeshComponent*> ByMaterial;
     for (const auto& Block : Blocks) {
         UMaterialInterface* Textured=Palette ? Palette->Find(Block.BlockId) : nullptr;
-        const FString Key=FString::Printf(TEXT("%s#%d"),Textured ? *Block.BlockId : TEXT(""),Block.Color);
+        const FString Key=FString::Printf(TEXT("%s#%d#%d"),Textured ? *Block.BlockId : TEXT(""),Block.Color,Physics && Block.Collision);
         UInstancedStaticMeshComponent*& Group = ByMaterial.FindOrAdd(Key);
         if (!Group) {
             Group = NewObject<UInstancedStaticMeshComponent>(this);
             Group->SetMobility(EComponentMobility::Movable); Group->SetupAttachment(RootComponent);
-            Group->SetStaticMesh(Cube); Group->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+            Group->SetStaticMesh(Cube);
+            if(Physics && Block.Collision) Group->SetCollisionProfileName(TEXT("BlockAll"));
+            else Group->SetCollisionEnabled(ECollisionEnabled::NoCollision);
             Group->SetCanEverAffectNavigation(false); Group->SetGenerateOverlapEvents(false);
             if (Textured || Material) {
                 UMaterialInstanceDynamic* Tint = UMaterialInstanceDynamic::Create(Textured ? Textured : Material, this);

@@ -31,11 +31,18 @@ public final class BridgeTransport implements AutoCloseable {
     private boolean worldSupported, videoSupported;
     private boolean texturesSupported, videoControlsSupported;
     private int textureMaterials;
+    private boolean authoritySupported, worldSealed, ueControl;
+    private String importId="";
+    private int importedCells;
+    public record AuthorityPose(double x,double y,double z,boolean grounded) {}
+    private AuthorityPose pose;
+    private long poseSequence, poseTime;
+    public AuthorityPose authorityPose() { return pose!=null && clock.getAsLong()-poseTime<=1_000_000_000L ? pose : null; }
     private record Pending(byte[] bytes, long created, long sent, boolean attempted) {}
     public record Diagnostics(boolean connected, boolean cameraReady, boolean vfxReady, int walls,
                               int pending, long sentInputs, long acknowledged, long expired, double rttMillis, String receiver,
                               String build, boolean worldSupported, boolean videoSupported, String receiverId,
-                              boolean texturesSupported,boolean videoControlsSupported,int textureMaterials) {}
+                              boolean texturesSupported,boolean videoControlsSupported,int textureMaterials,boolean authoritySupported,boolean worldSealed,boolean ueControl,String importId,int importedCells) {}
 
     public BridgeTransport(int port) throws IOException { this(port, System::nanoTime); }
     BridgeTransport(int port, LongSupplier clock) throws IOException {
@@ -83,7 +90,7 @@ public final class BridgeTransport implements AutoCloseable {
         return new Diagnostics(connected, connected && cameraReady, connected && vfxReady, connected ? walls : 0,
                 pending.size(), sentInputs, acknowledged, expired, lastRtt / 1_000_000.0, receiver,
                 build, connected && worldSupported, connected && videoSupported, receiverId,
-                connected && texturesSupported,connected && videoControlsSupported,connected ? textureMaterials : 0);
+                connected && texturesSupported,connected && videoControlsSupported,connected ? textureMaterials : 0, connected && authoritySupported, connected && worldSealed, connected && ueControl, importId, importedCells);
     }
     private static boolean number(JsonObject p, String name) {
         return p.has(name) && p.get(name).isJsonPrimitive() && p.getAsJsonPrimitive(name).isNumber();
@@ -97,6 +104,16 @@ public final class BridgeTransport implements AutoCloseable {
         String kind = p.get("kind").getAsString();
         if ("ack".equals(kind)) {
             if (pending.remove(p.get("eventId").getAsString()) != null) ++acknowledged;
+        } else if("pose".equals(kind)) {
+            if(!p.has("receiverId") || !receiverId.equals(p.get("receiverId").getAsString()) || !authoritySupported
+                    || !number(p,"seq") || !number(p,"poseSeq") || !number(p,"x") || !number(p,"y") || !number(p,"z") || !bool(p,"grounded")) return;
+            double seq=p.get("seq").getAsDouble(), revision=p.get("poseSeq").getAsDouble();
+            if(!Double.isFinite(seq) || seq!=Math.rint(seq) || seq<1 || seq>sequence
+                    || !inputTimes.containsKey((long)seq) || clock.getAsLong()-inputTimes.get((long)seq)>1_000_000_000L
+                    || !Double.isFinite(revision) || revision!=Math.rint(revision) || revision<=poseSequence || revision>9_007_199_254_740_991L) return;
+            double x=p.get("x").getAsDouble(),y=p.get("y").getAsDouble(),z=p.get("z").getAsDouble();
+            if(!Double.isFinite(x) || !Double.isFinite(y) || !Double.isFinite(z) || Math.abs(x)>100000 || Math.abs(y)>100000 || Math.abs(z)>100000) return;
+            pose=new AuthorityPose(x,y,z,p.get("grounded").getAsBoolean()); poseSequence=(long)revision; poseTime=clock.getAsLong();
         } else if ("status".equals(kind) && number(p, "seq") && bool(p, "cameraReady")
                 && bool(p, "vfxReady") && number(p, "walls")) {
             double seq = p.get("seq").getAsDouble(), count = p.get("walls").getAsDouble();
@@ -109,14 +126,22 @@ public final class BridgeTransport implements AutoCloseable {
             receiver = p.has("receiver") && "diagnostic".equals(p.get("receiver").getAsString()) ? "diagnostic" : "ue";
             build = p.has("build") && p.get("build").isJsonPrimitive() && p.getAsJsonPrimitive("build").isString()
                     ? p.get("build").getAsString() : "unknown";
+            authoritySupported=bool(p,"authorityV1") && p.get("authorityV1").getAsBoolean();
+            worldSealed=bool(p,"worldSealed") && p.get("worldSealed").getAsBoolean();
+            ueControl=bool(p,"ueControl") && p.get("ueControl").getAsBoolean();
+            importId=p.has("importId") && p.get("importId").isJsonPrimitive() && p.getAsJsonPrimitive("importId").isString() ? p.get("importId").getAsString() : "";
+            double cells=number(p,"importedCells") ? p.get("importedCells").getAsDouble() : 0;
+            importedCells=Double.isFinite(cells) && cells==Math.rint(cells) && cells>=0 && cells<=245 ? (int)cells : 0;
             worldSupported=bool(p,"worldV1") && p.get("worldV1").getAsBoolean();
             videoSupported=bool(p,"videoV1") && p.get("videoV1").getAsBoolean();
             texturesSupported=bool(p,"blockTexturesV1") && p.get("blockTexturesV1").getAsBoolean();
             videoControlsSupported=bool(p,"videoControlsV1") && p.get("videoControlsV1").getAsBoolean();
             double materials=number(p,"textureMaterials") ? p.get("textureMaterials").getAsDouble() : 0;
             textureMaterials=Double.isFinite(materials) && materials==Math.rint(materials) && materials>=0 && materials<=4096 ? (int)materials : 0;
-            receiverId=p.has("receiverId") && p.get("receiverId").isJsonPrimitive() && p.getAsJsonPrimitive("receiverId").isString()
+            String nextReceiver=p.has("receiverId") && p.get("receiverId").isJsonPrimitive() && p.getAsJsonPrimitive("receiverId").isString()
                     ? p.get("receiverId").getAsString() : "";
+            if(!receiverId.equals(nextReceiver)) { pose=null; poseSequence=0; }
+            receiverId=nextReceiver;
         }
     }
     public void pump() throws IOException {

@@ -32,6 +32,8 @@ public:
     UPROPERTY(BlueprintReadOnly, Category="Bridge") float RightInput = 0;
     UPROPERTY(BlueprintReadOnly, Category="Bridge") bool JumpHeld = false;
     UPROPERTY(BlueprintReadOnly, Category="Bridge") bool SneakHeld = false;
+    UPROPERTY(BlueprintReadOnly,Category="Bridge") bool UEControl=false;
+    UFUNCTION(BlueprintCallable,Category="Bridge|World") int32 RemoveImportedBlocks(FVector Position,float Radius);
     UFUNCTION(BlueprintImplementableEvent, Category="Bridge") void OnJumpPressed();
     UFUNCTION(BlueprintImplementableEvent, Category="Bridge") void OnTntExplosion(FVector Position);
     UFUNCTION(BlueprintImplementableEvent, Category="Bridge") void OnBowFired(FVector Position, FVector Direction, float Pull);
@@ -45,7 +47,9 @@ private:
     bool Anchored = false;
     double LastInput = 0;
     double LastPacket = 0;
-    double LastStatus = -1;
+    double LastStatus = -1, LastPose=-1;
+    uint64 PoseSequence=0;
+    TSharedPtr<class FInternetAddr> Peer;
     uint32 PeerAddress = 0;
     int32 PeerPort = 0;
     UPROPERTY() TObjectPtr<class ABridgeBlockPreview> Preview;
@@ -64,6 +68,7 @@ private:
     bool HandleSnapshot(const FBridgePacket& Packet);
     void ClearPreview(uint64 Generation);
     void SendJson(const TSharedRef<class FJsonObject>& Json, const TSharedRef<class FInternetAddr>& Sender);
+    void SendPose();
     void SendStatus(const TSharedRef<class FInternetAddr>& Sender);
     void Explode(const FVector& Position);
 };

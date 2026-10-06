@@ -5,7 +5,9 @@
   "client": [
     "RenderMixin",
     "BowMixin",
-    "WorldUpdateMixin"
+    "WorldUpdateMixin",
+    "ControllerPlayerMixin",
+    "ControllerInteractionMixin"
   ],
   "injectors": {
     "defaultRequire": 1

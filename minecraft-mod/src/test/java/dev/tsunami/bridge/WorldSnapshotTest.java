@@ -66,4 +66,19 @@ public class WorldSnapshotTest {
         var b=new WorldSnapshot.Shape(0,0,0,0xaaaaaa,1,1,1,"minecraft:cobblestone");
         assertNotEquals(WorldSnapshot.fingerprint(List.of(a)),WorldSnapshot.fingerprint(List.of(b)));
     }
+
+    @org.junit.Test public void physicsRowsCarryCollisionAndStayBounded() throws Exception {
+        var solid=new WorldSnapshot.Shape(-99999.123456789,99999.123456789,99999.123456789,0xffffff,4,4,4,"minecraft:"+"a".repeat(118),true);
+        var visual=new WorldSnapshot.Shape(solid.x(),solid.y(),solid.z(),solid.color(),4,4,4,solid.blockId(),false);
+        assertNotEquals(WorldSnapshot.fingerprint(java.util.List.of(solid)),WorldSnapshot.fingerprint(java.util.List.of(visual)));
+        var packets=WorldSnapshot.encode(new WorldSnapshot.Cell(4000000,-4000000,4000000),java.util.List.of(solid,solid,solid,visual),true,true);
+        var p=packets.get(0); assertEquals("world_cell_physics",p.get("event").getAsString());
+        assertEquals(9,p.getAsJsonArray("blocks").get(0).getAsJsonArray().size());
+        assertTrue(p.getAsJsonArray("blocks").get(0).getAsJsonArray().get(8).getAsBoolean());
+        assertFalse(p.getAsJsonArray("blocks").get(3).getAsJsonArray().get(8).getAsBoolean());
+        p.addProperty("v",1);p.addProperty("kind","event");p.addProperty("session",java.util.UUID.randomUUID().toString());
+        p.addProperty("eventId",java.util.UUID.randomUUID().toString());p.addProperty("snapshotSeq",9007199254740991L);
+        p.addProperty("seq",9007199254740991L);p.addProperty("x",0);p.addProperty("y",0);p.addProperty("z",0);
+        assertTrue(p.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length<=2048);
+    }
 }

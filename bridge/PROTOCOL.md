@@ -210,3 +210,55 @@ paths, dimensions, file size, PNG CRC and hash before creating assets. Export us
 active client resources and default block state, not the live variant of each
 placed block. Multipart/complex models fall back; animations use a static tile.
 Generated assets and exports are local and are not included in source bundles.
+
+## UE movement authority and initial import (0.5.0, additive v1)
+
+Input adds optional strictly boolean `controller`, default false. When the world
+is sealed and the target is BridgeCharacter, true enables UE CharacterMovement:
+normalized WASD relative to yaw, gravity, collision, rising-edge jump and native
+crouch/uncrouch ceiling checks. MC position/body pose is ignored after seal. Input
+age >250ms freezes movement/gravity; GUI input is neutral. The MC local player is
+held at its source position and vanilla attack/use/break are suppressed during
+import/controller mode. Start is limited to a grounded creative singleplayer.
+No HP/inventory authority synchronization or UE item actions are added yet.
+
+Status adds `authorityV1`, `worldSealed`, `ueControl`, `importId` and
+`importedCells` (0..245 including empty cells). Capability is true only with a
+BridgeCharacter. Mode is session-local, not automatically enabled on startup.
+
+`world_begin`: reliable event with importId UUID, `ox/oy/oz` absolute Minecraft
+origin (each within +/-30 million); x/y/z envelope remains relative zero. Explicit
+new import clears UE imported terrain, resets its barrier and prepares physics.
+Same importId is idempotent, including after sealing. Older begin sequences cannot
+replace a newer import within the source. A new source resets transport barriers
+but retains sealed geometry until an explicit new import.
+
+`world_cell_physics`: existing textured envelope, four rows/batch, <=2048 batches;
+row `[x,y,z,color,sx,sy,sz,blockId,collision:boolean]`. MC uses collision shape
+boxes for solids, outline/fluid boxes with collision=false otherwise. Buried
+blocks are included. Unloaded horizontal chunks are deferred, never committed
+as empty during initial import. Scope is fixed for this import and includes six
+invisible perimeter collision boxes in UE. Legacy live streams still omit buried
+cubes and have no collision.
+
+`world_commit`: importId and integer `cells` 27..245. UE seals only if importId
+matches, scope exists, count equals the entire expected scope, all cells including
+empty ones have committed and no stages are incomplete. ACK confirms handling;
+MC waits for matching sealed status before READY. Begin/commit are retried with
+same importId if lost; restart of receiverId changes the client to LOST and never
+silently reimports. Per-cell ACK/retry rules are retained.
+
+Sealed UE worlds ACK/ignore source cell/scope/clear messages. MC stops scanning;
+legacy refresh/on/off does not overwrite it. Source reconnect preserves sealed
+world within the same UE Play. Play end destroys session-local terrain; disk
+persistence is not provided. Blueprint RemoveImportedBlocks exposes removal of
+shapes whose centers fall within a UE-space sphere, updating render/collision and
+stored geometry without changing Minecraft.
+
+UE returns `kind:"pose"` at most60Hz, with session, receiverId, echoed input seq,
+increasing poseSeq, relative MC-space feet x/y/z and grounded:boolean. Inverse
+mapping is `(-UErelativeY,UErelativeZ,UErelativeX)/100`. MC accepts only the current
+receiver, correct session, a sent input <=1s old, valid finite coordinates and a
+new poseSeq; cached pose expires after1s. Used for diagnostics in this stage; MC
+world position is deliberately not teleported to avoid reintroducing vanilla
+collision and chunk movement as gameplay authority.

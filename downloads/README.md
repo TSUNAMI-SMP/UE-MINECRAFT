@@ -1,6 +1,21 @@
 # ダウンロード
 
-## 最新版 0.4.0
+## 最新版 0.5.0
+
+[MOD 0.5.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/minecraft-ue-bridge-0.5.0.jar)
+
+[UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-update-0.5.0.zip)
+
+[ソース＋MOD一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UE-Minecraft-MVP-0.5.0.zip)
+
+Minecraft入力/HUD、UE移動・衝突。初期地形転送後のUE地形をPlay中に保持。
+[更新・起動・テスト手順](../docs/UPGRADE_0.5.0.md)。MODとUE両方の更新・UE再ビルドが必要。
+Sourceフォルダも必ずコピーしてください。Content/Config/Savedや素材を置換しません。
+素材取り込み修正0.4.3を含みます。既に素材が動いている場合は再インポート不要。
+Java39件/Python10件成功、UE実機ビルド・移動/衝突確認は必要です。
+
+
+## 過去版 0.4.0
 
 [Minecraft MOD 0.4.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/minecraft-ue-bridge-0.4.0.jar)
 

@@ -4,9 +4,11 @@ Fabric **Minecraft Java 1.21.11 / Java 21** と **Unreal Engine 5.8** を同じP
 接続する実験用プロジェクト。Minecraftが操作・プレイヤー移動を担当し、UEが描画と
 壁の物理破壊を担当します。既存サーバーへのインストールは不要です。
 
+**起動修正版0.2.1:** 0.2.0のMixinパッケージ配置による起動失敗を修正。導入済みの場合はBridge MODのJARのみ差し替えてください。UEソースの更新は不要です。
+
 ## 現在の状態
 
-- Fabric MOD：ビルド済み。JUnitテスト16件とPythonテスト4件成功。
+- Fabric MOD：ビルド済み。JUnitテスト17件とPythonテスト4件成功。
 - UE：C++プロジェクトと受信・同期・Niagara/Chaos連携コードを作成。
 - **UE Editorがクラウドにないため、UE 5.8でのコンパイル、Niagara/Geometry Collection
   アセット作成、両ゲームを使う成功条件は未検証です。完成済みMVPとはまだ言えません。**
@@ -48,7 +50,7 @@ cd minecraft-mod
 ./gradlew build
 ```
 
-`build/libs/minecraft-ue-bridge-0.2.0.jar` がMOD本体です（`-sources.jar`ではありません）。
+`build/libs/minecraft-ue-bridge-0.2.1.jar` がMOD本体です（`-sources.jar`ではありません）。
 Minecraft Launcherに **1.21.11 / Fabric Loader 0.19.5** の専用インストールを作り、
 ゲームディレクトリを新しい `MC-UE-Test` フォルダに設定してください。その `mods/` に
 本MODと **Fabric API 0.141.6+1.21.11** を配置します。新しいシングルプレイ・クリエイティブ

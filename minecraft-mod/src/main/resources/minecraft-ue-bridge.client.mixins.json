@@ -1,7 +1,12 @@
 {
   "required": true,
-  "package": "dev.tsunami.bridge",
+  "package": "dev.tsunami.bridge.mixin",
   "compatibilityLevel": "JAVA_21",
-  "client": ["RenderMixin", "BowMixin"],
-  "injectors": {"defaultRequire": 1}
+  "client": [
+    "RenderMixin",
+    "BowMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
 }

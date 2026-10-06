@@ -1,4 +1,6 @@
-package dev.tsunami.bridge;
+package dev.tsunami.bridge.mixin;
+
+import dev.tsunami.bridge.MinecraftBridgeClient;
 
 import net.minecraft.client.MinecraftClient;
 import org.spongepowered.asm.mixin.Mixin;

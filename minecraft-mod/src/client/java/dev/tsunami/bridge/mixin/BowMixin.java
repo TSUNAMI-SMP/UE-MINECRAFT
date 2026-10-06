@@ -1,4 +1,6 @@
-package dev.tsunami.bridge;
+package dev.tsunami.bridge.mixin;
+
+import dev.tsunami.bridge.MinecraftBridgeClient;
 
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.item.BowItem;

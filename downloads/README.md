@@ -1,5 +1,16 @@
 # ダウンロード
 
+## MOD・取り込みスクリプト修正0.9.3
+
+- [MOD 0.9.3](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/minecraft-ue-bridge-0.9.3.jar)
+- [取り込みスクリプト更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/UEBridge-texture-import-fix-0.9.3.zip)
+- [具体的な操作順](../docs/UPGRADE_0.9.3.md)
+
+ブロック状態のJava列挙名とMinecraft保存用の名前の違いを修正。
+MODとimport_minecraft_textures.pyを更新し、ブロック素材を再書き出し・取り込みします。
+今回の修正だけならUE再ビルドは不要です。UEソースは0.9.0＋修正0.9.2を使用します。
+MODビルド・Java97件・Python42件成功。UE取り込み・描画の実機確認は未実施です。
+
 ## 更新版0.9.0
 
 **UEビルドには[累積修正パッチ0.9.2](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/UEBridge-build-fix-0.9.2.zip)も適用してください。**

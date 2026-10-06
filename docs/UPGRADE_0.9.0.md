@@ -3,6 +3,7 @@
 MODとUEソースを両方更新し、素材を再書き出し・再取り込みします。
 0.8.2の粒子設定修正を含み、旧配布ZIPは保持します。
 **0.9.0の配布ZIPには[UEビルド修正パッチ0.9.2](BUILD_FIX_0.9.2.md)も適用してください。** 元のZIPを保持しているため、後から修正パッチを上書きします。0.9.1の修正も含みます。
+**MODとimport_minecraft_textures.pyには[修正版0.9.3](UPGRADE_0.9.3.md)を使ってください。** 状態名の書き出しを修正するため、更新後に素材を書き出し直します。
 
 この版では一人称の固定FOV70投影、破片の調整、通常ブロックのモデルと当たり判定、
 地上モブの表示・基本AI、照明オフと実際のMinecraftの空を実装しています。
@@ -12,7 +13,7 @@ UE5.8のビルド・描画・Windowsでの統合動作はクラウドでは確�
 
 ## ダウンロード
 
-- [MOD 0.9.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/minecraft-ue-bridge-0.9.0.jar)
+- [MOD修正版 0.9.3](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/minecraft-ue-bridge-0.9.3.jar)
 - [既存UEプロジェクト用更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/UEBridge-update-0.9.0.zip)
 - [ソースとMODの一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/UE-Minecraft-MVP-0.9.0.zip)
 
@@ -48,7 +49,8 @@ UE5.8のビルド・描画・Windowsでの統合動作はクラウドでは確�
    UEを閉じたまま、使用中フォルダーの `Build-UEBridge.cmd` をダブルクリックします。
    成功を確認してから、そのフォルダーの `UEBridge.uproject` を開きます。
 6. `C:/UEBridgeTest/MC-Test/mods/` 内の旧 `minecraft-ue-bridge-*.jar` をゲームフォルダー外へ退避し、
-   `minecraft-ue-bridge-0.9.0.jar` を1個だけ配置します。Fabric APIは保持します。
+   `minecraft-ue-bridge-0.9.3.jar` を1個だけ配置します。Fabric APIは保持します。
+   [修正版0.9.3](UPGRADE_0.9.3.md)の取り込みスクリプトも先に上書きしてください。
 7. 専用Minecraft 1.21.11/Fabric環境を起動します。LAN公開していないシングルプレイ・
    クリエイティブのテストワールドを使います。既存サーバーへの導入は不要です。
 

@@ -5,6 +5,7 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.BlockRenderType;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.registry.Registries;
+import net.minecraft.state.property.Property;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import java.util.*;
@@ -30,7 +31,12 @@ public final class BlockGeometryCapture {
     public static boolean supported(BlockState state) { return exclusion(state).isEmpty(); }
     public static Map<String,String> properties(BlockState state) {
         Map<String,String> result=new TreeMap<>();
-        state.getEntries().forEach((key,value)->result.put(key.getName(),value.toString())); return result;
+        state.getEntries().forEach((key,value)->result.put(key.getName(),valueName(key,value))); return result;
+    }
+    // Enum.toString() can be a Java enum/debug name, not the serialized value used
+    // by vanilla blockstate JSON. Use the property's own serializer for both exports and world rows.
+    static <T extends Comparable<T>> String valueName(Property<T> property,Comparable<?> value) {
+        return property.name(property.getType().cast(value));
     }
     public static String stateKey(BlockState state) { return TextureExport.stateKey(properties(state)); }
     private static List<double[]> boxes(List<Box> boxes,net.minecraft.util.math.Vec3d offset) {

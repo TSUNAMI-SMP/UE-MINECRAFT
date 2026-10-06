@@ -72,7 +72,10 @@ def _validate_models(manifest):
         raise ValueError("Every exported block needs a blockstate definition")
     state_budget = 0
     for identifier, entry in blocks.items():
-        _state_key(entry.get("defaultState"))
+        try:
+            _state_key(entry.get("defaultState"))
+        except ValueError as error:
+            raise ValueError(f"{identifier}: defaultState={entry.get('defaultState')!r}: {error}. Update the Bridge MOD and re-export textures.") from error
         states = entry.get("states")
         offset = entry.get("modelOffset", [0, 0])
         if not isinstance(offset, list) or len(offset) != 2 or not all(_number(v, 0, 0.5) for v in offset):
@@ -83,7 +86,10 @@ def _validate_models(manifest):
         if state_budget > 131072:
             raise ValueError("Native block state budget exceeded")
         for key, state in states.items():
-            _state_key(key)
+            try:
+                _state_key(key)
+            except ValueError as error:
+                raise ValueError(f"{identifier}: state={key!r}: {error}. Update the Bridge MOD and re-export textures.") from error
             if not isinstance(state, dict):
                 raise ValueError("Invalid native state")
             if type(state.get("cannotConnect", False)) is not bool:

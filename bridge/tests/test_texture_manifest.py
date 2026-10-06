@@ -115,6 +115,21 @@ class TextureManifestTest(unittest.TestCase):
         self.assertEqual(0.5, result["blocks"]["minecraft:stone"]["states"]["facing=north,half=bottom"]["collision"][0][4])
         self.assertEqual(90, result["blockstates"]["minecraft:stone"]["variants"]["facing=east"][0]["y"])
 
+    def test_invalid_native_state_reports_block_and_reexport_instruction(self):
+        for key, default in (("facing=NORTH,half=bottom", True), ("facing=east,half=BOTTOM", False)):
+            with self.subTest(key=key, default=default):
+                value = self.model_manifest()
+                block = value["blocks"]["minecraft:stone"]
+                if default:
+                    block["defaultState"] = key
+                else:
+                    block["states"][key] = copy.deepcopy(next(iter(block["states"].values())))
+                with self.assertRaises(ValueError) as caught:
+                    self.load(value)
+                self.assertIn("minecraft:stone", str(caught.exception))
+                self.assertIn(key, str(caught.exception))
+                self.assertIn("re-export textures", str(caught.exception))
+
     def test_v2_rejects_invalid_shapes_and_noncanonical_states(self):
         for box in ([0, 0, 0, 1, 0, 1], [0, 0, 0, 1, 1, float("nan")], [0, 0, 0, 1, True, 1], [0, 0, 0, 5, 1, 1]):
             value = self.model_manifest()

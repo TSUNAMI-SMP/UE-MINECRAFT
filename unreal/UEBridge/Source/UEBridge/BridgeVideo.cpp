@@ -71,7 +71,7 @@ void UBridgeVideo::ConfigureCapture(USceneCaptureComponent2D* Component,bool Mas
     Component->ShowFlags.SetPostProcessing(!Mask && LightingEnabled);
     const bool Sky=!VanillaSkyEnabled || !ClientV3;
     Component->ShowFlags.SetAtmosphere(Sky);Component->ShowFlags.SetFog(Sky);
-    Component->ShowFlags.SetVolumetricFog(Sky);Component->ShowFlags.SetVolumetricCloud(Sky);
+    Component->ShowFlags.SetVolumetricFog(Sky);Component->ShowFlags.SetCloud(Sky);
     Component->ShowFlags.SetSkyLighting(LightingEnabled);
     // Independent temporal histories would give color/mask different edges. Sky mode uses matched non-temporal captures.
     Component->ShowFlags.SetAntiAliasing(!(VanillaSkyEnabled && ClientV3));

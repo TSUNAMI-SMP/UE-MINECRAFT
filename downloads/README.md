@@ -2,6 +2,10 @@
 
 ## 更新版0.9.0
 
+**UEビルドには[修正パッチ0.9.1](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/UEBridge-build-fix-0.9.1.zip)も適用してください。**
+UE5.8でのヘッダー順序・JSONキー変換・雲フラグ・Role変数のエラーを修正。
+MODは0.9.0のまま、UEの3ファイルを上書きして再ビルドします。[適用手順](../docs/BUILD_FIX_0.9.1.md)。
+
 - [MOD 0.9.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/minecraft-ue-bridge-0.9.0.jar)
 - [既存UE用更新ZIP 0.9.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/UEBridge-update-0.9.0.zip)
 - [ソース＋MOD一式ZIP 0.9.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/UE-Minecraft-MVP-0.9.0.zip)

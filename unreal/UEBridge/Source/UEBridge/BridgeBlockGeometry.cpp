@@ -1,3 +1,4 @@
+#include "BridgeBlockGeometry.h"
 #include "BridgeBlockPalette.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
@@ -35,16 +36,19 @@ bool MatchVariant(const FString& Key,const TMap<FString,FString>& State) {
 bool MatchWhen(const Object& When,const TMap<FString,FString>& State) {
     if(!When.IsValid()) return true;
     for(const auto& Pair:When->Values) {
-        if(Pair.Key==TEXT("OR") || Pair.Key==TEXT("AND")) {
+        // UE5.8 stores JSON keys as shared string views. Copy using their explicit
+        // length so lookups do not depend on implicit FString conversion or a NUL terminator.
+        const FString Key(Pair.Key.Len(),Pair.Key.GetData());
+        if(Key==TEXT("OR") || Key==TEXT("AND")) {
             const TArray<TSharedPtr<FJsonValue>>* Terms=nullptr;
             if(!Pair.Value->TryGetArray(Terms) || Terms->IsEmpty()) return false;
-            bool Result=Pair.Key==TEXT("AND");
+            bool Result=Key==TEXT("AND");
             for(const auto& Term:*Terms) {
                 const bool Match=MatchWhen(Term->AsObject(),State);
-                Result=Pair.Key==TEXT("AND") ? Result&&Match : Result||Match;
+                Result=Key==TEXT("AND") ? Result&&Match : Result||Match;
             }
             if(!Result) return false;
-        } else if(!MatchValue(State.Find(Pair.Key),Pair.Value->AsString())) return false;
+        } else if(!MatchValue(State.Find(Key),Pair.Value->AsString())) return false;
     }
     return true;
 }
@@ -190,7 +194,10 @@ bool UBridgeBlockPalette::BuildModel(const FString& BlockId,const FString& State
     const auto StateProperties=Properties(State);TArray<Object> Applications;
     const Object Variants=Child(Definition,TEXT("variants"));
     if(Variants.IsValid()) {
-        for(const auto& Pair:Variants->Values) if(MatchVariant(Pair.Key,StateProperties)) {Applications.Add(Choose(Pair.Value));break;}
+        for(const auto& Pair:Variants->Values) {
+            const FString Key(Pair.Key.Len(),Pair.Key.GetData());
+            if(MatchVariant(Key,StateProperties)) {Applications.Add(Choose(Pair.Value));break;}
+        }
     }
     const TArray<TSharedPtr<FJsonValue>>* Multipart=nullptr;
     if(Definition->TryGetArrayField(TEXT("multipart"),Multipart)) for(const auto& Part:*Multipart) {

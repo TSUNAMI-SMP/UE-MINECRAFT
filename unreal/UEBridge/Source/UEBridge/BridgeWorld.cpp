@@ -246,10 +246,10 @@ bool ABridgeWorld::AppendState(const FIntVector& Block,const FString& BlockId,in
     const FVector ModelOffset=SavedPalette->GetModelOffset(BlockId,Block);
     FBridgeBlock Visual;Visual.Position=FVector(Block)+FVector(.5)+ModelOffset-ImportOrigin;Visual.BlockId=BlockId;Visual.Color=Color;
     Visual.SourceBlock=Block;Visual.HasSourceBlock=true;Visual.StateKey=Key;Visual.Role=1;Out.Add(Visual);
-    for(uint8 Role:{uint8(2),uint8(3)}) {
-    if(Role==3 && Collision==Outline) continue;
-    for(const auto& Box:Role==2 ? Collision : Outline) {
-        FBridgeBlock Shape=Visual;Shape.Role=Role;Shape.Collision=Role==2;Shape.Size=Box.GetSize();
+    for(uint8 ShapeRole:{uint8(2),uint8(3)}) {
+    if(ShapeRole==3 && Collision==Outline) continue;
+    for(const auto& Box:ShapeRole==2 ? Collision : Outline) {
+        FBridgeBlock Shape=Visual;Shape.Role=ShapeRole;Shape.Collision=ShapeRole==2;Shape.Size=Box.GetSize();
         Shape.Position=FVector(Block)+Box.GetCenter()+ModelOffset-ImportOrigin;Out.Add(Shape);
     }
     }

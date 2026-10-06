@@ -39,6 +39,15 @@ public final class VanillaFeedbackDataTest {
         packet.addProperty("fallDistance",-1); assertNull(VanillaFeedbackData.parse(packet));
         packet.addProperty("fallDistance",1001); assertNull(VanillaFeedbackData.parse(packet));
     }
+    @Test public void shortAndZeroDistanceLandingsRemainAudibleWithoutDamageSoundData() {
+        JsonObject packet=packet(); packet.addProperty("type","land");
+        for(double distance:new double[]{0,.25,1.25,3,4.5}) {
+            packet.addProperty("fallDistance",distance);
+            var landing=VanillaFeedbackData.parse(packet);
+            assertNotNull(landing); assertEquals(VanillaFeedbackData.Type.LAND,landing.type());
+            assertEquals(.5,landing.volume(1),1e-6); assertEquals(.75,landing.pitch(1),1e-6);
+        }
+    }
     @Test public void preservesListenerRelativeStereoAcrossYawWrapAndFrontView() {
         JsonObject packet=packet(); packet.addProperty("x",-2); packet.addProperty("z",3);
         var local=VanillaFeedbackData.parse(packet).listenerSpace();

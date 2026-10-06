@@ -26,6 +26,10 @@ public final class BridgeTransport implements AutoCloseable {
     private final ArrayDeque<JsonObject> feedback = new ArrayDeque<>();
     private final LinkedHashMap<String, Boolean> seenFeedback = new LinkedHashMap<>();
     private boolean playerVisualsSupported, feedbackSupported;
+    private ParticleDiagnostics particles = ParticleDiagnostics.unavailable("unsupported");
+    public ParticleDiagnostics particleDiagnostics() {
+        return diagnostics().connected() ? particles : ParticleDiagnostics.unavailable("disconnected");
+    }
     public boolean playerVisualsSupported() { return diagnostics().connected() && playerVisualsSupported; }
     public JsonObject pollFeedback() { return feedback.pollFirst(); }
     private long sequence, lastStatus, lastStatusSequence, sentInputs, acknowledged, expired, lastRtt;
@@ -156,6 +160,7 @@ public final class BridgeTransport implements AutoCloseable {
             videoV2=bool(p,"videoV2") && p.get("videoV2").getAsBoolean();
             playerVisualsSupported=bool(p,"playerVisualsV1") && p.get("playerVisualsV1").getAsBoolean();
             feedbackSupported=bool(p,"vanillaFeedbackV1") && p.get("vanillaFeedbackV1").getAsBoolean();
+            particles=ParticleDiagnostics.parse(p);
             lastAction=p.has("lastAction") && p.get("lastAction").isJsonPrimitive() && p.getAsJsonPrimitive("lastAction").isString() ? p.get("lastAction").getAsString() : "";
             authoritySupported=bool(p,"authorityV1") && p.get("authorityV1").getAsBoolean();
             worldSealed=bool(p,"worldSealed") && p.get("worldSealed").getAsBoolean();

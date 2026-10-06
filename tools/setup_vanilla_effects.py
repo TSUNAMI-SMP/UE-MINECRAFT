@@ -9,14 +9,14 @@ def setup_vanilla_effects():
     import unreal
     project = pathlib.Path(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()))
     if not (project / "UEBridge.uproject").is_file() or not (project / "Source/UEBridge/BridgeVanillaEffects.h").is_file():
-        raise RuntimeError("Use the updated UEBridge 0.7.0 project")
+        raise RuntimeError("Use the updated UEBridge 0.8.0 project")
     if unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world() is not None:
         raise RuntimeError("Stop Play before setting up vanilla particles")
     if unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages():
         raise RuntimeError("Save your level before setting up vanilla particles")
     receiver_class = getattr(unreal, "BridgeReceiver", None)
     if receiver_class is None:
-        raise RuntimeError("Build UEBridge 0.7.0 first")
+        raise RuntimeError("Build UEBridge 0.8.0 first")
     actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
     receivers = [actor for actor in actors.get_all_level_actors() if isinstance(actor, receiver_class)]
     if len(receivers) != 1:
@@ -67,13 +67,14 @@ def setup_vanilla_effects():
     offset_uv = node(unreal.MaterialExpressionAppendVector)
     wire(mirrored_u, offset_uv, "A")
     wire(offsets[1], offset_uv, "B")
+    # Instance custom data originates in the vertex shader. Explicit interpolation
+    # also works on engine builds that reject direct pixel-shader access. Transfer
+    # just the instance offsets; retain texture UVs in the pixel stage for sampling.
+    interpolated_offsets = node(unreal.MaterialExpressionVertexInterpolator)
+    wire(offset_uv, interpolated_offsets)
     final_uv = node(unreal.MaterialExpressionAdd)
     wire(tile_uv, final_uv, "A")
-    wire(offset_uv, final_uv, "B")
-    # Instance custom data originates in the vertex shader. Explicit interpolation
-    # also works on engine builds that reject direct pixel-shader access.
-    interpolated_uv = node(unreal.MaterialExpressionVertexInterpolator)
-    wire(final_uv, interpolated_uv)
+    wire(interpolated_offsets, final_uv, "B")
 
     sample = node(unreal.MaterialExpressionTextureSampleParameter2D)
     sample.set_editor_property("parameter_name", "ParticleTexture")
@@ -81,7 +82,7 @@ def setup_vanilla_effects():
     if default_texture is None:
         raise RuntimeError("Engine default texture is missing")
     sample.set_editor_property("texture", default_texture)
-    wire(interpolated_uv, sample, "Coordinates")
+    wire(final_uv, sample, "Coordinates")
     color = node(unreal.MaterialExpressionVectorParameter)
     color.set_editor_property("parameter_name", "ParticleColor")
     color.set_editor_property("default_value", unreal.LinearColor(.6, .6, .6, 1))
@@ -97,11 +98,15 @@ def setup_vanilla_effects():
     if not editing.connect_material_property(roughness, "", unreal.MaterialProperty.MP_ROUGHNESS):
         raise RuntimeError("Cannot connect dust Roughness")
     editing.recompile_material(material)
+    texture_parameters = {str(value) for value in editing.get_texture_parameter_names(material)}
+    vector_parameters = {str(value) for value in editing.get_vector_parameter_names(material)}
+    if "ParticleTexture" not in texture_parameters or "ParticleColor" not in vector_parameters:
+        raise RuntimeError("Dust material parameters are incomplete; run setup_vanilla_effects() again")
     if not assets.save_loaded_asset(material, False):
         raise RuntimeError("Cannot save dust material")
     with unreal.ScopedEditorTransaction("Configure Minecraft vanilla particles"):
         receivers[0].set_editor_property("vanilla_particle_material", material)
     if not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level():
         raise RuntimeError("Cannot save vanilla particle assignment")
-    unreal.log("Minecraft vanilla particle material ready")
+    unreal.log("Minecraft dust material assigned and saved; Play then /uebridge status checks texture readiness and generated/registered particle counts")
     return material

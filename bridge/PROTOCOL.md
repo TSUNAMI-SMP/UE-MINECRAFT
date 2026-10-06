@@ -390,3 +390,48 @@ follow the Minecraft particle values; lighting and collision use UE. At most384
 particles and64 material groups. Movement events use imported block metadata;
 unsupported world objects are silent. Special block sound branches, arbitrary
 shape subdivision and per-voxel biome tints remain future extensions.
+
+## Movement, camera and dust diagnostics (0.8.0)
+
+Packet version remains 1; `build` is `0.8.0`. Existing 0.7 appearance and feedback
+fields remain compatible. `sprint` in UE-control mode now represents a local
+intent latch driven by the configured sprint key or a second forward-key press
+within 350ms. It clears on forward release, backward input, sneaking, menus,
+paused input, stale/missing authority, disconnect and control/import transitions.
+The bridge does not set the frozen Minecraft player's sprint attributes.
+
+`cameraFov` remains the user's **base vertical FOV**, not a pre-multiplied sprint
+value. Missing fields now default to80; an explicit Minecraft setting is retained.
+Set Minecraft FOV to80 for the requested base view. UE smooths its sprint
+multiplier from1 to1.15, then converts to the stream's horizontal FOV. Camera,
+eye aim and reported feet share a grounded floor-gap correction; the physical
+collision capsule is not lowered into the floor. Avatar body yaw is presentation
+only and cannot change authoritative aim/movement.
+
+`land` feedback now plays the supporting block's existing fall sound even for
+creative mode and ordinary jumps (UE emits for a measured fall>=0.25 blocks).
+No player fall-damage sound or HP/inventory effect is added. The landing frame
+does not also generate a walking-step event; existing effectId deduplication and
+ACK/retry rules remain unchanged.
+
+Status optionally contains `particles` alongside `particlesReady`:
+
+```json
+{"particlesReady":true,"particles":{"reason":"ready","materialReady":true,"textureCount":10,"requested":64,"spawned":64,"rejected":0,"active":40,"instances":40,"peakInstances":64,"groups":1,"lastType":"break","lastBlock":"minecraft:stone","lastRequested":64,"lastSpawned":64,"lastReason":"ready"}}
+```
+
+Readiness checks the material's required texture/color parameters, instancing
+usage, plane, palette, usable textures and camera. It does not prove shader
+compilation or visible GPU output. `instances` and `peakInstances` count current
+and maximum registered CPU instances; these are not rendered-pixel counts.
+Requests, spawned and rejected totals saturate at2^53-1 and persist for the
+effects actor's lifetime. Last-request fields retain a short-lived break result
+after particles expire. Material/texture/camera failures, group/particle limits
+and instance-submission failures have bounded reason tokens and rate-limited
+UE log messages. No walking particles are emitted.
+
+The MOD validates this optional extension independently of the main status.
+Missing extensions identify an older receiver; invalid diagnostic metadata does
+not invalidate otherwise valid receiver readiness. `/uebridge status` displays
+the extension without asserting GPU visibility. The nested extension and bounded
+strings remain within the2048-byte UDP datagram limit.

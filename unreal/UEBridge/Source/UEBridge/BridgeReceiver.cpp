@@ -57,7 +57,8 @@ void ABridgeReceiver::BeginPlay() {
     }
     int32 ActualBuffer; Socket->SetReceiveBufferSize(256 * 1024, ActualBuffer);
     VanillaEffects=GetWorld()->SpawnActor<ABridgeVanillaEffects>();
-    UE_LOG(LogTemp, Display, TEXT("Bridge 0.7.0 listening on 127.0.0.1:%d"), Port);
+    if(IsValid(VanillaEffects)) Video->AddTickPrerequisiteActor(VanillaEffects);
+    UE_LOG(LogTemp, Display, TEXT("Bridge 0.8.0 listening on 127.0.0.1:%d"), Port);
     Video->Start(VideoPort);
     if (!TargetCharacter) UE_LOG(LogTemp, Warning, TEXT("Bridge: waiting for player Character; will retry every tick"));
     if (!ExplosionSystem) UE_LOG(LogTemp, Warning, TEXT("Bridge: ExplosionSystem is unset; Niagara will not play"));
@@ -123,6 +124,7 @@ void ABridgeReceiver::Tick(float DeltaSeconds) {
             VanillaEffects->Configure(SyncedWorld,TexturePalette,VanillaParticleMaterial);
             VanillaEffects->SetViewCamera(Bridge->BridgeCamera);
             VanillaEffects->AddTickPrerequisiteActor(Bridge);
+            VanillaEffects->AddTickPrerequisiteComponent(Bridge->GetCharacterMovement());
             if(UEControl) {
                 TArray<FBridgeVanillaEvent> Events;VanillaEffects->SampleCharacter(Bridge,DeltaSeconds,Events);
                 for(const auto& Effect:Events) QueueFeedback(Effect.Type,Effect.BlockId,Effect.Position,Effect.FallDistance);
@@ -237,14 +239,32 @@ void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
     Reply->SetBoolField(TEXT("cameraReady"), Camera && Camera->IsActive() && TargetCharacter->GetController());
     Reply->SetBoolField(TEXT("vfxReady"), IsValid(ExplosionSystem)); Reply->SetNumberField(TEXT("walls"), Walls);
     Reply->SetNumberField(TEXT("previewBlocks"), PreviewBlocks);
-    Reply->SetStringField(TEXT("build"),TEXT("0.7.0"));
+    Reply->SetStringField(TEXT("build"),TEXT("0.8.0"));
     Reply->SetStringField(TEXT("receiverId"),InstanceId);
     Reply->SetBoolField(TEXT("worldV1"),true); Reply->SetBoolField(TEXT("videoV1"),true);
     Reply->SetBoolField(TEXT("blockTexturesV1"),true); Reply->SetBoolField(TEXT("videoControlsV1"),true);
     Reply->SetBoolField(TEXT("blockActionsV1"),true);Reply->SetBoolField(TEXT("videoV2"),true);
     Reply->SetBoolField(TEXT("playerVisualsV1"),true);Reply->SetBoolField(TEXT("vanillaFeedbackV1"),true);
     Reply->SetBoolField(TEXT("skinReady"),IsValid(PlayerAppearance));
-    Reply->SetBoolField(TEXT("particlesReady"),IsValid(VanillaParticleMaterial));
+    const auto Dust=IsValid(VanillaEffects) ? VanillaEffects->GetDiagnostics() : FBridgeDustDiagnostics();
+    Reply->SetBoolField(TEXT("particlesReady"),IsValid(VanillaEffects) && Dust.Reason==TEXT("ready"));
+    auto ParticleStatus=MakeShared<FJsonObject>();
+    ParticleStatus->SetStringField(TEXT("reason"),IsValid(VanillaEffects) ? Dust.Reason : TEXT("missing_effects"));
+    ParticleStatus->SetBoolField(TEXT("materialReady"),Dust.MaterialReady);
+    ParticleStatus->SetNumberField(TEXT("textureCount"),Dust.TextureCount);
+    ParticleStatus->SetNumberField(TEXT("requested"),double(Dust.Requested));
+    ParticleStatus->SetNumberField(TEXT("spawned"),double(Dust.Spawned));
+    ParticleStatus->SetNumberField(TEXT("rejected"),double(Dust.Rejected));
+    ParticleStatus->SetNumberField(TEXT("active"),Dust.Active);
+    ParticleStatus->SetNumberField(TEXT("instances"),Dust.Instances);
+    ParticleStatus->SetNumberField(TEXT("peakInstances"),Dust.PeakInstances);
+    ParticleStatus->SetNumberField(TEXT("groups"),Dust.Groups);
+    ParticleStatus->SetStringField(TEXT("lastType"),Dust.LastType);
+    ParticleStatus->SetStringField(TEXT("lastBlock"),Dust.LastBlock);
+    ParticleStatus->SetNumberField(TEXT("lastRequested"),Dust.LastRequested);
+    ParticleStatus->SetNumberField(TEXT("lastSpawned"),Dust.LastSpawned);
+    ParticleStatus->SetStringField(TEXT("lastReason"),Dust.LastReason);
+    Reply->SetObjectField(TEXT("particles"),ParticleStatus);
     Reply->SetStringField(TEXT("lastAction"),LastAction);
     Reply->SetBoolField(TEXT("authorityV1"),Cast<ABridgeCharacter>(TargetCharacter)!=nullptr);
     Reply->SetBoolField(TEXT("ueControl"),UEControl);
@@ -311,7 +331,9 @@ int32 ABridgeReceiver::RemoveImportedBlocks(FVector Position,float Radius) {
 }
 void ABridgeReceiver::SendPose() {
     if(!TargetCharacter || !Peer.IsValid()) return;
-    FVector Feet=TargetCharacter->GetActorLocation(); Feet.Z-=TargetCharacter->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+    FVector Feet;
+    if(const auto* Bridge=Cast<ABridgeCharacter>(TargetCharacter)) Feet=Bridge->GetMinecraftFeetPosition();
+    else { Feet=TargetCharacter->GetActorLocation(); Feet.Z-=TargetCharacter->GetCapsuleComponent()->GetScaledCapsuleHalfHeight(); }
     const FVector Relative=(Feet-Anchor)/100;
     auto Reply=MakeShared<FJsonObject>(); Reply->SetNumberField(TEXT("v"),1); Reply->SetStringField(TEXT("kind"),TEXT("pose"));
     Reply->SetStringField(TEXT("session"),Session); Reply->SetStringField(TEXT("receiverId"),InstanceId);
@@ -338,7 +360,13 @@ void ABridgeReceiver::BlockAction(const FBridgePacket& P) {
         const bool Broken=SyncedWorld->BreakBlock(Block);LastAction=Broken ? TEXT("broken") : TEXT("no block");
         if(Broken && Known) {
             QueueFeedback(TEXT("break"),BrokenId,Center);
-            if(IsValid(VanillaEffects)) VanillaEffects->SpawnBreak(Center,BrokenId,BrokenTint);
+            if(IsValid(VanillaEffects)) {
+                // Process() runs before the frame's character configuration; resolve
+                // the current local palette/material even for the first break event.
+                VanillaEffects->Configure(SyncedWorld,TexturePalette,VanillaParticleMaterial);
+                VanillaEffects->SetViewCamera(Character->BridgeCamera);
+                VanillaEffects->SpawnBreak(Center,BrokenId,BrokenTint);
+            }
         }
         return;
     }

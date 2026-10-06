@@ -129,4 +129,25 @@ public class BridgeReliabilityTest {
             time.addAndGet(1_000_000_001L);assertFalse(mc.actionsSupported());assertFalse(mc.videoV2Supported());
         }
     }
+    @Test public void particleDiagnosticsAreOptionalValidatedAndExpireWithStatus() throws Exception {
+        AtomicLong time=new AtomicLong(1_000_000_000L);
+        try(DatagramSocket ue=new DatagramSocket(0,InetAddress.getLoopbackAddress());BridgeTransport mc=new BridgeTransport(ue.getLocalPort(),time::get)) {
+            ue.setSoTimeout(500);
+            for(int mode=0;mode<4;mode++) {
+                mc.input(mc.packet("input")); var input=receive(ue); var data=json(input);
+                JsonObject status=mode==0 ? new JsonObject() : ParticleDiagnosticsTest.status();
+                status.addProperty("v",1); status.addProperty("kind","status");
+                status.add("session",data.get("session")); status.add("seq",data.get("seq"));
+                status.addProperty("cameraReady",true); status.addProperty("vfxReady",false); status.addProperty("walls",0);
+                if(mode==2) status.getAsJsonObject("particles").addProperty("lastReason","bad\nreason");
+                reply(ue,input,status); pumpReplies(mc);
+                assertTrue("Optional diagnostic error must not lose UE readiness",mc.diagnostics().connected());
+                assertEquals(mode==1 || mode==3,mc.particleDiagnostics().supported());
+                if(mode==2) assertEquals("invalid-diagnostics",mc.particleDiagnostics().reason());
+            }
+            time.addAndGet(1_000_000_001L);
+            assertFalse(mc.particleDiagnostics().ready()); assertFalse(mc.particleDiagnostics().supported());
+            assertEquals("disconnected",mc.particleDiagnostics().reason());
+        }
+    }
 }

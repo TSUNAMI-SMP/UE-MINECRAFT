@@ -101,7 +101,7 @@ def import_minecraft_textures(filename):
     manifest = load_texture_manifest(filename)  # Validate all files before mutating UE assets.
     project = pathlib.Path(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()))
     if not (project / "UEBridge.uproject").is_file() or not (project / "Source/UEBridge/BridgeBlockPalette.h").is_file():
-        raise RuntimeError("Use the updated UEBridge 0.7.0 project only")
+        raise RuntimeError("Use the updated UEBridge project only")
     if unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world() is not None:
         raise RuntimeError("Stop Play before importing textures")
     if unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages():
@@ -109,13 +109,13 @@ def import_minecraft_textures(filename):
     receiver_class = getattr(unreal, "BridgeReceiver", None)
     palette_class = getattr(unreal, "BridgeBlockPalette", None)
     if receiver_class is None or palette_class is None:
-        raise RuntimeError("Build UEBridge 0.7.0 first")
+        raise RuntimeError("Build the updated UEBridge first")
     try:
         palette_defaults = unreal.get_default_object(palette_class)
         for field in ("particle_textures", "particle_tints", "particle_colors"):
             palette_defaults.get_editor_property(field)
     except Exception as error:
-        raise RuntimeError("Build UEBridge 0.7.0 and reopen the editor before importing particles") from error
+        raise RuntimeError("Build the updated UEBridge and reopen the editor before importing particles") from error
     actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
     receivers = [actor for actor in actors.get_all_level_actors() if isinstance(actor, receiver_class)]
     if len(receivers) != 1:

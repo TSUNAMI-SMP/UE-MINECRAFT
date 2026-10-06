@@ -45,12 +45,15 @@ public class BridgeFeedbackTransportTest {
     }
     @Test public void duplicateFeedbackIsAckedAgainButDeliveredOnce() throws Exception {
         try(DatagramSocket ue=new DatagramSocket(0,InetAddress.getLoopbackAddress());BridgeTransport mc=new BridgeTransport(ue.getLocalPort())) {
-            DatagramPacket destination=connect(ue,mc);JsonObject effect=effect(mc);
-            send(ue,destination,effect);pump(mc);
-            JsonObject ack=json(receive(ue));assertEquals("feedback_ack",ack.get("kind").getAsString());
-            assertEquals(effect.get("effectId"),ack.get("effectId"));assertEquals(effect,mc.pollFeedback());
-            send(ue,destination,effect);pump(mc);assertEquals(effect.get("effectId"),json(receive(ue)).get("effectId"));
-            assertNull(mc.pollFeedback());
+            DatagramPacket destination=connect(ue,mc);
+            for(String type:new String[]{"break","place","step","land"}) {
+                JsonObject effect=effect(mc); effect.addProperty("type",type); effect.addProperty("fallDistance",1.25);
+                send(ue,destination,effect);pump(mc);
+                JsonObject ack=json(receive(ue));assertEquals("feedback_ack",ack.get("kind").getAsString());
+                assertEquals(effect.get("effectId"),ack.get("effectId"));assertEquals(effect,mc.pollFeedback());
+                send(ue,destination,effect);pump(mc);assertEquals(effect.get("effectId"),json(receive(ue)).get("effectId"));
+                assertNull(mc.pollFeedback());
+            }
         }
     }
     @Test public void invalidStaleAndForeignEffectsCannotBeAckedOrPlayed() throws Exception {

@@ -30,8 +30,8 @@ public final class VanillaFeedback {
         if (blockId==null || !Registries.BLOCK.containsId(blockId)) return false;
         var state=Registries.BLOCK.get(blockId).getDefaultState();
         if (state.isAir()) return false;
-        // Vanilla has no extra thud on normal jumps, or fall damage sounds in creative mode.
-        if (effect.type()==VanillaFeedbackData.Type.LAND && (effect.fallDistance()<=3 || client.player.isCreative())) return true;
+        // UE reports one transition to grounded. Normal jumps and creative landings use the
+        // contacted block's fall sound too; never play an entity fall-damage sound here.
         BlockSoundGroup group=state.getSoundGroup();
         SoundEvent sound=switch(effect.type()) {
             case BREAK -> group.getBreakSound(); case PLACE -> group.getPlaceSound();

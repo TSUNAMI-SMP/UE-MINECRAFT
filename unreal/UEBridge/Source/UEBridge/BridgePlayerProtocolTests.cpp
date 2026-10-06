@@ -21,7 +21,7 @@ bool FBridgePlayerVisualProtocolTest::RunTest(const FString& Parameters) {
     TestEqual(TEXT("Legacy first-person default"),Packet.Perspective,0);
     TestEqual(TEXT("Legacy all outer layers"),Packet.SkinLayers,127);
     TestEqual(TEXT("Legacy equipped hand"),Packet.EquipProgress,1.0);
-    TestEqual(TEXT("Legacy camera field of view"),Packet.CameraFov,70.0);
+    TestEqual(TEXT("Missing camera field uses the bridge's 80 degree base"),Packet.CameraFov,80.0);
     TestFalse(TEXT("Legacy classic arms"),Packet.SlimArms);
 
     Json->SetNumberField(TEXT("perspective"),2);

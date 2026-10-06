@@ -69,7 +69,7 @@ def import_minecraft_player(filename):
     manifest = load_player_manifest(filename)
     project = pathlib.Path(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()))
     if not (project / "UEBridge.uproject").is_file() or not (project / "Source/UEBridge/BridgePlayerAppearance.h").is_file():
-        raise RuntimeError("Use the built UEBridge 0.7.0 project")
+        raise RuntimeError("Use the built, updated UEBridge project")
     if unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world() is not None:
         raise RuntimeError("Stop Play before importing your player skin")
     if unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages():
@@ -77,7 +77,7 @@ def import_minecraft_player(filename):
     appearance_class = getattr(unreal, "BridgePlayerAppearance", None)
     receiver_class = getattr(unreal, "BridgeReceiver", None)
     if appearance_class is None or receiver_class is None:
-        raise RuntimeError("Build UEBridge 0.7.0 before importing your player skin")
+        raise RuntimeError("Build the updated UEBridge before importing your player skin")
     actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
     receivers = [actor for actor in actors.get_all_level_actors() if isinstance(actor, receiver_class)]
     if len(receivers) != 1:

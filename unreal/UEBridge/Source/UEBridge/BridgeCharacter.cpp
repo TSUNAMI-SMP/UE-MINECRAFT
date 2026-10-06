@@ -1,4 +1,5 @@
 #include "BridgeCharacter.h"
+#include "BridgeCharacterMath.h"
 #include "Camera/CameraComponent.h"
 #include "Camera/CameraTypes.h"
 #include "Components/CapsuleComponent.h"
@@ -14,17 +15,20 @@
 #include "ProceduralMeshComponent.h"
 
 namespace {
+FVector PosePosition(const BridgeCharacterMath::Pose& Pose) {return FVector(Pose.Position.X,Pose.Position.Y,Pose.Position.Z);}
+FQuat PoseRotation(const BridgeCharacterMath::Pose& Pose) {return FQuat(Pose.Rotation.X,Pose.Rotation.Y,Pose.Rotation.Z,Pose.Rotation.W).GetNormalized();}
 // Minecraft cuboid net: right/front/left/back across the middle, top/bottom above.
 // Model scale is the vanilla 1/16 block = 6.25 cm; UVs stay on the 64x64 skin atlas.
 void SkinCuboid(UProceduralMeshComponent* Part,float PixelWidth,float PixelHeight,float PixelDepth,
-    float TextureU,float TextureV,float Inflate,bool AbovePivot=false) {
+    float TextureU,float TextureV,float Inflate,bool AbovePivot=false,float PivotTop=0,float LateralCenter=0) {
     const float W=PixelWidth*6.25f+Inflate*2,H=PixelHeight*6.25f+Inflate*2,D=PixelDepth*6.25f+Inflate*2;
-    const float Top=AbovePivot ? PixelHeight*6.25f+Inflate : Inflate;
+    const float Top=(AbovePivot ? PixelHeight*6.25f+Inflate : Inflate)+PivotTop;
     const float Bottom=Top-H;
     TArray<FVector> Vertices,Normals;TArray<int32> Indices;TArray<FVector2D> UV;
     TArray<FLinearColor> Colors;TArray<FProcMeshTangent> Tangents;
     auto Face=[&](FVector A,FVector B,FVector C,FVector E,FVector Normal,float U,float V,float UW,float VH) {
-        const int32 First=Vertices.Num();Vertices.Append({A,B,C,E});
+        const FVector Center(0,LateralCenter,0);
+        const int32 First=Vertices.Num();Vertices.Append({A+Center,B+Center,C+Center,E+Center});
         UV.Append({FVector2D(U/64.f,V/64.f),FVector2D((U+UW)/64.f,V/64.f),FVector2D((U+UW)/64.f,(V+VH)/64.f),FVector2D(U/64.f,(V+VH)/64.f)});
         for(int32 I=0;I<4;++I) {Normals.Add(Normal);Colors.Add(FLinearColor::White);Tangents.Add(FProcMeshTangent((B-A).GetSafeNormal(),false));}
         if(FVector::DotProduct(FVector::CrossProduct(B-A,C-A),Normal)>0) Indices.Append({First,First+1,First+2,First,First+2,First+3});
@@ -48,7 +52,7 @@ ABridgeCharacter::ABridgeCharacter() {
     BridgeCamera->SetupAttachment(GetCapsuleComponent());
     BridgeCamera->SetRelativeLocation(FVector(0, 0, 72)); // MC eye = 162 cm above feet.
     BridgeCamera->bUsePawnControlRotation = true;
-    SetMinecraftFov(70.f);
+    SetMinecraftFov(80.f);
     bUseControllerRotationYaw = true;
     GetCharacterMovement()->GravityScale = 0;
     PrimaryActorTick.bCanEverTick=true;PrimaryActorTick.TickGroup=TG_PostPhysics;
@@ -67,6 +71,7 @@ ABridgeCharacter::ABridgeCharacter() {
     GetCharacterMovement()->SetCrouchedHalfHeight(75);
     GetCharacterMovement()->GetNavAgentPropertiesRef().bCanCrouch=true;
     GetCharacterMovement()->DefaultLandMovementMode = MOVE_None;
+    BaseEyeHeight=72.f;CrouchedEyeHeight=52.f;
     static ConstructorHelpers::FObjectFinder<UStaticMesh> Cube(TEXT("/Engine/BasicShapes/Cube.Cube"));
     auto Prepare=[&](UStaticMeshComponent* VisualMesh,USceneComponent* Parent) {
         VisualMesh->SetupAttachment(Parent);if(Cube.Succeeded()) VisualMesh->SetStaticMesh(Cube.Object);
@@ -104,13 +109,13 @@ void ABridgeCharacter::ApplyMinecraftPose(double BodyHeight, double EyeHeight, b
     const float HalfHeight = float(BodyHeight * 50);
     GetCapsuleComponent()->SetCapsuleSize(FMath::Min(30.f,HalfHeight),HalfHeight,false);
     BridgeCamera->SetRelativeLocation(FVector(0,0,EyeHeight*100-HalfHeight));
-    BaseEyeHeight = float(EyeHeight*100); BridgeSneaking = Sneak; bIsCrouched = Sneak;
+    BaseEyeHeight = float(EyeHeight*100)-HalfHeight; BridgeSneaking = Sneak; bIsCrouched = Sneak;
     RemoteEyeHeight=float(EyeHeight*100);
 }
 
 void ABridgeCharacter::SetAuthorityEnabled(bool Enabled) {
     if(UEAuthority==Enabled) return;
-    UEAuthority=Enabled; PreviousJump=false; StopJumping();
+    UEAuthority=Enabled; PreviousJump=false; SprintRequested=false;BodyYawInitialized=false;StopJumping();
     auto* Movement=GetCharacterMovement(); Movement->StopMovementImmediately();
     // Landing uses DefaultLandMovementMode, not just the current movement mode.
     Movement->DefaultLandMovementMode=Enabled ? MOVE_Walking : MOVE_None;
@@ -122,7 +127,8 @@ void ABridgeCharacter::SetAuthorityEnabled(bool Enabled) {
 void ABridgeCharacter::ApplyUEInput(float Forward,float Right,bool JumpHeld,bool Sneak,bool Sprint) {
     if(!UEAuthority) return;
     if(Sneak) Crouch(); else UnCrouch();
-    GetCharacterMovement()->MaxWalkSpeed=Sprint && !Sneak && Forward>0 ? 561.2f : 431.7f;
+    SprintRequested=Sprint && !Sneak && Forward>0;
+    GetCharacterMovement()->MaxWalkSpeed=SprintRequested ? 561.2f : 431.7f;
     const FRotator Heading(0,GetControlRotation().Yaw,0);
     FVector Direction=Heading.Vector()*Forward + FRotationMatrix(Heading).GetUnitAxis(EAxis::Y)*Right;
     const float Magnitude=FMath::Min(1.f,Direction.Size());
@@ -130,16 +136,53 @@ void ABridgeCharacter::ApplyUEInput(float Forward,float Right,bool JumpHeld,bool
     if(JumpHeld && (!PreviousJump || GetCharacterMovement()->IsMovingOnGround())) Jump();
     if(!JumpHeld) StopJumping(); PreviousJump=JumpHeld;
 }
+bool ABridgeCharacter::CanJumpInternal_Implementation() const {
+    // ACharacter rejects bIsCrouched and CanAttemptJump rejects bWantsToCrouch.
+    // MC permits a ground jump while retaining the shorter capsule. Remove only
+    // those crouch gates by checking IsJumpAllowed and the ground mode directly:
+    // movement still owns jump count, plane constraints and all ceiling sweeps.
+    const auto* Movement=GetCharacterMovement();
+    if(UEAuthority && bIsCrouched && JumpMaxCount==1 && GetJumpMaxHoldTime()<=0.f)
+        return Movement && Movement->IsJumpAllowed() && Movement->IsMovingOnGround() && JumpCurrentCount<JumpMaxCount;
+    return Super::CanJumpInternal_Implementation();
+}
+bool ABridgeCharacter::IsAuthoritySprinting() const {
+    const FVector Forward=FRotator(0,GetControlRotation().Yaw,0).Vector();
+    return UEAuthority && SprintRequested && !bIsCrouched && FVector::DotProduct(GetVelocity(),Forward)>5.f;
+}
+float ABridgeCharacter::GetFloorGapCm() const {
+    const auto* Movement=GetCharacterMovement();
+    if(!UEAuthority || !Movement || !Movement->IsMovingOnGround() || !Movement->CurrentFloor.IsWalkableFloor()) return 0.f;
+    // CharacterMovement's 1.9..2.4 cm floor suspension is collision clearance,
+    // not Minecraft eye height. Do not resize/move the physical capsule.
+    return FMath::Clamp(Movement->CurrentFloor.GetDistanceToFloor(),0.f,3.f);
+}
+FVector ABridgeCharacter::GetMinecraftFeetPosition() const {
+    return GetActorLocation()-FVector(0,0,GetCapsuleComponent()->GetScaledCapsuleHalfHeight()+GetFloorGapCm());
+}
+float ABridgeCharacter::GetHandSwing() const {
+    return PlayerSwing>0.f ? PlayerSwing : (SwingRemaining>0.f ? 1.f-SwingRemaining/float(BridgeCharacterMath::SwingSeconds) : 0.f);
+}
 void ABridgeCharacter::Tick(float DeltaSeconds) {
     Super::Tick(DeltaSeconds);
     if(UEAuthority) {
         BridgeSneaking=bIsCrouched;
-        const float Eye=bIsCrouched ? 127.f : 162.f;
-        BridgeCamera->SetRelativeLocation(FVector(0,0,Eye-GetCapsuleComponent()->GetScaledCapsuleHalfHeight()));
     }
-    BobPhase+=DeltaSeconds*FMath::Min(GetVelocity().Size2D()/50.f,12.f);
-    const float Bob=UEAuthority && GetCharacterMovement()->IsMovingOnGround() ? FMath::Sin(BobPhase)*FMath::Min(1.f,GetVelocity().Size2D()/432.f) : 0;
+    BridgeEyeHeightCm=UEAuthority ? float(bIsCrouched ? BridgeCharacterMath::CrouchedEyeCm : BridgeCharacterMath::StandingEyeCm) : RemoteEyeHeight;
+    BridgeFloorGapCm=GetFloorGapCm();BaseEyeHeight=BridgeEyeHeightCm-GetCapsuleComponent()->GetScaledCapsuleHalfHeight()-BridgeFloorGapCm;
+    BridgeSprinting=IsAuthoritySprinting();
+    FovSprintMultiplier=float(BridgeCharacterMath::SprintFovMultiplier(FovSprintMultiplier,BridgeSprinting,DeltaSeconds));
+    BridgeVerticalFov=MinecraftBaseFov*FovSprintMultiplier;
+    BridgeCamera->SetFieldOfView(float(BridgeCharacterMath::HorizontalFov(BridgeVerticalFov,BridgeCamera->AspectRatio)));
     SwingRemaining=FMath::Max(0.f,SwingRemaining-DeltaSeconds);
+    const float ViewYaw=GetControlRotation().Yaw;
+    if(!BodyYawInitialized) {BridgeBodyYaw=ViewYaw;BodyYawInitialized=true;}
+    BridgeBodyYaw=float(BridgeCharacterMath::BodyYaw(BridgeBodyYaw,ViewYaw,GetVelocity().Rotation().Yaw,
+        GetVelocity().Size2D(),GetHandSwing()>0.f,PlayerUsingItem && PlayerUseAction==TEXT("block"),DeltaSeconds));
+    LimbAmplitude=float(BridgeCharacterMath::Smooth(LimbAmplitude,FMath::Min(1.f,GetVelocity().Size2D()/500.f),8.f,DeltaSeconds));
+    const bool Backwards=FVector::DotProduct(GetVelocity(),FRotator(0,BridgeBodyYaw,0).Vector())<0.f;
+    BobPhase+=DeltaSeconds*20.f*.6662f*LimbAmplitude*(Backwards ? -1.f : 1.f);
+    const float Bob=UEAuthority && GetCharacterMovement()->IsMovingOnGround() ? FMath::Sin(BobPhase)*FMath::Min(1.f,GetVelocity().Size2D()/432.f) : 0;
     UpdatePlayerCamera();UpdateAvatar(Bob);
     FIntVector Block;FVector Normal;
     FVector EyePosition;FRotator AimRotation;GetEyeAim(EyePosition,AimRotation);
@@ -175,8 +218,6 @@ void ABridgeCharacter::ConfigureVisuals(UMaterialInterface* Material,UBridgeBloc
             const FColor ItemColor(Block.IsEmpty() ? 200 : ((Color>>16)&255),Block.IsEmpty() ? 180 : ((Color>>8)&255),Block.IsEmpty() ? 110 : (Color&255));
             Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(ItemColor));HeldMesh->SetMaterial(0,Dynamic);
         }
-        HeldMesh->SetRelativeScale3D(Block.IsEmpty() ? FVector(.025,.035,.20) : FVector(.20));
-        HeldMesh->SetRelativeRotation(FRotator(0,25,-15));
     }
     VisualsConfigured=true;VisualMaterial=Material;VisualPalette=Palette;VisualItem=Item;VisualBlock=Block;VisualColor=Color;
 }
@@ -202,15 +243,16 @@ void ABridgeCharacter::ApplyPlayerVisuals(int32 Perspective,float SwingProgress,
 }
 
 void ABridgeCharacter::GetEyeAim(FVector& EyePosition,FRotator& AimRotation) const {
-    const float EyeHeight=UEAuthority ? (bIsCrouched ? 127.f : 162.f) : RemoteEyeHeight;
-    EyePosition=GetActorLocation()+FVector(0,0,EyeHeight-GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+    const float EyeHeight=UEAuthority ? float(bIsCrouched ? BridgeCharacterMath::CrouchedEyeCm : BridgeCharacterMath::StandingEyeCm) : RemoteEyeHeight;
+    EyePosition=GetMinecraftFeetPosition()+FVector(0,0,EyeHeight);
     AimRotation=GetControlRotation();
 }
 
 void ABridgeCharacter::SetMinecraftFov(float VerticalFov) {
     BridgeCamera->AspectRatio=16.f/9.f;
-    const float HalfVertical=FMath::DegreesToRadians(FMath::Clamp(VerticalFov,30.f,110.f)*.5f);
-    BridgeCamera->SetFieldOfView(FMath::RadiansToDegrees(2.f*FMath::Atan(FMath::Tan(HalfVertical)*BridgeCamera->AspectRatio)));
+    MinecraftBaseFov=FMath::IsFinite(VerticalFov) ? FMath::Clamp(VerticalFov,30.f,110.f) : 80.f;
+    BridgeVerticalFov=MinecraftBaseFov*FovSprintMultiplier;
+    BridgeCamera->SetFieldOfView(float(BridgeCharacterMath::HorizontalFov(BridgeVerticalFov,BridgeCamera->AspectRatio)));
 }
 
 void ABridgeCharacter::UpdatePlayerCamera() {
@@ -235,10 +277,14 @@ void ABridgeCharacter::BuildAvatarGeometry() {
     const float Depths[]={8,4,4,4,4,4};
     const FVector2D BaseUV[]={FVector2D(0,0),FVector2D(16,16),FVector2D(40,16),FVector2D(32,48),FVector2D(0,16),FVector2D(16,48)};
     const FVector2D LayerUV[]={FVector2D(32,0),FVector2D(16,32),FVector2D(40,32),FVector2D(48,48),FVector2D(0,32),FVector2D(0,48)};
-    const FVector Positions[]={FVector(0,0,150),FVector(0,0,150),FVector(0,25+ArmWidth*3.125f,150),FVector(0,-25-ArmWidth*3.125f,150),FVector(0,12.5,75),FVector(0,-12.5,75)};
+    const FVector Positions[]={FVector(0,0,150),FVector(0,0,150),FVector(0,31.25,137.5),FVector(0,-31.25,137.5),FVector(0,12.5,75),FVector(0,-12.5,75)};
     for(int32 I=0;I<6;++I) {
-        SkinCuboid(AvatarParts[I],Widths[I],Heights[I],Depths[I],BaseUV[I].X,BaseUV[I].Y,0,I==0);
-        SkinCuboid(AvatarLayers[I],Widths[I],Heights[I],Depths[I],LayerUV[I].X,LayerUV[I].Y,I==0 ? 3.125f : 1.5625f,I==0);
+        const bool ArmPart=I==2 || I==3;
+        const float ArmSide=I==2 ? 1.f : -1.f;
+        const float Center=ArmPart ? ArmSide*(PlayerSlim ? 3.125f : 6.25f) : 0.f;
+        const float PivotTop=ArmPart ? 12.5f : 0.f;
+        SkinCuboid(AvatarParts[I],Widths[I],Heights[I],Depths[I],BaseUV[I].X,BaseUV[I].Y,0,I==0,PivotTop,Center);
+        SkinCuboid(AvatarLayers[I],Widths[I],Heights[I],Depths[I],LayerUV[I].X,LayerUV[I].Y,I==0 ? 3.125f : 1.5625f,I==0,PivotTop,Center);
         AvatarParts[I]->SetRelativeLocation(Positions[I]);
         if(IsValid(PlayerAppearance) && PlayerAppearance->SkinMaterial) {
             AvatarParts[I]->SetMaterial(0,PlayerAppearance->SkinMaterial);AvatarLayers[I]->SetMaterial(0,PlayerAppearance->SkinMaterial);
@@ -258,34 +304,33 @@ void ABridgeCharacter::UpdateAvatar(float Bob) {
     const bool HasSkin=IsValid(PlayerAppearance) && IsValid(PlayerAppearance->SkinMaterial);
     const bool FirstPerson=CameraPerspective==0 && (UEAuthority || HasPlayerVisuals);
     const bool ThirdPerson=CameraPerspective!=0 && (UEAuthority || HasPlayerVisuals) && HasSkin;
-    AvatarRoot->SetRelativeLocation(FVector(0,0,-GetCapsuleComponent()->GetScaledCapsuleHalfHeight()));
+    AvatarRoot->SetRelativeLocation(FVector(0,0,-GetCapsuleComponent()->GetScaledCapsuleHalfHeight()-GetFloorGapCm()+.09375f));
+    AvatarRoot->SetRelativeRotation(FRotator(0,FMath::FindDeltaAngleDegrees(GetActorRotation().Yaw,BridgeBodyYaw),0));
     AvatarRoot->SetRelativeScale3D(FVector(.9375f)); // PlayerEntityRenderer.scale in vanilla.
     AvatarRoot->SetVisibility(ThirdPerson,true);
     const int32 LayerMasks[]={64,2,8,4,32,16};
     for(int32 I=0;I<6;++I) AvatarLayers[I]->SetVisibility(ThirdPerson && (PlayerSkinLayers&LayerMasks[I])!=0);
-    const float ArmWidth=PlayerSlim ? 3.f : 4.f;
     // Vanilla sneaking shifts the head/body/shoulders down and hips back; capsule collision
     // remains entirely controlled by CharacterMovement, not these presentation transforms.
     AvatarParts[0]->SetRelativeLocation(FVector(0,0,bIsCrouched ? 123.75f : 150.f));
     AvatarParts[1]->SetRelativeLocation(FVector(0,0,bIsCrouched ? 130.f : 150.f));
-    AvatarParts[2]->SetRelativeLocation(FVector(0,25+ArmWidth*3.125f,bIsCrouched ? 117.5f : 150.f));
-    AvatarParts[3]->SetRelativeLocation(FVector(0,-25-ArmWidth*3.125f,bIsCrouched ? 117.5f : 150.f));
+    AvatarParts[2]->SetRelativeLocation(FVector(0,31.25,bIsCrouched ? 105.f : 137.5f));
+    AvatarParts[3]->SetRelativeLocation(FVector(0,-31.25,bIsCrouched ? 105.f : 137.5f));
     AvatarParts[4]->SetRelativeLocation(FVector(bIsCrouched ? -25.f : 0,12.5,bIsCrouched ? 73.75f : 75.f));
     AvatarParts[5]->SetRelativeLocation(FVector(bIsCrouched ? -25.f : 0,-12.5,bIsCrouched ? 73.75f : 75.f));
-    const float Gait=FMath::Sin(BobPhase)*FMath::Min(1.f,GetVelocity().Size2D()/432.f)*35.f;
-    AvatarParts[0]->SetRelativeRotation(FRotator(GetControlRotation().Pitch,0,0));
+    const float Gait=FMath::Cos(BobPhase)*LimbAmplitude*FMath::RadiansToDegrees(1.f);
+    AvatarParts[0]->SetRelativeRotation(FRotator(GetControlRotation().Pitch,FMath::FindDeltaAngleDegrees(BridgeBodyYaw,GetControlRotation().Yaw),0));
     AvatarParts[1]->SetRelativeRotation(FRotator(bIsCrouched ? -25.f : 0,0,0));
     AvatarParts[2]->SetRelativeRotation(FRotator(Gait+(bIsCrouched ? -23.f : 0),0,0));AvatarParts[3]->SetRelativeRotation(FRotator(-Gait+(bIsCrouched ? -23.f : 0),0,0));
-    AvatarParts[4]->SetRelativeRotation(FRotator(-Gait,0,0));AvatarParts[5]->SetRelativeRotation(FRotator(Gait,0,0));
-    const float NativeSwing=PlayerSwing>0 ? PlayerSwing : (SwingRemaining>0 ? 1.f-SwingRemaining/.22f : 0);
-    const float SwingSine=FMath::Sin(FMath::Sqrt(NativeSwing)*PI),SwingDouble=FMath::Sin(NativeSwing*PI*2.f);
+    AvatarParts[4]->SetRelativeRotation(FRotator(-Gait*1.4f,0,0));AvatarParts[5]->SetRelativeRotation(FRotator(Gait*1.4f,0,0));
+    const float NativeSwing=GetHandSwing();
     const float Side=PlayerLeftHanded ? -1.f : 1.f;
-    const float EquipDrop=(1.f-PlayerEquip)*35.f;
-    // Shoulder stays below the frame; the local -Z cuboid points up/forward to the hand.
-    FVector ArmPosition(15+SwingSine*10,Side*(40-SwingDouble*7),-67-EquipDrop+Bob+SwingSine*20);
-    FRotator ArmRotation(135-SwingSine*40,Side*(-15+SwingSine*25),Side*(-8-SwingDouble*15));
-    FVector ItemPosition(65-SwingSine*18,Side*(29-SwingDouble*8),-23-EquipDrop+Bob);
-    FRotator ItemRotation(-5-SwingSine*45,Side*(30-SwingSine*35),Side*(-12-SwingSine*20));
+    const auto ArmPose=BridgeCharacterMath::FirstPersonArm(NativeSwing,PlayerEquip,PlayerLeftHanded,PlayerSlim);
+    const auto ItemPose=BridgeCharacterMath::FirstPersonBlock(NativeSwing,PlayerEquip,PlayerLeftHanded);
+    FVector ArmPosition=PosePosition(ArmPose)+FVector(0,0,Bob);
+    FQuat ArmRotation=PoseRotation(ArmPose);
+    FVector ItemPosition=PosePosition(ItemPose)+FVector(0,0,Bob);
+    FRotator ItemRotation=PoseRotation(ItemPose).Rotator();
     if(PlayerUsingItem) {
         if(PlayerUseAction==TEXT("eat") || PlayerUseAction==TEXT("drink")) {
             const float Shake=FMath::Sin(PlayerUseProgress*PI*24.f)*2.f;
@@ -296,19 +341,27 @@ void ABridgeCharacter::UpdateAvatar(float Bob) {
             ArmPosition+=FVector(-6,-Side*17,6);ItemPosition+=FVector(-10,-Side*18,6);ItemRotation=FRotator(-35,Side*75,Side*20);
         }
     }
-    SkinArm->SetVisibility(FirstPerson && HasSkin);SkinSleeve->SetVisibility(FirstPerson && HasSkin && (PlayerSkinLayers&(PlayerLeftHanded ? 4 : 8))!=0);
+    // Vanilla's basic held-item path renders the item model, while its empty-hand
+    // path renders the skin arm. Keep the two transforms/visibility paths separate.
+    const bool EmptyHand=VisualItem.IsEmpty();
+    SkinArm->SetVisibility(FirstPerson && HasSkin && EmptyHand);SkinSleeve->SetVisibility(FirstPerson && HasSkin && EmptyHand && (PlayerSkinLayers&(PlayerLeftHanded ? 4 : 8))!=0);
     SkinArm->SetRelativeLocationAndRotation(ArmPosition,ArmRotation);
-    Sleeve->SetVisibility(FirstPerson && !HasSkin);Hand->SetVisibility(FirstPerson && !HasSkin);
-    Sleeve->SetRelativeLocation(FVector(32,Side*26,-30-EquipDrop+Bob));
-    Hand->SetRelativeLocation(FVector(47,Side*22,-20-EquipDrop+Bob));
+    Sleeve->SetVisibility(FirstPerson && !HasSkin && EmptyHand);Hand->SetVisibility(FirstPerson && !HasSkin && EmptyHand);
+    const float ArmWidthCm=PlayerSlim ? 18.75f : 25.f;
+    Sleeve->SetRelativeScale3D(FVector(.25f,ArmWidthCm/100.f,.45f));Hand->SetRelativeScale3D(FVector(.25f,ArmWidthCm/100.f,.30f));
+    Sleeve->SetRelativeLocationAndRotation(ArmPosition+ArmRotation.RotateVector(FVector(0,0,-22.5f)),ArmRotation);
+    Hand->SetRelativeLocationAndRotation(ArmPosition+ArmRotation.RotateVector(FVector(0,0,-60.f)),ArmRotation);
     HeldMesh->SetVisibility((FirstPerson || ThirdPerson) && !VisualItem.IsEmpty());
     if(ThirdPerson) {
         const int32 ArmIndex=PlayerLeftHanded ? 3 : 2;
         HeldMesh->AttachToComponent(AvatarParts[ArmIndex],FAttachmentTransformRules::KeepRelativeTransform);
-        HeldMesh->SetRelativeLocationAndRotation(FVector(10,0,-58),FRotator(0,0,0));
-        if(NativeSwing>0) AvatarParts[ArmIndex]->AddLocalRotation(FRotator(-SwingSine*75,0,0));
+        HeldMesh->SetRelativeScale3D(VisualBlock.IsEmpty() ? FVector(.025,.035,.20) : FVector(BridgeCharacterMath::ThirdPersonBlockScale));
+        const auto GripPose=BridgeCharacterMath::ThirdPersonBlock(PlayerLeftHanded);
+        HeldMesh->SetRelativeLocationAndRotation(PosePosition(GripPose),PoseRotation(GripPose));
+        if(NativeSwing>0) AvatarParts[ArmIndex]->AddLocalRotation(FRotator(float(BridgeCharacterMath::AttackPitch(NativeSwing,GetControlRotation().Pitch)),0,0));
     } else {
         HeldMesh->AttachToComponent(BridgeCamera,FAttachmentTransformRules::KeepRelativeTransform);
+        HeldMesh->SetRelativeScale3D(VisualBlock.IsEmpty() ? FVector(.025,.035,.20) : FVector(BridgeCharacterMath::FirstPersonBlockScale));
         HeldMesh->SetRelativeLocationAndRotation(ItemPosition,ItemRotation);
     }
 }

@@ -12,6 +12,15 @@ struct FBridgeVanillaEvent {
     float FallDistance=0;
 };
 
+/** Bounded counters since Play; these report CPU submission, not verified GPU visibility. */
+struct FBridgeDustDiagnostics {
+    bool MaterialReady=false;
+    int32 TextureCount=0, Active=0, Instances=0, PeakInstances=0, Groups=0;
+    uint64 Requested=0, Spawned=0, Rejected=0;
+    FString Reason=TEXT("missing_material"), LastType, LastBlock, LastReason=TEXT("none");
+    int32 LastRequested=0, LastSpawned=0;
+};
+
 /** Terrain-textured dust, with Minecraft's 20 Hz lifetime/drag and UE collision. */
 UCLASS()
 class UEBRIDGE_API ABridgeVanillaEffects : public AActor {
@@ -26,6 +35,7 @@ public:
     void ResetMovement();
     void SpawnBreak(const FVector& Center,const FString& BlockId,FColor Tint);
     int32 ParticleCount() const { return Particles.Num(); }
+    FBridgeDustDiagnostics GetDiagnostics() const;
 private:
     struct FDustParticle {
         FString Group;
@@ -45,8 +55,14 @@ private:
     bool HaveMovementSample=false, WasGrounded=false;
     FVector PreviousFeet=FVector::ZeroVector;
     float WalkDistance=0, FallPeak=0, SprintClock=0, PhysicsClock=0;
+    FBridgeDustDiagnostics Diagnostics;
+    bool Configured=false;
+    double LastFailureLog=-1;
+    bool ResolveTexture(const FString& BlockId,FColor& Tint,class UTexture*& Texture) const;
+    void BeginRequest(const FString& Type,const FString& BlockId,int32 Count);
+    void Reject(int32 Count,const FString& Reason);
     FString FindGroup(const FString& BlockId,FColor Tint);
-    void AddParticle(const FVector& Position,const FVector& Velocity,const FString& Group);
+    bool AddParticle(const FVector& Position,const FVector& Velocity,const FString& Group);
     void SpawnSprint(const FVector& Feet,const FVector& Velocity,const FString& BlockId,FColor Tint);
     void ClearParticles();
 };

@@ -24,7 +24,7 @@ struct FBridgePacket {
     int32 HeldColor=0xffffff;
     bool Sprint=false;
     int32 Perspective=0, SkinLayers=127;
-    double SwingProgress=0, EquipProgress=1, UseProgress=0, CameraFov=70;
+    double SwingProgress=0, EquipProgress=1, UseProgress=0, CameraFov=80;
     bool UsingItem=false, LeftHanded=false, SlimArms=false;
     FString UseAction=TEXT("none");
     FVector MinecraftOrigin=FVector::ZeroVector;

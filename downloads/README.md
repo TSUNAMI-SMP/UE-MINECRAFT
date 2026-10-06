@@ -1,6 +1,22 @@
 # ダウンロード
 
-## 最新版 0.7.0
+## 更新版 0.8.0
+
+[MOD 0.8.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.8.0/downloads/minecraft-ue-bridge-0.8.0.jar)
+
+[UE更新ZIP 0.8.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.8.0/downloads/UEBridge-update-0.8.0.zip)
+
+[ソース＋MOD一式ZIP 0.8.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.8.0/downloads/UE-Minecraft-MVP-0.8.0.zip)
+
+粒子診断・素材設定、しゃがみジャンプ、着地音、腕・持ち物・胴体、目線とダッシュFOVを改善。
+設定済み前進キーの二度押しダッシュを追加。[導入と実機チェック](../docs/UPGRADE_0.8.0.md)。
+配布ブランチは `ue-bridge-0.8.0`。従来のmainと旧版配布物は保持しています。
+MODとUEを両方更新し、UEを閉じて再ビルドした後、粒子素材を再設定してください。
+UE更新ZIPはContent/Config/Saved/uprojectを含みません。Sourceは削除せず、使用中プロジェクトへ統合コピーします。
+0.7.1の修正を含むため、旧パッチの追加適用は不要です。UE5.8のビルド・描画はクラウドでは未検証です。
+MODビルド、Java78件/Python27件、独立C++計算チェック35項目成功。粒子の実機不表示の原因は診断値で確認します。
+
+## 過去版 0.7.0
 
 **UEビルドには[修正パッチ0.7.1](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-build-fix-0.7.1.zip)も適用してください。**
 粒子コードのC2668を修正し、GPU終了処理の旧APIを更新。MODは0.7.0のまま。[適用手順](../docs/BUILD_FIX_0.7.1.md)。

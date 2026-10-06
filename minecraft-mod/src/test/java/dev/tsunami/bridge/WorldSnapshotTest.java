@@ -81,4 +81,20 @@ public class WorldSnapshotTest {
         p.addProperty("seq",9007199254740991L);p.addProperty("x",0);p.addProperty("y",0);p.addProperty("z",0);
         assertTrue(p.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length<=2048);
     }
+    @Test public void physicsOwnersPreservePartialBlockIdentityWithinPacketBudget() {
+        var shape=new WorldSnapshot.Shape(-99999.123456789,99999.123456789,99999.123456789,0xffffff,4,4,4,"minecraft:"+"a".repeat(118),true,-30000000,30000000,-30000000);
+        var p=WorldSnapshot.encode(new WorldSnapshot.Cell(-3750000,3750000,-3750000),Collections.nCopies(4,shape),true,true,true).getFirst();
+        var row=p.getAsJsonArray("blocks").get(0).getAsJsonArray();assertEquals(12,row.size());assertEquals(-30000000,row.get(9).getAsInt());
+        p.addProperty("v",1);p.addProperty("kind","event");p.addProperty("session",UUID.randomUUID().toString());
+        p.addProperty("eventId",UUID.randomUUID().toString());p.addProperty("snapshotSeq",9007199254740991L);p.addProperty("seq",9007199254740991L);
+        p.addProperty("x",0);p.addProperty("y",0);p.addProperty("z",0);
+        assertTrue(p.toString().getBytes(StandardCharsets.UTF_8).length<=2048);
+    }
+    @Test public void ownerIdentityChangesFingerprintAndRejectsImpossibleCoordinates() {
+        var a=new WorldSnapshot.Shape(0,0,0,0,1,1,1,"minecraft:stone",true,0,0,0);
+        var b=new WorldSnapshot.Shape(0,0,0,0,1,1,1,"minecraft:stone",true,1,0,0);
+        assertNotEquals(WorldSnapshot.fingerprint(List.of(a)),WorldSnapshot.fingerprint(List.of(b)));
+        try {new WorldSnapshot.Shape(0,0,0,0,1,1,1,"minecraft:stone",true,Integer.MIN_VALUE,0,0);fail();}
+        catch(IllegalArgumentException expected) {}
+    }
 }

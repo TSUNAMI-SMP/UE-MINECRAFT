@@ -262,3 +262,62 @@ receiver, correct session, a sent input <=1s old, valid finite coordinates and a
 new poseSeq; cached pose expires after1s. Used for diagnostics in this stage; MC
 world position is deliberately not teleported to avoid reintroducing vanilla
 collision and chunk movement as gameplay authority.
+
+
+## Authoritative editing, first-person view and video v2 (0.6.0)
+
+Status advertises `build:"0.6.0"`, `blockActionsV1:true`, `videoV2:true` and the
+last attempted action's result string `lastAction`. Actions require a sealed
+import, matching importId, fresh input and active UE control. Retransmissions are
+ACKed without a second edit; older action sequences cannot replay against a newer
+aim or import. Attempts are limited to one per 80ms; MC repeats held buttons every
+200ms. GUI/pause disables buttons. This remains dedicated creative mode.
+
+Input adds optional `sprint:boolean`, `heldItem` and `heldBlock` (empty or valid
+registry IDs <=128 chars), `heldColor:0..0xffffff`. MC supplies heldBlock only for
+a default full-cube collision shape. The receiver updates its arm/item visuals
+without generating materials on every input. Item models other than cubes are
+placeholders; skin and inventory authority are not synchronized.
+
+`block_action`: reliable event, common envelope, `importId` UUID,
+`action:"break"|"place"`, finite yaw/pitch with input bounds, and the same held
+selection fields. The click carries its aim and selection; UE uses its own current
+camera position, casts up to 500cm and only accepts imported collidable instances.
+Break removes all shapes owned by that voxel. Place selects the adjacent voxel
+using the hit normal, validates scope, occupancy, body/geometry overlap and shape/
+material budgets, then adds a collidable cube. Only the edited cell is rebuilt,
+without a Minecraft rescan. No vanilla world mutation or item-count update occurs.
+
+For an actions-capable receiver, `world_cell_physics` rows append absolute source
+voxel `blockX,blockY,blockZ` integers, producing 12 fields instead of 9. Bounds are
++/-30 million and their floor-divided cell must match the envelope cell. This
+identifies all partial shapes belonging to one block. Four rows still fit the
+2048-byte datagram bound. The receiver also accepts older 9-field physics rows;
+the MOD only sends owners when blockActionsV1 is advertised. Owners join the cell
+fingerprint. Source refresh cannot overwrite edited, sealed cells.
+
+UE video now sends version 2. The first six network-order uint32 words remain
+magic/version/width/height/frameSeq/JPEG byte length. The header then appends one
+network-order uint64 input sequence and two uint32 microsecond timings: capture
+request to GPU-readback completion observation, and JPEG encoding time. Header is
+40 bytes, payload cap remains 2MiB. MC accepts both v1 and v2 and validates metadata
+before allocation. An old MOD cannot decode v2; update both components.
+
+Capture runs after movement and first-person visual updates. GPU texture copies
+and fence polls run on the render thread; there is no per-frame ReadPixels or
+GPU wait. At most two readbacks, one encode and one partial output are retained;
+finished readbacks prefer the newest frame. Readbacks older than 250ms are skipped
+before encode. Encoding owns CPU pixels only. RHI references survive queued copies;
+shutdown drains rendering before teardown. TCP buffers are bounded to limit stale
+frames. JPEG decode/channel conversion run on the MC worker; native RGBA pixels
+are bulk-copied before render-thread upload. Fullscreen fresh UE control can skip
+native Minecraft world drawing while retaining camera/input/HUD and world data.
+The optimize command disables this independently.
+
+Video config fps bound is now 1..60 when videoV2 is advertised; old receivers get
+at most30. Presets: low480x270/30/q75, balanced960x540/60/q85,
+high1280x720/60/q90, ultra1920x1080/60/q90. These are caps, not guaranteed rates.
+Input-to-upload latency uses MC's retained input send timestamp echoed by the
+captured frame, without cross-process clock subtraction. It ends at GPU upload
+submission, excluding upload completion, VSync and scanout. GPU-readback timing
+includes fence-poll scheduling; it is not a pure hardware copy measurement.

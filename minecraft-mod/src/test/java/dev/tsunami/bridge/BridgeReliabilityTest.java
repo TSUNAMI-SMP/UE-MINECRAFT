@@ -115,4 +115,18 @@ public class BridgeReliabilityTest {
             time.addAndGet(1_000_000_001L);assertNull(mc.authorityPose());
         }
     }
+    @Test public void capturedInputAgeAndActionCapabilitiesRequireRealStatus() throws Exception {
+        AtomicLong time=new AtomicLong(1_000_000_000L);
+        try(DatagramSocket ue=new DatagramSocket(0,InetAddress.getLoopbackAddress());BridgeTransport mc=new BridgeTransport(ue.getLocalPort(),time::get)) {
+            ue.setSoTimeout(500);var p=mc.packet("input");mc.input(p);var input=receive(ue);var data=json(input);
+            assertFalse(mc.actionsSupported());assertEquals(-1,mc.inputAgeMillis(99),0);
+            time.addAndGet(40_000_000L);assertEquals(40,mc.inputAgeMillis(data.get("seq").getAsLong()),0);
+            var status=new JsonObject();status.addProperty("v",1);status.addProperty("kind","status");
+            status.add("session",data.get("session"));status.add("seq",data.get("seq"));
+            status.addProperty("cameraReady",true);status.addProperty("vfxReady",false);status.addProperty("walls",0);
+            status.addProperty("blockActionsV1",true);status.addProperty("videoV2",true);status.addProperty("lastAction","placed");
+            reply(ue,input,status);pumpReplies(mc);assertTrue(mc.actionsSupported());assertTrue(mc.videoV2Supported());assertEquals("placed",mc.lastAction());
+            time.addAndGet(1_000_000_001L);assertFalse(mc.actionsSupported());assertFalse(mc.videoV2Supported());
+        }
+    }
 }

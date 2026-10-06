@@ -22,7 +22,8 @@ public final class BridgeConfig {
     public int worldHalfHeight = 1;
     public int videoMode = 0; // 0=off, 1=picture in picture, 2=full screen
     public int videoPort = 7780;
-    public int videoQuality = 1; // low/balanced/high
+    public boolean videoSkipVanilla=true;
+    public int videoQuality = 1; // low/balanced/high/ultra
     public double videoExposure = 0;
     private static final Gson JSON = new GsonBuilder().setPrettyPrinting().create();
     public BridgeConfig copy() { return JSON.fromJson(JSON.toJson(this), BridgeConfig.class); }
@@ -35,8 +36,8 @@ public final class BridgeConfig {
             throw new IllegalArgumentException("worldRadius must be 1..3 / worldHalfHeight 1..2");
         if (videoMode < 0 || videoMode > 2 || videoPort < 1024 || videoPort > 65535)
             throw new IllegalArgumentException("videoMode must be 0..2 / videoPort 1024..65535");
-        if (videoQuality < 0 || videoQuality > 2 || !Double.isFinite(videoExposure) || Math.abs(videoExposure)>6)
-            throw new IllegalArgumentException("videoQuality must be 0..2 / videoExposure -6..6");
+        if (videoQuality < 0 || videoQuality > 3 || !Double.isFinite(videoExposure) || Math.abs(videoExposure)>6)
+            throw new IllegalArgumentException("videoQuality must be 0..3 / videoExposure -6..6");
     }
     public static BridgeConfig load(Path path) throws IOException {
         if (!Files.exists(path)) return new BridgeConfig();
@@ -53,7 +54,7 @@ public final class BridgeConfig {
             }
             if (object.has("videoExposure") && (!object.get("videoExposure").isJsonPrimitive()
                     || !object.getAsJsonPrimitive("videoExposure").isNumber())) throw new IllegalArgumentException("videoExposure must be a number");
-            for (String name : new String[]{"enabled", "notifications", "bowEvents", "worldSync"}) if (object.has(name)) {
+            for (String name : new String[]{"enabled", "notifications", "bowEvents", "worldSync", "videoSkipVanilla"}) if (object.has(name)) {
                 var value = object.get(name);
                 if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isBoolean()) throw new IllegalArgumentException(name + " must be true/false");
             }

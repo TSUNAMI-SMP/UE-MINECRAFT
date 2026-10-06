@@ -2,13 +2,15 @@
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
 
-enum class EBridgeKind { Input, Tnt, Bow, Snapshot, ClearPreview, WorldCell, WorldScope, WorldClear, WorldBegin, WorldCommit, VideoConfig };
+enum class EBridgeKind { Input, Tnt, Bow, Snapshot, ClearPreview, WorldCell, WorldScope, WorldClear, WorldBegin, WorldCommit, VideoConfig, BlockAction };
 struct FBridgeBlock {
     FVector Position = FVector::ZeroVector; // Minecraft-relative block centers.
     int32 Color = 0;
     FVector Size = FVector::OneVector;
     FString BlockId;
     bool Collision=false;
+    FIntVector SourceBlock=FIntVector::ZeroValue;
+    bool HasSourceBlock=false;
 };
 struct FBridgePacket {
     EBridgeKind Kind = EBridgeKind::Input;
@@ -18,7 +20,9 @@ struct FBridgePacket {
     double Yaw = 0, Pitch = 0, Forward = 0, Right = 0, Pull = 0;
     bool Jump = false;
     bool Sneak = false, Controller=false;
-    FString ImportId;
+    FString ImportId, Action, HeldItem, HeldBlock;
+    int32 HeldColor=0xffffff;
+    bool Sprint=false;
     FVector MinecraftOrigin=FVector::ZeroVector;
     int32 ImportCells=0;
     double EyeHeight = 1.62, BodyHeight = 1.8;

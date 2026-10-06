@@ -115,14 +115,14 @@ public final class WorldSync {
                 if (sx <= 0 || sy <= 0 || sz <= 0 || sx > 4 || sy > 4 || sz > 4) continue;
                 if (shapes.size() >= WorldSnapshot.MAX_SHAPES) break;
                 shapes.add(new WorldSnapshot.Shape(x+(b.minX+b.maxX)/2-origin.x, y+(b.minY+b.maxY)/2-origin.y,
-                        z+(b.minZ+b.maxZ)/2-origin.z, color, sx,sy,sz,blockId,collision));
+                        z+(b.minZ+b.maxZ)/2-origin.z, color, sx,sy,sz,blockId,collision,x,y,z));
             }
         }
         if (index < 512) return;
         String fingerprint=WorldSnapshot.fingerprint(shapes);
         if (!fingerprint.equals(confirmed.get(sampling))) {
             sending = sampling; sentFingerprint = fingerprint; generation = 0;
-            expiredAtStart = transport.diagnostics().expired(); outgoing.addAll(WorldSnapshot.encode(sending, shapes,transport.diagnostics().texturesSupported(),initial));
+            expiredAtStart = transport.diagnostics().expired(); outgoing.addAll(WorldSnapshot.encode(sending, shapes,transport.diagnostics().texturesSupported(),initial,transport.actionsSupported()));
         }
         sampling = null; shapes = null;
     }

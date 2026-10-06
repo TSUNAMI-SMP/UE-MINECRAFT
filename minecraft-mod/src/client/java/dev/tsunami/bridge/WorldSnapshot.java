@@ -21,7 +21,8 @@ public final class WorldSnapshot {
                     && Math.abs((long)z - center.z) <= radius;
         }
     }
-    public record Shape(double x, double y, double z, int color, double sx, double sy, double sz, String blockId, boolean collision) {
+    public record Shape(double x, double y, double z, int color, double sx, double sy, double sz, String blockId, boolean collision, int blockX,int blockY,int blockZ) {
+        public Shape(double x,double y,double z,int color,double sx,double sy,double sz,String blockId,boolean collision) { this(x,y,z,color,sx,sy,sz,blockId,collision,0,0,0); }
         public Shape(double x,double y,double z,int color,double sx,double sy,double sz) { this(x,y,z,color,sx,sy,sz,"",false); }
         public Shape(double x,double y,double z,int color,double sx,double sy,double sz,String blockId) { this(x,y,z,color,sx,sy,sz,blockId,false); }
         public Shape {
@@ -29,6 +30,7 @@ public final class WorldSnapshot {
                     || Math.abs(x) > 100000 || Math.abs(y) > 100000 || Math.abs(z) > 100000
                     || color < 0 || color > 0xffffff || !Double.isFinite(sx) || !Double.isFinite(sy) || !Double.isFinite(sz)
                     || sx <= 0 || sy <= 0 || sz <= 0 || sx > 4 || sy > 4 || sz > 4
+                    || Math.abs((long)blockX)>30000000 || Math.abs((long)blockY)>30000000 || Math.abs((long)blockZ)>30000000
                     || blockId==null || blockId.length()>128 || (!blockId.isEmpty() && !blockId.matches("[a-z0-9_.-]+:[a-z0-9_./-]+")))
                 throw new IllegalArgumentException("Invalid world shape");
         }
@@ -38,10 +40,10 @@ public final class WorldSnapshot {
     }
     public static String fingerprint(List<Shape> shapes) {
         try {
-            MessageDigest hash=MessageDigest.getInstance("SHA-256"); ByteBuffer bytes=ByteBuffer.allocate(52);
+            MessageDigest hash=MessageDigest.getInstance("SHA-256"); ByteBuffer bytes=ByteBuffer.allocate(64);
             for (Shape s:shapes) {
                 bytes.clear(); bytes.putDouble(s.x).putDouble(s.y).putDouble(s.z).putInt(s.color)
-                    .putDouble(s.sx).putDouble(s.sy).putDouble(s.sz); hash.update(bytes.array());
+                    .putDouble(s.sx).putDouble(s.sy).putDouble(s.sz).putInt(s.blockX).putInt(s.blockY).putInt(s.blockZ); hash.update(bytes.array());
                 byte[] id=s.blockId.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 hash.update((byte)(s.collision ? 1 : 0)); hash.update((byte)id.length); hash.update(id);
             }
@@ -55,6 +57,9 @@ public final class WorldSnapshot {
         return encode(cell,shapes,textured,false);
     }
     public static List<JsonObject> encode(Cell cell,List<Shape> shapes,boolean textured,boolean physics) {
+        return encode(cell,shapes,textured,physics,false);
+    }
+    public static List<JsonObject> encode(Cell cell,List<Shape> shapes,boolean textured,boolean physics,boolean owners) {
         textured=textured || physics;
         if (shapes.size() > MAX_SHAPES) throw new IllegalArgumentException("World cell shape limit exceeded");
         if(textured && shapes.stream().anyMatch(s->s.blockId.isEmpty())) throw new IllegalArgumentException("Textured rows need block IDs");
@@ -69,7 +74,8 @@ public final class WorldSnapshot {
             for (int n = i * perBatch; n < Math.min(shapes.size(), (i + 1) * perBatch); n++) {
                 Shape s = shapes.get(n); JsonArray row = new JsonArray();
                 row.add(s.x); row.add(s.y); row.add(s.z); row.add(s.color);
-                row.add(s.sx); row.add(s.sy); row.add(s.sz); if(textured) row.add(s.blockId); if(physics) row.add(s.collision); rows.add(row);
+                row.add(s.sx); row.add(s.sy); row.add(s.sz); if(textured) row.add(s.blockId); if(physics) row.add(s.collision);
+                if(physics && owners) { row.add(s.blockX);row.add(s.blockY);row.add(s.blockZ); } rows.add(row);
             }
             p.add("blocks", rows); packets.add(p);
         }

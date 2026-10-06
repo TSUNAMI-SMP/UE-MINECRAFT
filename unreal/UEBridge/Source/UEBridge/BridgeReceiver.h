@@ -56,6 +56,10 @@ private:
     UPROPERTY() TObjectPtr<class ABridgeWorld> SyncedWorld;
     UPROPERTY() TArray<TObjectPtr<class ABridgeArrow>> Arrows;
     FBridgePacket LatestInput;
+    uint64 LastActionSequence=0;
+    double LastActionAt=-1;
+    FString LastAction=TEXT("ready");
+    void BlockAction(const FBridgePacket& Packet);
     bool HasNewInput = false;
     uint64 PreviewGeneration = 0;
     FString StagingId;

@@ -12,7 +12,7 @@ struct FBridgeWorldStage {
     TMap<int32,TArray<FBridgeBlock>> Batches;
 };
 
-/** Session-local streamed visual cells. Never writes a Minecraft world or UE asset. */
+/** Session-local terrain: imported cells, UE collision, aiming and authoritative edits. */
 UCLASS()
 class UEBRIDGE_API ABridgeWorld : public AActor {
     GENERATED_BODY()
@@ -30,6 +30,10 @@ public:
     FString GetImportId() const { return ImportId; }
     int32 ImportedCells() const { return Revisions.Num(); }
     UFUNCTION(BlueprintCallable,Category="Bridge|World") int32 RemoveBlocksInSphere(FVector Position,float RemovalRadius);
+    bool Aim(const FVector& Start,const FRotator& Rotation,float Reach,FIntVector& Block,FVector& Normal,const AActor* Ignored=nullptr) const;
+    FVector BlockCenter(const FIntVector& Block) const;
+    bool BreakBlock(const FIntVector& Block);
+    FString PlaceBlock(const FIntVector& Block,const FString& BlockId,int32 Color);
     int32 CellCount() const { return Cells.Num(); }
     int32 ShapeCount() const { return Shapes; }
 private:
@@ -50,4 +54,6 @@ private:
     UPROPERTY() TArray<TObjectPtr<class UBoxComponent>> Boundary;
     void BuildBoundary();
     bool Inside(const FIntVector& C) const;
+    FIntVector OwnerOf(const FBridgeBlock& Block) const;
+    void RebuildCell(const FIntVector& Cell);
 };

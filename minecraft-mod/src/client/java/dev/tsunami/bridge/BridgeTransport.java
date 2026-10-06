@@ -31,7 +31,14 @@ public final class BridgeTransport implements AutoCloseable {
     private boolean worldSupported, videoSupported;
     private boolean texturesSupported, videoControlsSupported;
     private int textureMaterials;
-    private boolean authoritySupported, worldSealed, ueControl;
+    private boolean authoritySupported, worldSealed, ueControl, actionsSupported, videoV2;
+    private String lastAction="";
+    public boolean actionsSupported() { return diagnostics().connected() && actionsSupported; }
+    public boolean videoV2Supported() { return diagnostics().connected() && videoV2; }
+    public String lastAction() { return lastAction; }
+    public double inputAgeMillis(long seq) {
+        Long sent=inputTimes.get(seq); return sent==null ? -1 : Math.max(0,clock.getAsLong()-sent)/1_000_000.0;
+    }
     private String importId="";
     private int importedCells;
     public record AuthorityPose(double x,double y,double z,boolean grounded) {}
@@ -126,6 +133,9 @@ public final class BridgeTransport implements AutoCloseable {
             receiver = p.has("receiver") && "diagnostic".equals(p.get("receiver").getAsString()) ? "diagnostic" : "ue";
             build = p.has("build") && p.get("build").isJsonPrimitive() && p.getAsJsonPrimitive("build").isString()
                     ? p.get("build").getAsString() : "unknown";
+            actionsSupported=bool(p,"blockActionsV1") && p.get("blockActionsV1").getAsBoolean();
+            videoV2=bool(p,"videoV2") && p.get("videoV2").getAsBoolean();
+            lastAction=p.has("lastAction") && p.get("lastAction").isJsonPrimitive() && p.getAsJsonPrimitive("lastAction").isString() ? p.get("lastAction").getAsString() : "";
             authoritySupported=bool(p,"authorityV1") && p.get("authorityV1").getAsBoolean();
             worldSealed=bool(p,"worldSealed") && p.get("worldSealed").getAsBoolean();
             ueControl=bool(p,"ueControl") && p.get("ueControl").getAsBoolean();

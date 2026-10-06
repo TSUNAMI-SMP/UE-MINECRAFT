@@ -97,7 +97,7 @@ bool FBridgeVideoConfigTest::RunTest(const FString& Parameters) {
     P->SetNumberField(TEXT("fps"),20); P->SetNumberField(TEXT("quality"),85); P->SetNumberField(TEXT("exposure"),1);
     TestTrue(TEXT("Quality configuration"),BridgeProtocol::Parse(P,Out));
     TestEqual(TEXT("Width"),Out.VideoWidth,960); TestEqual(TEXT("Exposure"),Out.VideoExposure,1.0);
-    P->SetNumberField(TEXT("fps"),31); TestFalse(TEXT("FPS bound"),BridgeProtocol::Parse(P,Out));
+    P->SetNumberField(TEXT("fps"),61); TestFalse(TEXT("FPS bound"),BridgeProtocol::Parse(P,Out));
     P->SetNumberField(TEXT("fps"),20); P->SetStringField(TEXT("exposure"),TEXT("1"));
     TestFalse(TEXT("Typed exposure"),BridgeProtocol::Parse(P,Out));
     return true;
@@ -136,7 +136,30 @@ bool FBridgeAuthorityProtocolTest::RunTest(const FString& Parameters) {
     const FString Cell=TEXT("{\"v\":1,\"kind\":\"event\",\"session\":\"00000000-0000-4000-8000-000000000001\",\"seq\":5,\"eventId\":\"00000000-0000-4000-8000-000000000002\",\"event\":\"world_cell_physics\",\"cellX\":0,\"cellY\":0,\"cellZ\":0,\"x\":0,\"y\":0,\"z\":0,\"snapshotId\":\"00000000-0000-4000-8000-000000000003\",\"snapshotSeq\":3,\"batchIndex\":0,\"totalBatches\":1,\"blocks\":[[1,2,3,16711680,1,1,1,\"minecraft:stone\",true]]}");
     TestTrue(TEXT("Physics row"),BridgeProtocol::Parse(PacketJson(Cell),Out));
     TestTrue(TEXT("Collision flag"),Out.Blocks.Num()==1 && Out.Blocks[0].Collision);
+    auto Owned=PacketJson(Cell);auto Row=Owned->GetArrayField(TEXT("blocks"))[0]->AsArray();
+    Row.Add(MakeShared<FJsonValueNumber>(1));Row.Add(MakeShared<FJsonValueNumber>(2));Row.Add(MakeShared<FJsonValueNumber>(3));
+    TArray<TSharedPtr<FJsonValue>> Rows;Rows.Add(MakeShared<FJsonValueArray>(Row));Owned->SetArrayField(TEXT("blocks"),Rows);
+    TestTrue(TEXT("Exact shape owner"),BridgeProtocol::Parse(Owned,Out));
+    TestTrue(TEXT("Partial shape keeps its source voxel"),Out.Blocks.Num()==1 && Out.Blocks[0].HasSourceBlock && Out.Blocks[0].SourceBlock==FIntVector(1,2,3));
+    Row[9]=MakeShared<FJsonValueNumber>(8);Rows[0]=MakeShared<FJsonValueArray>(Row);Owned->SetArrayField(TEXT("blocks"),Rows);
+    TestFalse(TEXT("Owner outside its source cell"),BridgeProtocol::Parse(Owned,Out));
     TestFalse(TEXT("Collision type"),BridgeProtocol::Parse(PacketJson(Cell.Replace(TEXT("true"),TEXT("1"))),Out));
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeBlockActionProtocolTest,"UEBridge.Protocol.BlockActions",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBridgeBlockActionProtocolTest::RunTest(const FString& Parameters) {
+    auto P=PacketJson(Input);FBridgePacket Out;
+    P->SetStringField(TEXT("kind"),TEXT("event"));P->SetStringField(TEXT("event"),TEXT("block_action"));
+    P->SetStringField(TEXT("eventId"),TEXT("00000000-0000-4000-8000-000000000002"));
+    P->SetStringField(TEXT("importId"),TEXT("00000000-0000-4000-8000-000000000003"));
+    P->SetStringField(TEXT("action"),TEXT("place"));P->SetStringField(TEXT("heldItem"),TEXT("minecraft:stone"));
+    P->SetStringField(TEXT("heldBlock"),TEXT("minecraft:stone"));P->SetNumberField(TEXT("heldColor"),0xaaaaaa);
+    TestTrue(TEXT("Valid placement request"),BridgeProtocol::Parse(P,Out));
+    TestEqual(TEXT("Selected block"),Out.HeldBlock,FString(TEXT("minecraft:stone")));
+    P->SetStringField(TEXT("action"),TEXT("explode"));TestFalse(TEXT("Unknown action"),BridgeProtocol::Parse(P,Out));
+    P->SetStringField(TEXT("action"),TEXT("break"));P->SetStringField(TEXT("heldBlock"),TEXT("../bad"));
+    TestFalse(TEXT("Bad block ID"),BridgeProtocol::Parse(P,Out));
+    P->SetStringField(TEXT("heldBlock"),TEXT(""));TestTrue(TEXT("Empty hand breaks"),BridgeProtocol::Parse(P,Out));
     return true;
 }
 #endif

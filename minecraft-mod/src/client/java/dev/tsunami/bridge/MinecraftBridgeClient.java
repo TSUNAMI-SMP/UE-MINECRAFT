@@ -11,6 +11,8 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.block.Blocks;
+import net.minecraft.block.Block;
+import net.minecraft.item.BlockItem;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.LivingEntity;
@@ -33,6 +35,8 @@ import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.*;
 
 public final class MinecraftBridgeClient implements ClientModInitializer {
     private static MinecraftBridgeClient instance;
+    public static boolean skipWorldRender() { return instance!=null && instance.config.videoSkipVanilla && instance.config.videoMode==2
+        && controllerMode() && instance.video!=null && instance.video.fresh(); }
     public static void renderFrame() { if (instance != null) instance.frame(); }
     public static void bowReleased(LivingEntity user, float pull) {
         if (instance != null) instance.bow(user, pull);
@@ -45,6 +49,7 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
     private final WorldSync worldSync = new WorldSync();
     private final VideoOverlay videoOverlay = new VideoOverlay();
     private VideoClient video;
+    private final ControllerActions actions = new ControllerActions();
     private final ArrayDeque<JsonObject> snapshotQueue = new ArrayDeque<>();
     private final Path configPath = FabricLoader.getInstance().getConfigDir().resolve("minecraft-ue-bridge.json");
     private BridgeConfig config = new BridgeConfig();
@@ -121,8 +126,35 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
             p.addProperty("controller",controllerRequested && initialImport.phase()==InitialImport.Phase.READY);
             p.addProperty("sneak", active && (controllerMode() ? mc.options.sneakKey.isPressed() : mc.player.isSneaking()));
             p.addProperty("eyeHeight", mc.player.getEyeHeight(mc.player.getPose()));
-            p.addProperty("bodyHeight", mc.player.getHeight()); transport.input(p);
+            p.addProperty("bodyHeight", mc.player.getHeight());
+            p.addProperty("sprint",active && mc.options.sprintKey.isPressed());
+            selectedItem(mc,p); transport.input(p);
+            var clicks=actions.sample(active && controllerRequested && transport.actionsSupported()
+                && transport.diagnostics().ueControl(),mc.options.attackKey.isPressed(),mc.options.useKey.isPressed(),now);
+            if(clicks.breaking()) blockAction(mc,"break");
+            else if(clicks.placing()) blockAction(mc,"place");
         } catch (IOException e) { report(e); }
+    }
+    private void selectedItem(MinecraftClient mc,JsonObject p) {
+        var stack=mc.player.getMainHandStack();
+        String item=stack.isEmpty() ? "" : Registries.ITEM.getId(stack.getItem()).toString();
+        String block=""; int color=0xffffff;
+        if(stack.getItem() instanceof BlockItem blockItem) {
+            var state=blockItem.getBlock().getDefaultState();
+            if(Block.isShapeFullCube(state.getCollisionShape(mc.world,mc.player.getBlockPos()))) {
+                block=Registries.BLOCK.getId(blockItem.getBlock()).toString();
+                color=state.getMapColor(mc.world,mc.player.getBlockPos()).color & 0xffffff;
+            }
+        }
+        p.addProperty("heldItem",item.length()<=128 ? item : "");
+        p.addProperty("heldBlock",block.length()<=128 ? block : ""); p.addProperty("heldColor",color);
+    }
+    private void blockAction(MinecraftClient mc,String action) throws IOException {
+        if(transport.availableEvents()==0) return;
+        JsonObject p=transport.packet("event"); position(p,origin); p.addProperty("event","block_action");
+        p.addProperty("action",action); p.addProperty("importId",initialImport.id());
+        p.addProperty("yaw",mc.player.getYaw()); p.addProperty("pitch",mc.player.getPitch());
+        selectedItem(mc,p); transport.event(p);
     }
     private void tick(MinecraftClient mc) {
         ensureConnection(mc); if (transport == null) return;
@@ -150,10 +182,11 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
             if (config.videoMode != 0 && video == null && transport.diagnostics().cameraReady() && transport.diagnostics().videoSupported())
                 video = new VideoClient(config.videoPort, transport.session());
             if (config.videoMode == 0 && video != null) { video.close(); video = null; }
-            videoOverlay.setClient(video, config.videoMode);
+            videoOverlay.setClient(video, config.videoMode); videoOverlay.setTransport(transport);
             String videoSettings=config.videoQuality+":"+config.videoExposure;
             if(config.videoMode!=0 && ready.videoControlsSupported() && !videoSettings.equals(lastVideoConfig) && transport.availableEvents()>0) {
-                int[][] presets={{480,270,15,75},{960,540,20,85},{1280,720,30,90}}; int[] preset=presets[config.videoQuality];
+                int cap=transport.videoV2Supported() ? 60 : 30;
+                int[][] presets={{480,270,30,75},{960,540,cap,85},{1280,720,cap,90},{1920,1080,cap,90}}; int[] preset=presets[config.videoQuality];
                 JsonObject p=transport.packet("event"); p.addProperty("event","video_config"); position(p,origin);
                 p.addProperty("width",preset[0]); p.addProperty("height",preset[1]); p.addProperty("fps",preset[2]);
                 p.addProperty("quality",preset[3]); p.addProperty("exposure",config.videoExposure);
@@ -307,9 +340,12 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
                 .then(literal("pip").executes(c -> change(v -> v.videoMode = 1, false)))
                 .then(literal("fullscreen").executes(c -> change(v -> v.videoMode = 2, false)))
                 .then(literal("off").executes(c -> change(v -> v.videoMode = 0, false)))
+                .then(literal("optimize").then(literal("on").executes(c -> change(v -> v.videoSkipVanilla=true,false)))
+                    .then(literal("off").executes(c -> change(v -> v.videoSkipVanilla=false,false))))
                 .then(literal("quality").then(literal("low").executes(c -> change(v -> v.videoQuality=0,false)))
                     .then(literal("balanced").executes(c -> change(v -> v.videoQuality=1,false)))
-                    .then(literal("high").executes(c -> change(v -> v.videoQuality=2,false))))
+                    .then(literal("high").executes(c -> change(v -> v.videoQuality=2,false)))
+                    .then(literal("ultra").executes(c -> change(v -> v.videoQuality=3,false))))
                 .then(literal("exposure").then(argument("value",DoubleArgumentType.doubleArg(-6,6))
                     .executes(c -> change(v -> v.videoExposure=DoubleArgumentType.getDouble(c,"value"),false))))
                 .then(literal("port").then(argument("value", IntegerArgumentType.integer(1024,65535))
@@ -329,8 +365,9 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
                 + " / World=" + worldSync.synchronizedCells()+"/"+worldSync.targetCells()
                 + " / UE=" + d.build() + (config.worldSync && !d.worldSupported() ? "（ワールド同期対応UEを待っています）" : "")
                 + " / Video=" + (video == null ? "OFF" : video.status())
-                + " / 画質="+new String[]{"low","balanced","high"}[config.videoQuality]+" 露出="+config.videoExposure
+                + " / 画質="+new String[]{"low","balanced","high","ultra"}[config.videoQuality]+" 露出="+config.videoExposure
                 + " / テクスチャ="+d.textureMaterials()+"種類"
+                + " / MC描画省略="+skipWorldRender()+" / 操作="+transport.lastAction()+" / "+videoOverlay.timing()
                 + " / 初期地形="+initialImport.phase()+" UE判定="+d.ueControl()+" 保持="+d.worldSealed()
                 + (transport.authorityPose()==null ? "" : " / UE位置="+transport.authorityPose());
     }
@@ -350,6 +387,7 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         if (lastError == 0 || now - lastError > 5_000_000_000L) { LOG.warn("UE bridge: {}", e.toString()); lastError = now; }
     }
     private void disconnect() {
+        actions.reset();
         if (video != null) video.close(); video = null; videoOverlay.setClient(null, 0); worldSync.reset();
         if (transport != null) try { transport.close(); } catch (IOException e) { report(e); }
         initialImport.reset(); controllerFrozen=controllerRequested=false;

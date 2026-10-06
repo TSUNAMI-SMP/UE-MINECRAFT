@@ -8,6 +8,7 @@ import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
 import net.minecraft.util.Identifier;
+import org.lwjgl.system.MemoryUtil;
 
 /** HUD layer preserves Minecraft input, chat, hotbar and debug information. */
 public final class VideoOverlay {
@@ -15,12 +16,19 @@ public final class VideoOverlay {
     private NativeImageBackedTexture texture;
     private VideoClient client;
     private int width, height, mode;
+    private BridgeTransport transport;
+    private double inputToUpload=-1,readbackMs,encodeMs,decodeMs,uploadMs;
+    public void setTransport(BridgeTransport transport) { this.transport=transport; }
+    public String timing() {
+        return inputToUpload<0 ? "映像遅延計測待ち" : String.format(java.util.Locale.ROOT,
+            "入力→upload=%.1fms GPU読戻し=%.1f 圧縮=%.1f 復号=%.1f upload=%.1fms",inputToUpload,readbackMs,encodeMs,decodeMs,uploadMs);
+    }
     public void register() {
         HudElementRegistry.attachElementBefore(VanillaHudElements.CROSSHAIR, TEXTURE, (context,ticks) -> draw(context));
     }
     public void setClient(VideoClient next, int mode) {
         this.mode = mode;
-        if (client != next) { client = next; release(); }
+        if (client != next) { client = next; inputToUpload=-1; release(); }
     }
     private void release() {
         if (texture != null) MinecraftClient.getInstance().getTextureManager().destroyTexture(TEXTURE);
@@ -36,9 +44,12 @@ public final class VideoOverlay {
                 texture = new NativeImageBackedTexture("UE Bridge video", width,height,false);
                 mc.getTextureManager().registerTexture(TEXTURE,texture);
             }
-            NativeImage image = texture.getImage();
-            for (int y = 0; y < height; y++) for (int x = 0; x < width; x++) image.setColorArgb(x,y,frame.argb()[y*width+x]);
-            texture.upload();
+            long uploadStart=System.nanoTime();NativeImage image = texture.getImage();
+            // NativeImage.imageId() is its native RGBA buffer in Minecraft 1.21.11.
+            MemoryUtil.memIntBuffer(image.imageId(),width*height).put(frame.abgr());texture.upload();
+            uploadMs=(System.nanoTime()-uploadStart)/1_000_000.0;
+            readbackMs=frame.readbackMs();encodeMs=frame.encodeMs();decodeMs=frame.decodeMs();
+            inputToUpload=transport==null || frame.inputSequence()==0 ? -1 : transport.inputAgeMillis(frame.inputSequence());
         }
         int sw=context.getScaledWindowWidth(), sh=context.getScaledWindowHeight();
         int w = mode == 2 ? sw : Math.max(80,sw/3), h = mode == 2 ? sh : Math.max(45,w*9/16);

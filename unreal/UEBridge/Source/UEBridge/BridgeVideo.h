@@ -11,15 +11,21 @@ class UEBRIDGE_API UBridgeVideo : public UActorComponent {
 public:
     UBridgeVideo();
     void Start(int32 Port);
-    void TickStream(class UCameraComponent* Camera,const FString& Session);
+    void SetSource(class UCameraComponent* Camera,const FString& Session,uint64 InputSequence);
+    virtual void TickComponent(float DeltaTime,ELevelTick TickType,FActorComponentTickFunction* ThisTickFunction) override;
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Video",meta=(ClampMin="160",ClampMax="1920")) int32 Width=960;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Video",meta=(ClampMin="90",ClampMax="1080")) int32 Height=540;
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Video",meta=(ClampMin="1",ClampMax="30")) int32 FramesPerSecond=20;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Video",meta=(ClampMin="1",ClampMax="60")) int32 FramesPerSecond=60;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Video",meta=(ClampMin="30",ClampMax="95")) int32 Quality=85;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Video",meta=(ClampMin="-6",ClampMax="6")) float ExposureCompensation=0;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Video") bool Streaming=false;
 private:
+    void TickStream(class UCameraComponent* Camera,const FString& Session,uint64 InputSequence);
+    TWeakObjectPtr<class UCameraComponent> SourceCamera;
+    FString SourceSession;
+    uint64 SourceInput=0;
+    TArray<TSharedPtr<struct FBridgeGpuFrame,ESPMode::ThreadSafe>> Readbacks;
     class FSocket* Listener=nullptr;
     class FSocket* Client=nullptr;
     UPROPERTY() TObjectPtr<class USceneCaptureComponent2D> Capture;

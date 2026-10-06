@@ -20,6 +20,26 @@ bool Vector(const TSharedPtr<FJsonObject>& P, const TCHAR* X, const TCHAR* Y, co
     if (!Number(P, X, -Limit, Limit, A) || !Number(P, Y, -Limit, Limit, B) || !Number(P, Z, -Limit, Limit, C)) return false;
     Out = FVector(A, B, C); return true;
 }
+bool Identifier(const FString& Value) {
+    if(Value.Len()>128) return false;
+    int32 Colon=INDEX_NONE;
+    if(!Value.FindChar(TCHAR(':'),Colon) || Colon<=0 || Colon>=Value.Len()-1) return false;
+    for(int32 I=0;I<Value.Len();++I) {
+        const TCHAR C=Value[I]; if(I==Colon) continue;
+        if(!((C>='a'&&C<='z') || (C>='0'&&C<='9') || C=='_' || C=='-' || C=='.' || (I>Colon&&C=='/'))) return false;
+    }
+    return true;
+}
+bool Selection(const TSharedPtr<FJsonObject>& P,FBridgePacket& R) {
+    for(const auto* Name:{TEXT("heldItem"),TEXT("heldBlock")}) {
+        FString Value;
+        if(P->HasField(Name) && (!P->TryGetStringField(Name,Value) || (!Value.IsEmpty()&&!Identifier(Value)))) return false;
+        if(FString(Name)==TEXT("heldItem")) R.HeldItem=Value; else R.HeldBlock=Value;
+    }
+    uint64 Color=0xffffff;
+    if(P->HasField(TEXT("heldColor"))&&!Integer(P,TEXT("heldColor"),0,0xffffff,Color)) return false;
+    R.HeldColor=int32(Color); return true;
+}
 }
 bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out) {
     if (!P.IsValid()) return false;
@@ -30,6 +50,8 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
         || !Vector(P, TEXT("x"), TEXT("y"), TEXT("z"), R.Position, 100000)) return false;
     if (Kind == TEXT("input")) {
         R.Kind = EBridgeKind::Input;
+        if(!Selection(P,R)) return false;
+        if(P->HasField(TEXT("sprint")) && (!P->HasTypedField<EJson::Boolean>(TEXT("sprint")) || !P->TryGetBoolField(TEXT("sprint"),R.Sprint))) return false;
         if (!Number(P, TEXT("yaw"), -1e9, 1e9, R.Yaw) || !Number(P, TEXT("pitch"), -90, 90, R.Pitch)
             || !Number(P, TEXT("forward"), -1, 1, R.Forward) || !Number(P, TEXT("right"), -1, 1, R.Right)
             || !P->HasTypedField<EJson::Boolean>(TEXT("jump")) || !P->TryGetBoolField(TEXT("jump"), R.Jump)) return false;
@@ -40,7 +62,13 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
     } else if (Kind == TEXT("event")) {
         FString Event;
         if (!Guid(P, TEXT("eventId"), R.EventId) || !P->TryGetStringField(TEXT("event"), Event)) return false;
-        if (Event == TEXT("tnt_ignite")) R.Kind = EBridgeKind::Tnt;
+        if(Event==TEXT("block_action")) {
+            R.Kind=EBridgeKind::BlockAction;
+            if(!Guid(P,TEXT("importId"),R.ImportId) || !P->TryGetStringField(TEXT("action"),R.Action)
+                || (R.Action!=TEXT("break") && R.Action!=TEXT("place")) || !Selection(P,R)
+                || !Number(P,TEXT("yaw"),-1e9,1e9,R.Yaw) || !Number(P,TEXT("pitch"),-90,90,R.Pitch)) return false;
+        }
+        else if (Event == TEXT("tnt_ignite")) R.Kind = EBridgeKind::Tnt;
         else if (Event == TEXT("bow_fire")) {
             R.Kind = EBridgeKind::Bow;
             if (!Vector(P, TEXT("dx"), TEXT("dy"), TEXT("dz"), R.Direction, 1)
@@ -61,7 +89,7 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
         else if (Event==TEXT("video_config")) {
             uint64 W,H,F,Q;
             if (!Integer(P,TEXT("width"),160,1920,W) || !Integer(P,TEXT("height"),90,1080,H)
-                || !Integer(P,TEXT("fps"),1,30,F) || !Integer(P,TEXT("quality"),30,95,Q)
+                || !Integer(P,TEXT("fps"),1,60,F) || !Integer(P,TEXT("quality"),30,95,Q)
                 || !Number(P,TEXT("exposure"),-6,6,R.VideoExposure)) return false;
             R.Kind=EBridgeKind::VideoConfig; R.VideoWidth=int32(W); R.VideoHeight=int32(H); R.VideoFps=int32(F); R.VideoQuality=int32(Q);
         }
@@ -94,7 +122,7 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
             for (const auto& Row : *Rows) {
                 const TArray<TSharedPtr<FJsonValue>>* Values;
                 const int32 Fields = WorldCell ? 7 : 4;
-                if (!Row.IsValid() || !Row->TryGetArray(Values) || Values->Num() != Fields+(Textured ? 1 : 0)+(Physics ? 1 : 0)) return false;
+                if (!Row.IsValid() || !Row->TryGetArray(Values) || (Values->Num() != Fields+(Textured ? 1 : 0)+(Physics ? 1 : 0) && !(Physics && Values->Num()==12))) return false;
                 double V[7];
                 for (int32 I = 0; I < Fields; ++I) if (!(*Values)[I].IsValid() || (*Values)[I]->Type != EJson::Number
                     || !(*Values)[I]->TryGetNumber(V[I]) || !FMath::IsFinite(V[I])) return false;
@@ -119,7 +147,21 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
                 }
                 bool Collision=false;
                 if(Physics && (!(*Values)[8].IsValid() || (*Values)[8]->Type!=EJson::Boolean || !(*Values)[8]->TryGetBool(Collision))) return false;
-                R.Blocks.Add(FBridgeBlock{FVector(V[0], V[1], V[2]), int32(V[3]), Size, BlockId,Collision});
+                FBridgeBlock Block{FVector(V[0], V[1], V[2]), int32(V[3]), Size, BlockId,Collision};
+                if(Physics && Values->Num()==12) {
+                    FIntVector Owner;
+                    for(int32 I=0;I<3;++I) {
+                        double Value;
+                        if(!(*Values)[9+I].IsValid() || (*Values)[9+I]->Type!=EJson::Number || !(*Values)[9+I]->TryGetNumber(Value)
+                            || !FMath::IsFinite(Value) || FMath::Abs(Value)>30000000 || Value!=FMath::FloorToDouble(Value)) return false;
+                        Owner[I]=int32(Value);
+                    }
+                    // An owner cannot edit a different cell than the one it was imported into.
+                    const FIntVector OwnerCell(FMath::FloorToInt(Owner.X/8.0),FMath::FloorToInt(Owner.Y/8.0),FMath::FloorToInt(Owner.Z/8.0));
+                    if(OwnerCell!=R.Cell) return false;
+                    Block.SourceBlock=Owner;Block.HasSourceBlock=true;
+                }
+                R.Blocks.Add(MoveTemp(Block));
             }
         } else return false;
     } else return false;

@@ -16,6 +16,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Camera/CameraComponent.h"
+#include "Camera/CameraTypes.h"
 #include "Components/CapsuleComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
@@ -33,6 +34,9 @@ void ABridgeReceiver::AcquireTarget() {
         Anchor = TargetCharacter->GetActorLocation();
         Anchor.Z -= TargetCharacter->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
         TargetCharacter->GetCharacterMovement()->DisableMovement();
+        TargetCharacter->GetCharacterMovement()->AddTickPrerequisiteActor(this);
+        Video->AddTickPrerequisiteActor(TargetCharacter);
+        Video->AddTickPrerequisiteComponent(TargetCharacter->GetCharacterMovement());
         Anchored = true;
     }
 }
@@ -50,7 +54,7 @@ void ABridgeReceiver::BeginPlay() {
         return;
     }
     int32 ActualBuffer; Socket->SetReceiveBufferSize(256 * 1024, ActualBuffer);
-    UE_LOG(LogTemp, Display, TEXT("Bridge 0.5.0 listening on 127.0.0.1:%d"), Port);
+    UE_LOG(LogTemp, Display, TEXT("Bridge 0.6.0 listening on 127.0.0.1:%d"), Port);
     Video->Start(VideoPort);
     if (!TargetCharacter) UE_LOG(LogTemp, Warning, TEXT("Bridge: waiting for player Character; will retry every tick"));
     if (!ExplosionSystem) UE_LOG(LogTemp, Warning, TEXT("Bridge: ExplosionSystem is unset; Niagara will not play"));
@@ -100,13 +104,15 @@ void ABridgeReceiver::Tick(float DeltaSeconds) {
     if(auto* Bridge=Cast<ABridgeCharacter>(TargetCharacter)) {
         UEControl=Connected && Sealed && LatestInput.Controller;
         Bridge->SetAuthorityEnabled(UEControl);
+        Bridge->ConfigureVisuals(PreviewMaterial,TexturePalette,LatestInput.HeldItem,LatestInput.HeldBlock,LatestInput.HeldColor);
+        Bridge->SetInteractionWorld(SyncedWorld);
         if(UEControl) {
             if(auto* C=Bridge->GetController()) C->SetControlRotation(BridgeProtocol::ToRotation(LatestInput.Yaw,LatestInput.Pitch));
-            Bridge->ApplyUEInput(ForwardInput,RightInput,JumpHeld,SneakHeld);
+            Bridge->ApplyUEInput(ForwardInput,RightInput,JumpHeld,SneakHeld,LatestInput.Sprint);
         }
     } else UEControl=false;
     if(Sealed && Peer.IsValid() && (LastPose<0 || Now-LastPose>=1.0/60)) { LastPose=Now; SendPose(); }
-    Video->TickStream(TargetCharacter ? TargetCharacter->FindComponentByClass<UCameraComponent>() : nullptr, Connected ? Session : FString());
+    Video->SetSource(TargetCharacter ? TargetCharacter->FindComponentByClass<UCameraComponent>() : nullptr, Connected ? Session : FString(),LastSequence);
     for (auto It = SeenEvents.CreateIterator(); It; ++It) if (Now - It.Value() > 10) It.RemoveCurrent();
     if (!StagedBatches.IsEmpty() && Now > StagingDeadline) {
         StagedBatches.Empty(); StagingId.Empty(); ExpectedBatches = 0;
@@ -121,7 +127,7 @@ void ABridgeReceiver::Process(const FBridgePacket& P, const TSharedRef<FInternet
         LastSequence = 0; LastInput = 0; LastStatus = -1; SeenEvents.Empty(); HasNewInput = false;
         JumpHeld = SneakHeld = false; ForwardInput = RightInput = 0; ClearPreview(0);
         if (IsValid(SyncedWorld)) { if(!SyncedWorld->IsSealed()) SyncedWorld->Clear(); else SyncedWorld->NewSource(); }
-        LatestInput=FBridgePacket(); PoseSequence=0; LastPose=-1; Peer=Sender;
+        LatestInput=FBridgePacket(); LastActionSequence=0;LastActionAt=-1; PoseSequence=0; LastPose=-1; Peer=Sender;
     }
     if (P.Kind == EBridgeKind::Input) {
         if (P.Sequence <= LastSequence) return;
@@ -139,6 +145,7 @@ void ABridgeReceiver::Process(const FBridgePacket& P, const TSharedRef<FInternet
         if (SeenEvents.Num() >= 2048) return;
         const FVector Position = BridgeProtocol::ToUnreal(P.Position, Anchor);
         switch (P.Kind) {
+            case EBridgeKind::BlockAction: BlockAction(P);break;
             case EBridgeKind::Tnt: if(!UEControl) Explode(Position); break;
             case EBridgeKind::Bow: {
                 if(UEControl) break;
@@ -205,10 +212,12 @@ void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
     Reply->SetBoolField(TEXT("cameraReady"), Camera && Camera->IsActive() && TargetCharacter->GetController());
     Reply->SetBoolField(TEXT("vfxReady"), IsValid(ExplosionSystem)); Reply->SetNumberField(TEXT("walls"), Walls);
     Reply->SetNumberField(TEXT("previewBlocks"), PreviewBlocks);
-    Reply->SetStringField(TEXT("build"),TEXT("0.5.0"));
+    Reply->SetStringField(TEXT("build"),TEXT("0.6.0"));
     Reply->SetStringField(TEXT("receiverId"),InstanceId);
     Reply->SetBoolField(TEXT("worldV1"),true); Reply->SetBoolField(TEXT("videoV1"),true);
     Reply->SetBoolField(TEXT("blockTexturesV1"),true); Reply->SetBoolField(TEXT("videoControlsV1"),true);
+    Reply->SetBoolField(TEXT("blockActionsV1"),true);Reply->SetBoolField(TEXT("videoV2"),true);
+    Reply->SetStringField(TEXT("lastAction"),LastAction);
     Reply->SetBoolField(TEXT("authorityV1"),Cast<ABridgeCharacter>(TargetCharacter)!=nullptr);
     Reply->SetBoolField(TEXT("ueControl"),UEControl);
     Reply->SetBoolField(TEXT("worldSealed"),SyncedWorld && SyncedWorld->IsSealed());
@@ -282,4 +291,24 @@ void ABridgeReceiver::SendPose() {
     Reply->SetNumberField(TEXT("x"),-Relative.Y); Reply->SetNumberField(TEXT("y"),Relative.Z); Reply->SetNumberField(TEXT("z"),Relative.X);
     Reply->SetBoolField(TEXT("grounded"),TargetCharacter->GetCharacterMovement()->IsMovingOnGround());
     SendJson(Reply,Peer.ToSharedRef());
+}
+
+void ABridgeReceiver::BlockAction(const FBridgePacket& P) {
+    auto* Character=Cast<ABridgeCharacter>(TargetCharacter);
+    const double Now=FPlatformTime::Seconds();
+    if(P.Sequence<=LastActionSequence) return;
+    LastActionSequence=P.Sequence;
+    if(!Character || !UEControl || !Connected || Now-LastInput>.25 || !IsValid(SyncedWorld) || P.ImportId!=SyncedWorld->GetImportId()) {LastAction=TEXT("controller not ready");return;}
+    if(LastActionAt>=0 && Now-LastActionAt<.08) {LastAction=TEXT("rate limited");return;}
+    LastActionAt=Now;Character->SwingHand();
+    FMinimalViewInfo View;Character->BridgeCamera->GetCameraView(0,View);
+    FIntVector Block;FVector Normal;
+    if(!SyncedWorld->Aim(View.Location,BridgeProtocol::ToRotation(P.Yaw,P.Pitch),500.f,Block,Normal,Character)) {LastAction=TEXT("no imported block in reach");return;}
+    if(P.Action==TEXT("break")) {LastAction=SyncedWorld->BreakBlock(Block) ? TEXT("broken") : TEXT("no block");return;}
+    if(P.HeldBlock.IsEmpty()) {LastAction=TEXT("select a full cube block");return;}
+    const FVector MinecraftNormal(-Normal.Y,Normal.Z,Normal.X);
+    int32 Axis=0;if(FMath::Abs(MinecraftNormal.Y)>FMath::Abs(MinecraftNormal.X)) Axis=1;
+    if(FMath::Abs(MinecraftNormal.Z)>FMath::Abs(MinecraftNormal[Axis])) Axis=2;
+    FIntVector Adjacent=Block;Adjacent[Axis]+=MinecraftNormal[Axis]>=0 ? 1 : -1;
+    LastAction=SyncedWorld->PlaceBlock(Adjacent,P.HeldBlock,P.HeldColor);
 }

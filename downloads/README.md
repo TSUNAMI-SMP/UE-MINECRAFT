@@ -1,5 +1,18 @@
 # ダウンロード
 
+## 最新版 0.6.0
+
+[MOD 0.6.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/minecraft-ue-bridge-0.6.0.jar)
+
+[UE更新ZIP 0.6.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-update-0.6.0.zip)
+
+[ソース＋MOD一式ZIP 0.6.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UE-Minecraft-MVP-0.6.0.zip)
+
+照準枠、UEでの設置・破壊、腕と手・持ち物、移動調整、非同期映像転送と遅延計測。
+**MODとUEの両方を更新し、UEを再ビルド**してください。[更新・操作・テスト手順](../docs/UPGRADE_0.6.0.md)。
+Sourceは使用中uprojectの横へ統合コピー。既存Content/Config/Savedを保持し、素材再インポートは不要。
+Java47件/Python10件成功。UE5.8ビルド・GPU・描画・統合検証はPCで必要です。
+
 [UE移動修正ZIP 0.5.2](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/UEBridge-movement-fix-0.5.2.zip)：初回着地後の移動停止とジャンプ速度を修正。ファイルを上書きしUE再ビルド。MOD0.5.0は維持。
 
 ## UEビルド修正 0.5.1
@@ -9,7 +22,7 @@
 0.5.0でBridgeWorld.cppのC4458/C2064が出る場合に適用。Sourceを上書きして再ビルド。
 MOD0.5.0と保存済みレベル/素材は変更不要です。下の0.5.0アーカイブには修正が入っていません。
 
-## 最新版 0.5.0
+## 過去版 0.5.0
 
 [MOD 0.5.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/main/downloads/minecraft-ue-bridge-0.5.0.jar)
 

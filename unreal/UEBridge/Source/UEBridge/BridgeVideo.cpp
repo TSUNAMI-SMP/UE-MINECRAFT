@@ -12,11 +12,35 @@
 #include "Async/Async.h"
 #include "GameFramework/Actor.h"
 #include "RHI.h"
+#include "RHIGPUReadback.h"
+#include "RenderingThread.h"
+#include <atomic>
+
+// Render-thread-owned RHI readback. Shared captures keep it alive through queued commands.
+struct FBridgeGpuFrame {
+    TUniquePtr<FRHIGPUTextureReadback> Readback;
+    std::atomic<bool> Polling{false}, Done{false};
+    TArray<FColor> Pixels;
+    FString Session;
+    int32 Width=0,Height=0,Quality=85;
+    uint32 Sequence=0;
+    uint64 Input=0;
+    double CapturedAt=0,ReadbackMs=0;
+};
 
 namespace {
 void Word(TArray<uint8>& Bytes,uint32 V) { Bytes.Add(uint8(V>>24)); Bytes.Add(uint8(V>>16)); Bytes.Add(uint8(V>>8)); Bytes.Add(uint8(V)); }
 }
-UBridgeVideo::UBridgeVideo() { PrimaryComponentTick.bCanEverTick=false; }
+UBridgeVideo::UBridgeVideo() {
+    PrimaryComponentTick.bCanEverTick=true;PrimaryComponentTick.TickGroup=TG_PostUpdateWork;
+}
+void UBridgeVideo::SetSource(UCameraComponent* Camera,const FString& Session,uint64 InputSequence) {
+    SourceCamera=Camera;SourceSession=Session;SourceInput=InputSequence;
+}
+void UBridgeVideo::TickComponent(float DeltaTime,ELevelTick TickType,FActorComponentTickFunction* ThisTickFunction) {
+    Super::TickComponent(DeltaTime,TickType,ThisTickFunction);
+    TickStream(SourceCamera.Get(),SourceSession,SourceInput);
+}
 void UBridgeVideo::Start(int32 Port) {
     if (Listener || Port<1024 || Port>65535) return;
     ISocketSubsystem* S=ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM); if (!S) return;
@@ -27,7 +51,7 @@ void UBridgeVideo::Start(int32 Port) {
         if (Listener) { Listener->Close(); S->DestroySocket(Listener); Listener=nullptr; } return;
     }
     FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-    UE_LOG(LogTemp,Display,TEXT("Bridge 0.5.0 video listening on 127.0.0.1:%d (TCP)"),Port);
+    UE_LOG(LogTemp,Display,TEXT("Bridge 0.6.0 video listening on 127.0.0.1:%d (TCP)"),Port);
 }
 void UBridgeVideo::DropClient() {
     if (Client) { Client->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Client); Client=nullptr; }
@@ -37,6 +61,11 @@ void UBridgeVideo::EndPlay(const EEndPlayReason::Type Reason) {
     DropClient();
     if (Listener) { Listener->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Listener); Listener=nullptr; }
     if (Encoding.IsValid()) Encoding.Wait(); // Worker owns pixels only; no UObject is touched by it.
+    // Only shutdown waits for render commands. No FlushRenderingCommands/ReadPixels occurs per frame.
+    if(!Readbacks.IsEmpty()) {
+        ENQUEUE_RENDER_COMMAND(BridgeFinishReadbacks)([Frames=Readbacks](FRHICommandListImmediate& RHICmdList) {RHICmdList.BlockUntilGPUIdle();});
+    }
+    FlushRenderingCommands();Readbacks.Empty();
     if (Capture) Capture->DestroyComponent(); Capture=nullptr; Target=nullptr;
     Super::EndPlay(Reason);
 }
@@ -50,7 +79,7 @@ void UBridgeVideo::Flush() {
     } else if (ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->GetLastErrorCode()!=SE_EWOULDBLOCK) DropClient();
     if (Client && !Output.IsEmpty() && FPlatformTime::Seconds()-LastProgress>2) DropClient();
 }
-void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session) {
+void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,uint64 InputSequence) {
     if (!Listener) return;
     ISocketSubsystem* S=ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM); const double Now=FPlatformTime::Seconds();
     if (Client && (Session.IsEmpty() || (!ClientSession.IsEmpty() && ClientSession!=Session))) DropClient();
@@ -60,7 +89,7 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session) {
         uint32 Ip=0; Peer->GetIp(Ip);
         if (Accepted) {
             if (Client || Ip!=0x7f000001 || Session.IsEmpty() || !Accepted->SetNonBlocking(true)) { Accepted->Close(); S->DestroySocket(Accepted); }
-            else { Client=Accepted; Client->SetNoDelay(true); AcceptedAt=LastProgress=Now; Hello.Empty(); }
+            else { Client=Accepted; Client->SetNoDelay(true);int32 ActualBuffer=0;Client->SetSendBufferSize(64*1024,ActualBuffer); AcceptedAt=LastProgress=Now; Hello.Empty(); }
         }
     }
     if (Client && ClientSession.IsEmpty()) {
@@ -79,38 +108,74 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session) {
         if (Streaming && ClientSession==EncodeSession && Output.IsEmpty()) { Output=MoveTemp(Frame); Sent=0; LastProgress=Now; }
     }
     Flush();
-    if (!Streaming || !Camera || Encoding.IsValid() || !Output.IsEmpty()
-        || (LastCapture>=0 && Now-LastCapture<1.0/FMath::Clamp(FramesPerSecond,1,30))) return;
-    const int32 W=FMath::Clamp(Width,160,1920), H=FMath::Clamp(Height,90,1080);
-    if (!Capture) {
+    // Poll fences on the render thread; never wait for the GPU on the game thread.
+    for(const auto& State:Readbacks) if(!State->Done.load() && !State->Polling.exchange(true)) {
+        ENQUEUE_RENDER_COMMAND(BridgePollPixels)([State](FRHICommandListImmediate& RHICmdList) {
+            if(State->Readback && State->Readback->IsReady()) {
+                int32 RowPitch=0,BufferHeight=0;
+                const auto* Data=static_cast<const FColor*>(State->Readback->Lock(RowPitch,&BufferHeight));
+                if(Data && RowPitch>=State->Width && BufferHeight>=State->Height) {
+                    State->Pixels.SetNumUninitialized(State->Width*State->Height);
+                    for(int32 Y=0;Y<State->Height;++Y) FMemory::Memcpy(State->Pixels.GetData()+Y*State->Width,Data+Y*RowPitch,State->Width*sizeof(FColor));
+                }
+                if(Data) State->Readback->Unlock();
+                State->ReadbackMs=(FPlatformTime::Seconds()-State->CapturedAt)*1000;
+                State->Done.store(true);
+            }
+            State->Polling.store(false);
+        });
+    }
+    if(!Encoding.IsValid() && Output.IsEmpty()) {
+        TSharedPtr<FBridgeGpuFrame,ESPMode::ThreadSafe> Ready;
+        for(const auto& State:Readbacks) if(State->Done.load() && (!Ready || State->Sequence>Ready->Sequence)) Ready=State;
+        Readbacks.RemoveAll([&](const auto& State){return State->Done.load() && (!Ready || State->Sequence<=Ready->Sequence);});
+        if(Ready && Streaming && Ready->Session==ClientSession && Ready->Pixels.Num()==Ready->Width*Ready->Height && Now-Ready->CapturedAt<.25) {
+            EncodeSession=Ready->Session;
+            IImageWrapperModule* Images=&FModuleManager::GetModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+            Encoding=Async(EAsyncExecution::ThreadPool,[Ready,Images]() {
+                TArray<uint8> Frame;const double EncodeAt=FPlatformTime::Seconds();
+                auto Jpeg=Images->CreateImageWrapper(EImageFormat::JPEG);
+                if(!Jpeg || !Jpeg->SetRaw(Ready->Pixels.GetData(),int64(Ready->Pixels.Num())*sizeof(FColor),Ready->Width,Ready->Height,ERGBFormat::BGRA,8)) return Frame;
+                const auto& Bytes=Jpeg->GetCompressed(Ready->Quality);if(Bytes.Num()<4 || Bytes.Num()>2*1024*1024) return Frame;
+                const double EncodeMs=(FPlatformTime::Seconds()-EncodeAt)*1000;
+                Word(Frame,0x55454256);Word(Frame,2);Word(Frame,Ready->Width);Word(Frame,Ready->Height);Word(Frame,Ready->Sequence);Word(Frame,uint32(Bytes.Num()));
+                Word(Frame,uint32(Ready->Input>>32));Word(Frame,uint32(Ready->Input));
+                Word(Frame,uint32(FMath::Clamp(Ready->ReadbackMs*1000,0.0,10000000.0)));
+                Word(Frame,uint32(FMath::Clamp(EncodeMs*1000,0.0,10000000.0)));
+                Frame.Append(Bytes.GetData(),int32(Bytes.Num()));return Frame;
+            });
+        }
+    }
+    if(!Streaming || !Camera || Readbacks.Num()>=2 || !Output.IsEmpty()
+        || (LastCapture>=0 && Now-LastCapture<1.0/FMath::Clamp(FramesPerSecond,1,60))) return;
+    const int32 W=FMath::Clamp(Width,160,1920),H=FMath::Clamp(Height,90,1080);
+    if(!Capture) {
         Capture=NewObject<USceneCaptureComponent2D>(GetOwner());
-        Capture->bCaptureEveryFrame=false; Capture->bCaptureOnMovement=false;
-        Capture->bAlwaysPersistRenderingState=true; // Keep exposure/TAA history between explicit captures.
-        Capture->CaptureSource=ESceneCaptureSource::SCS_FinalColorLDR; Capture->RegisterComponent();
+        Capture->bCaptureEveryFrame=false;Capture->bCaptureOnMovement=false;
+        Capture->bAlwaysPersistRenderingState=true;
+        Capture->CaptureSource=ESceneCaptureSource::SCS_FinalColorLDR;Capture->RegisterComponent();
     }
-    if (!Target || Target->SizeX!=W || Target->SizeY!=H) {
-        Target=NewObject<UTextureRenderTarget2D>(this);
-        Target->ClearColor=FLinearColor::Black; Target->TargetGamma=2.2f;
-        Target->InitCustomFormat(W,H,PF_B8G8R8A8,false); Capture->TextureTarget=Target;
+    if(!Target || Target->SizeX!=W || Target->SizeY!=H) {
+        Target=NewObject<UTextureRenderTarget2D>(this);Target->ClearColor=FLinearColor::Black;Target->TargetGamma=2.2f;
+        Target->InitCustomFormat(W,H,PF_B8G8R8A8,false);Capture->TextureTarget=Target;
     }
-    FMinimalViewInfo View; Camera->GetCameraView(0,View);
-    Capture->SetWorldLocationAndRotation(View.Location,View.Rotation); Capture->FOVAngle=View.FOV;
-    Capture->PostProcessSettings=View.PostProcessSettings; Capture->PostProcessBlendWeight=View.PostProcessBlendWeight;
-    if (!FMath::IsNearlyZero(ExposureCompensation)) {
+    FMinimalViewInfo View;Camera->GetCameraView(0,View);
+    Capture->SetWorldLocationAndRotation(View.Location,View.Rotation);Capture->FOVAngle=View.FOV;
+    Capture->PostProcessSettings=View.PostProcessSettings;Capture->PostProcessBlendWeight=View.PostProcessBlendWeight;
+    if(!FMath::IsNearlyZero(ExposureCompensation)) {
         Capture->PostProcessSettings.bOverride_AutoExposureBias=true;
         Capture->PostProcessSettings.AutoExposureBias=View.PostProcessSettings.AutoExposureBias+FMath::Clamp(ExposureCompensation,-6.f,6.f);
         Capture->PostProcessBlendWeight=1;
     }
-    Capture->CaptureScene();
-    TArray<FColor> Pixels; FReadSurfaceDataFlags Flags(RCM_UNorm); Flags.SetLinearToGamma(false);
-    if (!Target->GameThread_GetRenderTargetResource()->ReadPixels(Pixels,Flags) || Pixels.Num()!=W*H) return;
-    LastCapture=Now; EncodeSession=Session; const uint32 FrameSequence=++Sequence; const int32 Q=FMath::Clamp(Quality,30,95);
-    IImageWrapperModule* Images=&FModuleManager::GetModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-    Encoding=Async(EAsyncExecution::ThreadPool,[Pixels=MoveTemp(Pixels),W,H,Q,FrameSequence,Images]() {
-        TArray<uint8> Frame; auto Jpeg=Images->CreateImageWrapper(EImageFormat::JPEG);
-        if (!Jpeg || !Jpeg->SetRaw(Pixels.GetData(),int64(Pixels.Num())*sizeof(FColor),W,H,ERGBFormat::BGRA,8)) return Frame;
-        const auto& Bytes=Jpeg->GetCompressed(Q); if (Bytes.Num()<4 || Bytes.Num()>2*1024*1024) return Frame;
-        Word(Frame,0x55454256); Word(Frame,1); Word(Frame,W); Word(Frame,H); Word(Frame,FrameSequence); Word(Frame,uint32(Bytes.Num()));
-        Frame.Append(Bytes.GetData(),int32(Bytes.Num())); return Frame;
+    Capture->CaptureScene();LastCapture=Now;
+    auto State=MakeShared<FBridgeGpuFrame,ESPMode::ThreadSafe>();
+    State->Width=W;State->Height=H;State->Quality=FMath::Clamp(Quality,30,95);State->Sequence=++Sequence;
+    State->Session=Session;State->Input=InputSequence;State->CapturedAt=Now;Readbacks.Add(State);
+    // Hold the RHI texture across a resolution change. CaptureScene and copy use render queue order.
+    FTextureRHIRef Texture=Target->GameThread_GetRenderTargetResource()->GetRenderTargetTexture();
+    ENQUEUE_RENDER_COMMAND(BridgeReadPixelsAsync)([State,Texture](FRHICommandListImmediate& RHICmdList) {
+        if(!Texture.IsValid()) {State->Done.store(true);return;}
+        State->Readback=MakeUnique<FRHIGPUTextureReadback>(TEXT("UEBridgeFrame"));
+        State->Readback->EnqueueCopy(RHICmdList,Texture.GetReference());
     });
 }

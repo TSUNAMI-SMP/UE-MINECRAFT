@@ -13,7 +13,7 @@ ABridgeBlockPreview::ABridgeBlockPreview() {
 }
 void ABridgeBlockPreview::Clear() {
     for (auto& Group : Groups) if (Group) Group->DestroyComponent();
-    Groups.Empty();
+    Groups.Empty(); InstanceBlocks.Empty();
 }
 void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Blocks, const FVector& Anchor, UMaterialInterface* Material,UBridgeBlockPalette* Palette,bool Physics) {
     Clear(); if (!Cube) return;
@@ -37,8 +37,15 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Blocks, const FVec
             }
             Group->RegisterComponent(); Groups.Add(Group);
         }
+        InstanceBlocks.FindOrAdd(Group).Add(Block);
         // UE's built-in cube has side 100 cm, matching one Minecraft block.
         Group->AddInstance(FTransform(FQuat::Identity, BridgeProtocol::ToUnreal(Block.Position, Anchor),
             FVector(Block.Size.Z, Block.Size.X, Block.Size.Y)), true);
     }
+}
+
+bool ABridgeBlockPreview::ResolveHit(const UPrimitiveComponent* Component,int32 Instance,FBridgeBlock& Out) const {
+    const auto* Blocks=InstanceBlocks.Find(Component);
+    if(!Blocks || !Blocks->IsValidIndex(Instance)) return false;
+    Out=(*Blocks)[Instance]; return true;
 }

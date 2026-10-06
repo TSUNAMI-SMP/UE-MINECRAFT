@@ -103,3 +103,60 @@ int32 ABridgeWorld::RemoveBlocksInSphere(FVector Position,float RemovalRadius) {
     }
     return Removed;
 }
+
+namespace {
+FIntVector CellOf(const FIntVector& Block) {
+    return FIntVector(FMath::FloorToInt(Block.X/8.0),FMath::FloorToInt(Block.Y/8.0),FMath::FloorToInt(Block.Z/8.0));
+}
+}
+FIntVector ABridgeWorld::OwnerOf(const FBridgeBlock& Block) const {
+    if(Block.HasSourceBlock) return Block.SourceBlock;
+    const FVector Absolute=Block.Position+ImportOrigin;
+    return FIntVector(FMath::FloorToInt(Absolute.X),FMath::FloorToInt(Absolute.Y),FMath::FloorToInt(Absolute.Z));
+}
+FVector ABridgeWorld::BlockCenter(const FIntVector& Block) const {
+    return BridgeProtocol::ToUnreal(FVector(Block)+FVector(.5)-ImportOrigin,ImportAnchor);
+}
+bool ABridgeWorld::Aim(const FVector& Start,const FRotator& Rotation,float Reach,FIntVector& Block,FVector& Normal,const AActor* Ignored) const {
+    if(!Sealed) return false;
+    FHitResult Hit;
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(BridgeAim),false);
+    if(Ignored) Params.AddIgnoredActor(Ignored);
+    if(!GetWorld()->LineTraceSingleByChannel(Hit,Start,Start+Rotation.Vector()*Reach,ECC_Visibility,Params)) return false;
+    const auto* PreviewActor=Cast<ABridgeBlockPreview>(Hit.GetActor());
+    FBridgeBlock Shape;
+    if(!PreviewActor || !PreviewActor->ResolveHit(Hit.GetComponent(),Hit.Item,Shape)) return false;
+    const FIntVector Owner=OwnerOf(Shape); const auto* Cell=Cells.Find(CellOf(Owner));
+    if(!Cell || Cell->Get()!=PreviewActor) return false;
+    Block=Owner;Normal=Hit.ImpactNormal; return true;
+}
+void ABridgeWorld::RebuildCell(const FIntVector& CellKey) {
+    auto& Actor=Cells.FindOrAdd(CellKey);
+    if(!IsValid(Actor)) Actor=GetWorld()->SpawnActor<ABridgeBlockPreview>();
+    if(Actor) Actor->Replace(Stored.FindChecked(CellKey),ImportAnchor,SavedMaterial,SavedPalette,true);
+    Counts.Add(CellKey,Stored.FindChecked(CellKey).Num());
+}
+bool ABridgeWorld::BreakBlock(const FIntVector& Block) {
+    if(!Sealed) return false;
+    const FIntVector CellKey=CellOf(Block);auto* Data=Stored.Find(CellKey); if(!Data) return false;
+    const int32 Count=Data->RemoveAll([&](const FBridgeBlock& Shape){return OwnerOf(Shape)==Block;});
+    if(!Count) return false;
+    Shapes-=Count;RebuildCell(CellKey);return true;
+}
+FString ABridgeWorld::PlaceBlock(const FIntVector& Block,const FString& BlockId,int32 Color) {
+    const FIntVector CellKey=CellOf(Block);
+    if(!Sealed || !Inside(CellKey) || !Revisions.Contains(CellKey)) return TEXT("outside import");
+    auto* Data=Stored.Find(CellKey);if(!Data) return TEXT("cell unavailable");
+    for(const auto& Shape:*Data) if(OwnerOf(Shape)==Block) return TEXT("occupied");
+    if(Data->Num()>=8192 || Shapes>=131072) return TEXT("shape limit");
+    TSet<int32> Colors;TSet<FString> Groups;
+    for(const auto& Shape:*Data) {Colors.Add(Shape.Color);Groups.Add(FString::Printf(TEXT("%s#%d#%d"),*Shape.BlockId,Shape.Color,Shape.Collision));}
+    Colors.Add(Color);Groups.Add(FString::Printf(TEXT("%s#%d#1"),*BlockId,Color));
+    if(Colors.Num()>64 || Groups.Num()>256) return TEXT("material limit");
+    // A small inset avoids rejecting a face shared with the supporting block.
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(BridgePlace),false);
+    if(GetWorld()->OverlapBlockingTestByChannel(BlockCenter(Block),FQuat::Identity,ECC_Pawn,FCollisionShape::MakeBox(FVector(49.9)),Params)) return TEXT("blocked by body or geometry");
+    FBridgeBlock Shape;Shape.Position=FVector(Block)+FVector(.5)-ImportOrigin;
+    Shape.BlockId=BlockId;Shape.Color=Color;Shape.Collision=true;Shape.SourceBlock=Block;Shape.HasSourceBlock=true;
+    Data->Add(Shape);++Shapes;RebuildCell(CellKey);return TEXT("placed");
+}

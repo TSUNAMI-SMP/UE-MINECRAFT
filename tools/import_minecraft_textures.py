@@ -148,10 +148,10 @@ def import_minecraft_textures(filename):
                 raise RuntimeError("Texture asset name is occupied by a different type")
             imported[identifier] = texture
 
-        parent_path = root + "/M_MinecraftFaces_v2"
+        parent_path = root + "/M_MinecraftFaces_v3"
         parent = unreal.load_asset(parent_path) if assets.does_asset_exist(parent_path) else None
         if parent is None:
-            parent = tools.create_asset("M_MinecraftFaces_v2", root, unreal.Material, unreal.MaterialFactoryNew())
+            parent = tools.create_asset("M_MinecraftFaces_v3", root, unreal.Material, unreal.MaterialFactoryNew())
             if parent is None:
                 raise RuntimeError("Cannot create texture master material")
             parent.set_editor_property("used_with_instanced_static_meshes", True)
@@ -164,7 +164,7 @@ def import_minecraft_textures(filename):
 
             def wire(a, b, pin="", output=""):
                 if not editing.connect_material_expressions(a, output, b, pin):
-                    raise RuntimeError("Cannot connect texture material")
+                    raise RuntimeError("Cannot connect " + a.get_class().get_name() + ":" + output + " -> " + b.get_class().get_name() + ":" + pin)
 
             color = node(unreal.MaterialExpressionVectorParameter)
             color.set_editor_property("parameter_name", "BlockColor")
@@ -188,10 +188,10 @@ def import_minecraft_textures(filename):
             z = node(unreal.MaterialExpressionComponentMask)
             z.set_editor_property("r", False); z.set_editor_property("g", False)
             z.set_editor_property("b", True); z.set_editor_property("a", False)
-            wire(normal, z, "Input")
-            top = node(unreal.MaterialExpressionClamp); wire(z, top, "Input")
+            wire(normal, z)
+            top = node(unreal.MaterialExpressionClamp); wire(z, top)
             negative = node(unreal.MaterialExpressionMultiply); negative.set_editor_property("const_b", -1.0); wire(z, negative, "A")
-            bottom = node(unreal.MaterialExpressionClamp); wire(negative, bottom, "Input")
+            bottom = node(unreal.MaterialExpressionClamp); wire(negative, bottom)
             first = node(unreal.MaterialExpressionLinearInterpolate)
             wire(channels["Side"], first, "A"); wire(channels["Top"], first, "B"); wire(top, first, "Alpha")
             result = node(unreal.MaterialExpressionLinearInterpolate)
@@ -217,7 +217,7 @@ def import_minecraft_textures(filename):
                 raise RuntimeError("Import cancelled; palette and level unchanged")
             progress.enter_progress_frame(1, identifier)
             content = {face: {"hash": manifest["textures"][entry[face]["texture"]]["sha256"], "tint": entry[face]["tint"]} for face in ("top", "side", "bottom")}
-            digest = hashlib.sha256(json.dumps({"master_version": 2, "faces": content}, sort_keys=True).encode()).hexdigest()
+            digest = hashlib.sha256(json.dumps({"master_version": 3, "faces": content}, sort_keys=True).encode()).hexdigest()
             name = asset_name("MI_", identifier, digest)
             folder = root + "/Materials"
             target = folder + "/" + name

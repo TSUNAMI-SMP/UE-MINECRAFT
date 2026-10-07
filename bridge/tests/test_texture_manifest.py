@@ -218,7 +218,7 @@ class MaterialGraphTest(unittest.TestCase):
             MaterialParameterCollection=Collection, MaterialParameterCollectionFactoryNew=lambda: None,
             CollectionScalarParameter=Property, CollectionVectorParameter=Property, Guid=lambda *args: args,
             CustomMaterialOutputType=types.SimpleNamespace(CMOT_FLOAT3='float3'), CustomInput=CustomInput)
-        for name in ("TextureSampleParameter2D", "VectorParameter", "ScalarParameter", "Constant3Vector", "LinearInterpolate", "Multiply", "Constant", 'CollectionParameter', 'Add', 'VertexColor', 'Custom', 'PixelNormalWS'):
+        for name in ("TextureSampleParameter2D", "VectorParameter", "ScalarParameter", "Constant3Vector", "LinearInterpolate", "Multiply", "Constant", 'CollectionParameter', 'Add', 'VertexColor', 'Custom', 'PixelNormalWS', 'TextureCoordinate', 'Frac', 'AppendVector'):
             setattr(self.unreal, "MaterialExpression" + name, type(name, (), {}))
         self.assets = types.SimpleNamespace(does_asset_exist=lambda path: path in self.assets_by_path,
             save_loaded_asset=lambda material, force: self.saved.append(material) is None)
@@ -230,6 +230,8 @@ class MaterialGraphTest(unittest.TestCase):
         def node(material, kind, x, y):
             result = Expression(kind.__name__); material.nodes.append(result); return result
         def connect(a, output, b, pin):
+            if a.kind == 'VertexColor' and output not in ('', 'RGB', 'R', 'G', 'B', 'A'):
+                return False
             b.inputs[pin] = (a, output); return True
         def output(node_value, pin, target):
             for material in self.assets_by_path.values():
@@ -305,8 +307,24 @@ class MaterialGraphTest(unittest.TestCase):
         self.assertEqual('PixelNormalWS', actor_shade.inputs['WorldNormal'][0].kind)
         self.assertEqual(['WorldNormal'], [entry.get_editor_property('input_name') for entry in actor_shade.properties['inputs']])
         self.assertEqual('VertexColor', blend.inputs['B'][0].kind)
-        self.assertEqual('RGBA', blend.inputs['B'][1])
+        self.assertEqual('', blend.inputs['B'][1])
         self.assertEqual(1.0, blend.inputs['Alpha'][0].properties['default_value'])
+
+    def test_atlas_lighting_preserves_separate_alpha_tint(self):
+        atlas_spec = importlib.util.spec_from_file_location('atlas_graph_test', SCRIPT.with_name('import_minecraft_atlas.py'))
+        atlas = importlib.util.module_from_spec(atlas_spec)
+        atlas_spec.loader.exec_module(atlas)
+        for translucent in (False, True):
+            with self.subTest(translucent=translucent):
+                material = atlas._atlas_master(self.unreal, self.assets, self.tools, self.editing, '/Game/Bridge/Minecraft', object(), translucent)
+                lightmap = next(n for n in material.nodes if n.kind == 'Custom' and n.properties.get('description') == 'Bridge native lightmap v1')
+                vertex, output = lightmap.inputs['Light'][0].inputs['B']
+                self.assertEqual('VertexColor', vertex.kind)
+                self.assertEqual('', output)
+                tint = next(n for n in material.nodes if n.kind == 'AppendVector')
+                self.assertEqual((vertex, 'A'), tint.inputs['B'])
+                alpha = 'opacity' if translucent else 'mask'
+                self.assertEqual('A', material.outputs[alpha][1])
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ Fabric **Minecraft Java 1.21.11 / Java 21** から地形・素材・スキン・
 書き出し、**Unreal Engine 5.8で直接プレイ** する実験用プロジェクトです。
 書き出し後はMinecraftを終了できます。UE映像をMinecraftへ送る従来の接続モードも残しています。
 
-**0.12.1のWindows UE 5.8.3ビルド成功を利用者ログで確認しました。** 取り込みで確認したWorld設定APIのAttributeErrorには[修正版0.12.3](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.3/downloads/UEBridge-update-0.12.3.zip)と[適用手順](docs/UPGRADE_0.12.3.md)を使用してください。修正後の実機取り込み・描画は未確認です。MODは0.12.0を継続します。
+**Windows UE 5.8.3のC++ビルド成功と、nativeテクスチャ取り込みへの進行を利用者ログで確認しました。** 照明マテリアル接続の停止には[修正版0.12.4](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.4/downloads/UEBridge-update-0.12.4.zip)と[適用手順](docs/UPGRADE_0.12.4.md)を使用してください。修正後の実機取り込み完了・描画は未確認です。MODは0.12.0を継続します。
 
 **UE単独プレイ0.12.0：** `/uebridge native export` の1回で書き出し、**Play-Native.cmd** の初回ファイル選択でビルド・取り込み・起動。次回はダブルクリックで保存状態を再開します。直接入力、手元のリソースパックを使うHUD、インベントリ・検索、モブPaletteの作成と割り当て、光・粒子・診断の修正、地形・所持品・モブ・投下物の永続化を実装しました。
 

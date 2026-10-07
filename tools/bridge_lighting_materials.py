@@ -68,7 +68,7 @@ return lerp(c / 12.92, pow((c + .055) / 1.055, 2.4), step(.04045,c));
 '''
 
 
-def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None, use_vertex=True, vertex_output='RGBA'):
+def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None, use_vertex=True, vertex_output=''):
     """Connect colour outputs; preserves texture alpha and caller's UV/tint graph."""
     collection = ensure_lighting_collection(unreal)
     def node(cls):
@@ -78,7 +78,7 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
         return result
     def wire(source, target, pin='', output=''):
         if not editing.connect_material_expressions(source, output, target, pin):
-            raise RuntimeError('Cannot wire generated lighting: ' + pin)
+            raise RuntimeError('Cannot wire generated lighting: ' + type(source).__name__ + '.' + (output or '<first output>') + ' -> ' + type(target).__name__ + '.' + (pin or '<first input>'))
     def parameter(name, default):
         if name == 'BridgeSpecular':
             getter = getattr(editing, 'get_material_property_input_node', None)
@@ -122,8 +122,9 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
         'return float3(1,1,shade);')
     wire(normal, actor_shade, 'WorldNormal')
     shaded_actor = node(unreal.MaterialExpressionMultiply); wire(actor, shaded_actor, 'A'); wire(actor_shade, shaded_actor, 'B')
-    # Face/item masters deliberately use the actor branch only. UE5.8 rejects a
-    # VertexColor connection on this path when its graph has no vertex payload.
+    # VertexColor exposes RGB/R/G/B/A, not RGBA. An empty output name selects
+    # its first (RGB) output for sky light, block light and AO/shade.
+    # Item/entity graphs without a terrain payload use the actor branch.
     if use_vertex:
         vertex = vertex_node or node(unreal.MaterialExpressionVertexColor)
         blend = node(unreal.MaterialExpressionLinearInterpolate)

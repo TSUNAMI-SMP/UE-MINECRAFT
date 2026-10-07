@@ -1,5 +1,12 @@
 # ダウンロード
 
+## UE照明マテリアル修正版0.12.4
+
+VertexColorのRGBA出力指定による取り込み停止を修正します。0.12.3適用済みならZIP内のbridge_lighting_materials.pyとimport_minecraft_atlas.pyだけを上書きし再取り込みできます。C++再ビルド・MOD交換・再書き出しは不要です。修正後の実機取り込み完了・描画は未確認です。
+
+- [UE更新ZIP 0.12.4](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.4/downloads/UEBridge-update-0.12.4.zip)
+- [適用・再試行手順](../docs/UPGRADE_0.12.4.md)
+
 ## UE取り込みAPI修正版0.12.3
 
 取り込みログで確認したGameplayStaticsのAttributeErrorを修正します。0.12.2適用済みならZIP内のimport_native_play.pyだけを上書きして再取り込みできます。MOD交換・再書き出しは不要です。修正後の実機取り込み・描画は未確認です。

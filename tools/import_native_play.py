@@ -250,7 +250,9 @@ def import_native_play(filename):
     if not level.new_level(staging_map):
         raise RuntimeError('Cannot create the separate native staging map')
     game_world = editor.get_editor_world()
-    world_settings = unreal.GameplayStatics.get_world_settings(game_world)
+    if game_world is None:
+        raise RuntimeError('Cannot obtain native staging editor world')
+    world_settings = game_world.get_world_settings()
     if world_settings is None:
         raise RuntimeError('Cannot obtain native level world settings')
     world_settings.set_editor_property('default_game_mode', unreal.BridgeGameMode)

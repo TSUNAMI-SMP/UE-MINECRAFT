@@ -1,5 +1,12 @@
 # ダウンロード
 
+## UE取り込みAPI修正版0.12.3
+
+取り込みログで確認したGameplayStaticsのAttributeErrorを修正します。0.12.2適用済みならZIP内のimport_native_play.pyだけを上書きして再取り込みできます。MOD交換・再書き出しは不要です。修正後の実機取り込み・描画は未確認です。
+
+- [UE更新ZIP 0.12.3](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.3/downloads/UEBridge-update-0.12.3.zip)
+- [適用・再試行手順](../docs/UPGRADE_0.12.3.md)
+
 ## UE取り込み診断更新0.12.2
 
 0.12.1のWindows UEビルド成功は利用者ログで確認しました。取り込みの根本原因は未特定です。専用ログとPython例外全文を保存する診断更新です。

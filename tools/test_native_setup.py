@@ -240,7 +240,8 @@ class FakeEditor:
         m.Vector = m.Rotator = lambda *args: args
         m.Name = str
         m.Paths = types.SimpleNamespace(project_dir=lambda: str(project), convert_relative_path_to_full=lambda p: p)
-        m.GameplayStatics = types.SimpleNamespace(get_world_settings=lambda world: world.settings)
+        # GameplayStatics has no get_world_settings in the UE Python API.
+        m.GameplayStatics = types.SimpleNamespace()
         m.log = m.log_error = self.logs.append
         m.SystemLibrary = types.SimpleNamespace(quit_editor=self.quit, get_command_line=lambda: '')
         m.get_editor_subsystem = lambda cls: self
@@ -327,6 +328,8 @@ class NativeSetupPublication(unittest.TestCase):
         self.assertEqual(marker['manifestSha256'], hashlib.sha256(self.fixture.path.read_bytes()).hexdigest())
         self.assertEqual(marker['map'], native.NATIVE_MAP)
         self.assertEqual(self.editor.published, [native.NATIVE_MAP])
+        self.assertIs(self.editor.maps[native.NATIVE_MAP].settings.get_editor_property('default_game_mode'), self.editor.module.BridgeGameMode)
+        self.assertEqual(self.editor.maps['/Game/UE'].settings.properties, {})
         self.assertEqual(len(self.editor.maps['/Game/UE'].actors), 0)
         self.assertEqual(receiver.get_editor_property('native_world_file'), str(self.fixture.path))
         roots = dict(self.roots)

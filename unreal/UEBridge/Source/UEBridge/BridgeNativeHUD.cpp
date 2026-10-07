@@ -307,6 +307,9 @@ void ABridgeNativeHUD::EnsureSearchWidget() {
     SearchViewport = GEngine->GameViewport;
     SearchOverlay = SNew(SOverlay)
         + SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top)
+        // Overlay slot padding is a value, not a bound Slate attribute in UE 5.8.
+        // SBox owns the dynamic padding so resize/GUI scale still move the field.
+        [ SNew(SBox)
         .Padding_Lambda([this] { return FMargin(SearchWidgetBounds.Min.X, SearchWidgetBounds.Min.Y, 0, 0); })
         [ SNew(SBox).WidthOverride_Lambda([this] { return SearchWidgetBounds.GetSize().X; }).HeightOverride_Lambda([this] { return SearchWidgetBounds.GetSize().Y; })
           [ SAssignNew(SearchField, SEditableTextBox)
@@ -316,7 +319,7 @@ void ABridgeNativeHUD::EnsureSearchWidget() {
                 if (Event.GetKey() == EKeys::Escape) { if (auto* Control = NativeController()) Control->ToggleInventory(); return FReply::Handled(); }
                 return FReply::Unhandled();
             })
-            .OnTextChanged_Lambda([this](const FText& Value) { Search = Value.ToString().Left(128); RebuildCatalogue(); }) ] ];
+            .OnTextChanged_Lambda([this](const FText& Value) { Search = Value.ToString().Left(128); RebuildCatalogue(); }) ] ] ];
     SearchOverlay->SetVisibility(EVisibility::Collapsed); SearchViewport->AddViewportWidgetContent(SearchOverlay.ToSharedRef(), 30);
 }
 

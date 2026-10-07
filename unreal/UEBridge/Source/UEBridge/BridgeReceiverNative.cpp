@@ -6,6 +6,7 @@
 #include "BridgeNativeSoundPalette.h"
 #include "BridgeWorld.h"
 #include "BridgeCharacter.h"
+#include "BridgePlayerAppearance.h"
 #include "BridgeBlockPalette.h"
 #include "BridgeMobWorld.h"
 #include "BridgeItemWorld.h"
@@ -74,7 +75,7 @@ void ABridgeReceiver::BeginNativePlay() {
             double Volume;if((*Settings)->TryGetNumberField(TEXT("soundMasterVolume"),Volume)) NativeMasterVolume=FMath::Clamp(float(Volume),0.f,1.f);
             const TSharedPtr<FJsonObject>* Volumes=nullptr;
             if((*Settings)->TryGetObjectField(TEXT("soundVolumes"),Volumes)) for(const auto& Pair:(*Volumes)->Values) {
-                double Value;if(Pair.Value->TryGetNumber(Value)) NativeSoundVolumes.Add(Pair.Key,FMath::Clamp(float(Value),0.f,1.f));
+                double Value;if(Pair.Value->TryGetNumber(Value)) NativeSoundVolumes.Add(FString(*Pair.Key),FMath::Clamp(float(Value),0.f,1.f));
             }
             (*Settings)->SetStringField(TEXT("profile"),Session);
             if(auto* PC=Controller(this)) {PC->ConfigureNativeSettings(*Settings);NativeControllerConfigured=true;}
@@ -105,7 +106,7 @@ void ABridgeReceiver::BeginNativePlay() {
     Video->SetNativeSkyEnvironment(LatestInput.VanillaLight);
     NativeSetLighting(NativeLighting);
     NativeStatus=TEXT("Validating offline world...");
-    UE_LOG(LogTemp,Display,TEXT("Bridge 0.12.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
+    UE_LOG(LogTemp,Display,TEXT("Bridge 0.12.1 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
 }
 
 void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
@@ -403,8 +404,8 @@ void ABridgeReceiver::PlayNativeSound(const FString& Id,const FVector& Position,
     UGameplayStatics::PlaySoundAtLocation(this,Selected->Wave,Position,FRotator::ZeroRotator,
         FMath::Clamp(Volume*Selected->Volume*NativeMasterVolume*CategoryVolume,0.f,4.f),FMath::Clamp(Pitch*Selected->Pitch,.1f,4.f),0,NativeSoundAttenuation);
 }
-void ABridgeReceiver::LogDiagnostics(double Now,bool Force) {
-    if(!Force && NativeLastDiagnostic>=0 && Now-NativeLastDiagnostic<5) return;
+void ABridgeReceiver::LogDiagnostics(double Now,bool bForceLog) {
+    if(!bForceLog && NativeLastDiagnostic>=0 && Now-NativeLastDiagnostic<5) return;
     NativeLastDiagnostic=Now;
     if(NativePlayActive && ItemWorld) {
         const auto Live=ItemWorld->GetTransactionIds();

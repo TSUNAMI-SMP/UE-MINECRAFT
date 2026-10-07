@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Make a source-only UE update with local build helper, preserving existing levels."""
+import argparse
 import hashlib
 import pathlib
 import re
@@ -8,12 +9,17 @@ import zipfile
 from ue_package_files import UE_LAUNCHERS, UE_PYTHON_HELPERS, require_ue_package_files
 
 root = pathlib.Path(__file__).resolve().parents[1]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--ue-version", help="UE-only update version; does not change or package the MOD")
+args = parser.parse_args()
 if subprocess.run(["git", "diff", "--quiet"], cwd=root).returncode != 0:
     raise SystemExit("Stage intended source changes before packaging")
 match = re.search(r"^mod_version=([0-9]+\.[0-9]+\.[0-9]+)$", (root / "minecraft-mod/gradle.properties").read_text(), re.M)
 if not match:
     raise SystemExit("Missing mod version")
-version = match.group(1)
+version = args.ue_version or match.group(1)
+if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+    raise SystemExit("UE update version must be major.minor.patch")
 require_ue_package_files(root)
 instructions = root / f"docs/UPGRADE_{version}.md"
 if not instructions.is_file():

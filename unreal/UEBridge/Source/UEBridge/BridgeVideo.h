@@ -72,7 +72,7 @@ private:
     TMap<TWeakObjectPtr<class UPrimitiveComponent>,bool> NativeHiddenSky;
     double NativeTimeOfDay=6000,NativeSkyEpoch=0;
     float NativeRain=0;
-    FLinearColor NativeBackgroundColor=FLinearColor(.47,.65,1,1);
+    FLinearColor NativeBackgroundColor=FLinearColor(.47f,.65f,1.f,1.f);
     TWeakObjectPtr<class UGameViewportClient> StandaloneViewport;
     bool SavedViewportDisabled=false;
     uint32 ModeRevision=0,EncodeRevision=0;

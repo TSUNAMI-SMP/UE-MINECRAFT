@@ -13,7 +13,7 @@ public:
     virtual void BeginPlay() override;
     virtual void Tick(float DeltaSeconds) override;
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
-    virtual bool InputKey(const FInputKeyParams& Params) override;
+    virtual bool InputKey(const FInputKeyEventArgs& Params) override;
     void ConfigureNativeSettings(const TSharedPtr<class FJsonObject>& Settings);
     bool RestoreNativeInventory(const TSharedPtr<class FJsonObject>& State);
     bool IsSavedInventoryValid() const {return !bSavedInventoryRejected;}

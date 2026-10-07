@@ -231,7 +231,10 @@ bool ABridgeMobWorld::ImportNativeSnapshots(const TArray<TSharedPtr<FJsonValue>>
         // original saved pose or the terrain has since changed.
         Mob->SetNativeViewPitch(Pitch[I]);
     }
-    if(Complete) UE_LOG(LogTemp,Display,TEXT("Bridge native mobs restored: requested=%d alive=%d complete=true"),Snapshots.Num(),AliveCount());
-    else UE_LOG(LogTemp,Warning,TEXT("Bridge native mobs restored: requested=%d alive=%d complete=false"),Snapshots.Num(),AliveCount());
+    if(Complete) {
+        UE_LOG(LogTemp,Display,TEXT("Bridge native mobs restored: requested=%d alive=%d complete=true"),Snapshots.Num(),AliveCount());
+    } else {
+        UE_LOG(LogTemp,Warning,TEXT("Bridge native mobs restored: requested=%d alive=%d complete=false"),Snapshots.Num(),AliveCount());
+    }
     return Complete;
 }

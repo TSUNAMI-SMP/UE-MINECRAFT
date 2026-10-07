@@ -13,6 +13,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "UnrealClient.h"
 #include "InputCoreTypes.h"
+#include "InputKeyEventArgs.h"
 
 ABridgeNativePlayerController::ABridgeNativePlayerController() {
     PrimaryActorTick.bCanEverTick=true;
@@ -71,7 +72,9 @@ FKey ABridgeNativePlayerController::MinecraftKey(const FString& TranslationKey) 
         {TEXT("home"),EKeys::Home},{TEXT("end"),EKeys::End},{TEXT("page.up"),EKeys::PageUp},{TEXT("page.down"),EKeys::PageDown},
         {TEXT("up"),EKeys::Up},{TEXT("down"),EKeys::Down},{TEXT("left"),EKeys::Left},{TEXT("right"),EKeys::Right},
         {TEXT("caps.lock"),EKeys::CapsLock},{TEXT("num.lock"),EKeys::NumLock},{TEXT("scroll.lock"),EKeys::ScrollLock},
-        {TEXT("pause"),EKeys::Pause},{TEXT("print.screen"),EKeys::PrintScreen},
+        // UE 5.8 has no registered EKeys::PrintScreen. It remains unsupported
+        // rather than manufacturing a valid-looking key that never receives input.
+        {TEXT("pause"),EKeys::Pause},
         {TEXT("apostrophe"),EKeys::Quote},{TEXT("comma"),EKeys::Comma},{TEXT("minus"),EKeys::Hyphen},
         {TEXT("period"),EKeys::Period},{TEXT("slash"),EKeys::Slash},{TEXT("semicolon"),EKeys::Semicolon},
         {TEXT("equal"),EKeys::Equals},{TEXT("left.bracket"),EKeys::LeftBracket},
@@ -103,12 +106,15 @@ void ABridgeNativePlayerController::ConfigureNativeSettings(const TSharedPtr<FJs
         const TSharedPtr<FJsonObject>* Keys=nullptr;
         if(Settings->TryGetObjectField(TEXT("keyBindings"),Keys)) {
             for(const auto& Binding:(*Keys)->Values) {
-                FString KeyName;if(!Binding.Value->TryGetString(KeyName) || !Bindings.Contains(Binding.Key)) continue;
+                // JSON uses shared-string keys in UE 5.8; own a FString for our map.
+                const FString Action(*Binding.Key);
+                FString KeyName;if(!Binding.Value->TryGetString(KeyName) || !Bindings.Contains(Action)) continue;
                 const FKey Key=MinecraftKey(KeyName);
                 // Unknown/unbound means disabled. Never silently substitute F5 for a side button.
-                Bindings.Add(Binding.Key,Key);
-                if(!Key.IsValid() && !KeyName.EndsWith(TEXT("unknown")))
-                    UE_LOG(LogTemp,Warning,TEXT("Bridge native input: unsupported binding %s=%s"),*Binding.Key,*KeyName);
+                Bindings.Add(Action,Key);
+                if(!Key.IsValid() && !KeyName.EndsWith(TEXT("unknown"))) {
+                    UE_LOG(LogTemp,Warning,TEXT("Bridge native input: unsupported binding %s=%s"),*Action,*KeyName);
+                }
             }
         }
         double Number=0;
@@ -251,7 +257,7 @@ void ABridgeNativePlayerController::RouteMenuInput() {
     const int32 Steps=BridgeNativeInputMath::WheelSteps(Wheel,MouseWheelSensitivity,WheelRemainder);
     if(Steps) Hud->HandleScroll(Steps);
 }
-bool ABridgeNativePlayerController::InputKey(const FInputKeyParams& Params) {
+bool ABridgeNativePlayerController::InputKey(const FInputKeyEventArgs& Params) {
     const bool Result=Super::InputKey(Params);
     if(IsValid(NativeReceiver) && NativeReceiver->NativePlayActive && Params.Event==IE_Pressed && Params.Key==EKeys::F3) {
         if(auto* Hud=Cast<ABridgeNativeHUD>(GetHUD())) return Hud->HandleKey(Params.Key) || Result;

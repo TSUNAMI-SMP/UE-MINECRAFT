@@ -4,6 +4,8 @@ Fabric **Minecraft Java 1.21.11 / Java 21** から地形・素材・スキン・
 書き出し、**Unreal Engine 5.8で直接プレイ** する実験用プロジェクトです。
 書き出し後はMinecraftを終了できます。UE映像をMinecraftへ送る従来の接続モードも残しています。
 
+**0.12.0でWindows UE 5.8.3のC++ビルド失敗が報告されています。** [UE修正版0.12.1の更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.1/downloads/UEBridge-update-0.12.1.zip)と[適用手順](docs/UPGRADE_0.12.1.md)を使用してください。MODは0.12.0を継続します。修正後のWindows UEビルド・取り込み・描画は未確認です。
+
 **UE単独プレイ0.12.0：** `/uebridge native export` の1回で書き出し、**Play-Native.cmd** の初回ファイル選択でビルド・取り込み・起動。次回はダブルクリックで保存状態を再開します。直接入力、手元のリソースパックを使うHUD、インベントリ・検索、モブPaletteの作成と割り当て、光・粒子・診断の修正、地形・所持品・モブ・投下物の永続化を実装しました。
 
 [MOD 0.12.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.0/downloads/minecraft-ue-bridge-0.12.0.jar) / [既存UE用更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.0/downloads/UEBridge-update-0.12.0.zip) / [一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.0/downloads/UE-Minecraft-MVP-0.12.0.zip) / [最小操作の導入手順](docs/UPGRADE_0.12.0.md)。

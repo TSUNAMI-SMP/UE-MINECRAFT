@@ -114,7 +114,7 @@ private:
     void BeginNativePlay();
     void PrepareNativeExit(class UWorld* World);
     void TickNativePlay(float DeltaSeconds);
-    void LogDiagnostics(double Now,bool Force=false);
+    void LogDiagnostics(double Now,bool bForceLog=false);
     void PlayNativeSound(const FString& Id,const FVector& Position,float Volume=1,float Pitch=1,const FString& Category=TEXT(""));
     bool SpawnNativeDrop(const FString& ItemId,int32 Count,const FVector& Position,const FVector& Velocity);
     void BlockAction(const FBridgePacket& Packet);

@@ -1,8 +1,11 @@
 """Restore generated UE lighting, migrate vanilla lightmap, preserve user level/assets."""
 import pathlib
+import re
 import unreal
 
-def setup_bridge_rendering():
+def setup_bridge_rendering(asset_root='/Game/Bridge/Minecraft'):
+    if not isinstance(asset_root, str) or not re.fullmatch(r'/Game(?:/[A-Za-z0-9_]+)+', asset_root):
+        raise ValueError('Invalid generated rendering asset root')
     project = pathlib.Path(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()))
     if not (project / 'UEBridge.uproject').is_file():
         raise RuntimeError('Use the updated UEBridge project only')
@@ -23,17 +26,23 @@ def setup_bridge_rendering():
     lighting['ensure_lighting_collection'](unreal)
     assets, tools, editing = unreal.EditorAssetLibrary, unreal.AssetToolsHelpers.get_asset_tools(), unreal.MaterialEditingLibrary
     names = ('M_MinecraftModel_Masked_v2', 'M_MinecraftModel_Translucent_v2', 'M_MinecraftFaces_v4', 'M_PlayerSkin_v1', 'M_MinecraftMob_v1', 'M_MinecraftDust_v1')
-    for path in assets.list_assets('/Game/Bridge/Minecraft', True, False):
-        if path.split('/')[-1].split('.')[0] not in names:
+    prefixes = ('M_MinecraftAtlas_', 'M_PlayerSkin_v2_', 'M_MinecraftMob_v2_', 'M_MinecraftDust_v2_')
+    dust_updated = False
+    migrated = 0
+    for path in assets.list_assets(asset_root, True, False):
+        name = path.split('/')[-1].split('.')[0]
+        if name not in names and not name.startswith(prefixes):
             continue
         material = unreal.load_asset(path)
         if not isinstance(material, unreal.Material):
             continue
-        if 'BridgeUseVertexLight' not in {str(v) for v in editing.get_scalar_parameter_names(material)}:
-            if path.split('/')[-1].split('.')[0] == 'M_MinecraftDust_v1':
+        if lighting['LIGHTING_REVISION_PARAMETER'] not in {str(v) for v in editing.get_scalar_parameter_names(material)}:
+            if name.startswith('M_MinecraftDust_'):
                 # Dust carries light in instance channels 2/3/4, not the actor
                 # BridgeLight uniform shared by a complete texture group.
-                dust['setup_vanilla_effects']()
+                if not dust_updated:
+                    dust['setup_vanilla_effects']()
+                    dust_updated = True
                 continue
             pixel = editing.get_material_property_input_node(material, unreal.MaterialProperty.MP_BASE_COLOR)
             if pixel is None:
@@ -45,14 +54,16 @@ def setup_bridge_rendering():
                     raise RuntimeError('Cannot recover generated colour graph: ' + path)
                 pixel = sources[0]
             lighting['wire_vanilla_lighting'](unreal, editing, material, pixel,
-                use_vertex='Model_' in path and '/Items/' not in path)
+                use_vertex=('Model_' in name or 'Atlas_' in name) and '/Items/' not in path)
             editing.recompile_material(material)
             if not assets.save_loaded_asset(material, False):
                 raise RuntimeError('Cannot save generated lighting migration: ' + path)
-    path = '/Game/Bridge/Minecraft/M_BlockOutline_v1'
+            migrated += 1
+    lighting['ensure_native_sky_materials'](unreal, editing)
+    path = asset_root + '/M_BlockOutline_v1'
     material = unreal.load_asset(path) if assets.does_asset_exist(path) else None
     if material is None:
-        material = tools.create_asset('M_BlockOutline_v1', '/Game/Bridge/Minecraft', unreal.Material, unreal.MaterialFactoryNew())
+        material = tools.create_asset('M_BlockOutline_v1', asset_root, unreal.Material, unreal.MaterialFactoryNew())
     if not isinstance(material, unreal.Material):
         raise RuntimeError('Outline asset path is occupied by another asset type')
     editing.delete_all_material_expressions(material)
@@ -71,4 +82,4 @@ def setup_bridge_rendering():
         if not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level():
             raise RuntimeError('Cannot save the current level')
         unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)
-    unreal.log('UE-lit ON and native lightmap OFF materials, black native outline and shared lighting environment ready. Play then compare day/night and torch placement.')
+    unreal.log('Bridge rendering ready: lighting revision 2, migrated=' + str(migrated) + ', native OFF sky, black outline. Compare day/night, roof and torch placement.')

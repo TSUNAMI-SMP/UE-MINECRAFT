@@ -31,7 +31,12 @@ int main() {
     cave.reset({0,0,0},{15,15,15});cave.beginInitialize();assert(cave.pending()>0);
     assert(cave.step(32)<=48);assert(cave.pending()>0);settle(cave);assert(cave.sample({8,8,8}).sky==15);
     assert(FaceShade(0,1,0)==1);assert(FaceShade(0,-1,0)==.5f);assert(FaceShade(1,0,0)==.6f);assert(FaceShade(0,0,1)==.8f);
-    assert(AO(false,false,false)==1);assert(AO(true,true,false)==.2f);assert(AO(true,false,true)<AO(true,false,false));
+    assert(AO(false,false,false)==1);assert(AO(true,true,false)==.4f);assert(AO(true,false,true)<AO(true,false,false));
+    // Opaque neighbors report packed zero light. Vanilla reuses the exposed face,
+    // rather than reducing bright daylight/torch levels towards zero at corners.
+    auto corner=CornerLight({15,0},{0,0},{0,0},{0,0});assert(corner[0]==1 && corner[1]==0);
+    corner=CornerLight({0,12},{0,0},{0,8},{0,4});assert(corner[0]==0 && std::abs(corner[1]-.6f)<.00001f);
+    assert(std::abs(AO(true,true,true)-(1+.2f+.2f+.2f)/4)<.00001f);
     Environment day,night;night.skyFactor=.05f;night.gamma=day.gamma=.5f;
     auto daylight=Lightmap(1,0,day),moonlight=Lightmap(1,0,night),lamp=Lightmap(0,10.f/15,night),black=Lightmap(0,0,night);
     assert(daylight[0]>moonlight[0]);assert(lamp[0]>black[0]);assert(lamp[0]>lamp[2]);

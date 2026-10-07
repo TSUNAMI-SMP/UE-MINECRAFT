@@ -1,6 +1,7 @@
 #include "BridgeVideo.h"
 #include "BridgeVideoMask.h"
 #include "BridgeSharedGpu.h"
+#include "BridgeNativeUiPalette.h"
 #include "Camera/CameraComponent.h"
 #include "Camera/CameraTypes.h"
 #include "Components/SceneCaptureComponent2D.h"
@@ -19,6 +20,13 @@
 #include "RHIGPUReadback.h"
 #include "RenderingThread.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/Texture2D.h"
+#include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Dom/JsonObject.h"
 #include "EngineUtils.h"
 #include "Materials/Material.h"
 #include "ShowFlags.h"
@@ -59,6 +67,13 @@ struct FBridgeGpuFrame {
 };
 
 namespace {
+void LightingFlags(FEngineShowFlags& Flags,bool Lighting,bool Sky) {
+    ApplyViewMode(VMI_Lit,true,Flags);
+    Flags.SetLighting(Lighting);Flags.SetDynamicShadows(Lighting);Flags.SetPostProcessing(Lighting);
+    Flags.SetSpecular(Lighting);Flags.SetEyeAdaptation(Lighting);Flags.SetGlobalIllumination(Lighting);
+    Flags.SetAmbientOcclusion(Lighting);Flags.SetReflectionEnvironment(Lighting);Flags.SetSkyLighting(Lighting);
+    Flags.SetMotionBlur(false);Flags.SetAtmosphere(Sky);Flags.SetFog(Sky);Flags.SetVolumetricFog(Sky);Flags.SetCloud(Sky);
+}
 void Word(TArray<uint8>& Bytes,uint32 V) { Bytes.Add(uint8(V>>24)); Bytes.Add(uint8(V>>16)); Bytes.Add(uint8(V>>8)); Bytes.Add(uint8(V)); }
 void Real(TArray<uint8>& Bytes,double V) {uint64 Bits=0;FMemory::Memcpy(&Bits,&V,sizeof(Bits));Word(Bytes,uint32(Bits>>32));Word(Bytes,uint32(Bits));}
 void Single(TArray<uint8>& Bytes,float V) {uint32 Bits=0;FMemory::Memcpy(&Bits,&V,sizeof(Bits));Word(Bytes,Bits);}
@@ -100,15 +115,109 @@ void UBridgeVideo::SetRenderMode(bool Lighting,bool VanillaSky) {
     if(Capture) Capture->bCameraCutThisFrame=true;
     LastMaskPixels=LastMaskForeground=LastMaskTranslucent=0;
 }
+void UBridgeVideo::SetNativeRenderMode(bool Lighting) {
+    UWorld* World=GetWorld();auto* Viewport=World?World->GetGameViewport():nullptr;
+    if(!Viewport) {UE_LOG(LogTemp,Warning,TEXT("Bridge native lighting: game viewport unavailable"));return;}
+    if(!SavedNativeFlags) {SavedNativeFlags=MakeUnique<FEngineShowFlags>(Viewport->EngineShowFlags);NativeViewport=Viewport;}
+    UpdateStandaloneViewport(false);
+    LightingEnabled=Lighting;
+    Viewport->EngineShowFlags=*SavedNativeFlags;
+    LightingFlags(Viewport->EngineShowFlags,Lighting,Lighting);
+    if(!Lighting) Viewport->EngineShowFlags.SetAntiAliasing(false);
+    // OFF supplies native sky geometry. Atmospheric fog/UE sky meshes must not
+    // obscure it or continue producing the old lit background.
+    if(!Lighting) {
+        for(TActorIterator<AActor> It(World);It;++It) {
+            if(It->ActorHasTag(TEXT("UEBridgeNativeSky"))) continue;
+            TInlineComponentArray<UPrimitiveComponent*> Parts;It->GetComponents(Parts);
+            for(auto* Part:Parts) {
+                bool Sky=It->ActorHasTag(TEXT("UEBridgeSky"));
+                for(int32 I=0;!Sky && I<Part->GetNumMaterials();++I) if(auto* Material=Part->GetMaterial(I)) if(auto* Base=Material->GetMaterial()) Sky=Base->bIsSky;
+                if(Sky && !NativeHiddenSky.Contains(Part)) {NativeHiddenSky.Add(Part,Part->bHiddenInGame);Part->SetHiddenInGame(true);}
+            }
+        }
+        CreateNativeSky();
+    } else {
+        for(const auto& Pair:NativeHiddenSky) if(auto* Part=Pair.Key.Get()) Part->SetHiddenInGame(Pair.Value);
+        NativeHiddenSky.Empty();
+    }
+    if(NativeSky) NativeSky->SetActorHiddenInGame(Lighting);
+    UpdateNativeSky();
+    UE_LOG(LogTemp,Display,TEXT("Bridge native lighting: mode=%s viewport=%s sky=%s"),Lighting?TEXT("UE-lit"):TEXT("Minecraft lightmap"),*Viewport->GetName(),Lighting?TEXT("UE atmosphere"):NativeSky?TEXT("native sky"):TEXT("unavailable: run setup_bridge_rendering"));
+}
+void UBridgeVideo::RestoreNativeRenderMode() {
+    if(SavedNativeFlags) if(auto* Viewport=NativeViewport.Get()) Viewport->EngineShowFlags=*SavedNativeFlags;
+    SavedNativeFlags.Reset();NativeViewport.Reset();
+    for(const auto& Pair:NativeHiddenSky) if(auto* Part=Pair.Key.Get()) Part->SetHiddenInGame(Pair.Value);
+    NativeHiddenSky.Empty();
+    if(NativeSky) NativeSky->Destroy();NativeSky=nullptr;NativeSkySphere=nullptr;NativeSun=nullptr;NativeMoon=nullptr;NativeSunMaterial=nullptr;NativeMoonMaterial=nullptr;NativeSkyMaterial=nullptr;
+}
+void UBridgeVideo::SetNativeSkyPalette(UBridgeNativeUiPalette* Palette) {
+    NativeSkyPalette=Palette;
+    if(NativeSunMaterial && Palette) if(auto* Texture=Palette->FindSprite(TEXT("environment/sun"))) NativeSunMaterial->SetTextureParameterValue(TEXT("CelestialTexture"),Texture);
+    if(NativeMoonMaterial && Palette) if(auto* Texture=Palette->FindSprite(TEXT("environment/moon_phases"))) NativeMoonMaterial->SetTextureParameterValue(TEXT("CelestialTexture"),Texture);
+    UpdateNativeSky();
+}
+void UBridgeVideo::SetNativeSkyEnvironment(const TSharedPtr<FJsonObject>& Values) {
+    if(!Values.IsValid()) return;
+    double Time=6000,Rain=0;Values->TryGetNumberField(TEXT("timeOfDay"),Time);Values->TryGetNumberField(TEXT("rainGradient"),Rain);
+    NativeTimeOfDay=FMath::IsFinite(Time)?Time:6000;NativeRain=float(FMath::Clamp(FMath::IsFinite(Rain)?Rain:0.,0.,1.));
+    // Imported sky/lightmap form one snapshot. Advancing celestial time alone
+    // would show midnight while the exported daylight factor remains at noon.
+    NativeSkyEpoch=0;
+    double Color=0x78a7ff;Values->TryGetNumberField(TEXT("skyBackgroundColor"),Color);
+    const uint32 RGB=static_cast<uint32>(FMath::Clamp(FMath::IsFinite(Color)?Color:double(0x78a7ff),0.,16777215.));
+    NativeBackgroundColor=FLinearColor(((RGB>>16)&255)/255.f,((RGB>>8)&255)/255.f,(RGB&255)/255.f,1);
+    if(NativeSkyMaterial) NativeSkyMaterial->SetVectorParameterValue(TEXT("NativeSkyColor"),NativeBackgroundColor);
+    UpdateNativeSky();
+}
+void UBridgeVideo::CreateNativeSky() {
+    if(NativeSky || !GetWorld()) return;
+    auto* Material=LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/Bridge/Minecraft/M_NativeSky_v1.M_NativeSky_v1"));
+    auto* Sphere=LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+    if(!Material || !Sphere) {UE_LOG(LogTemp,Warning,TEXT("Bridge native sky: generated sky material missing; run native setup"));return;}
+    NativeSky=GetWorld()->SpawnActor<AActor>();if(!NativeSky) return;
+    NativeSky->Tags.Add(TEXT("UEBridgeNativeSky"));
+    auto Prepare=[&](const TCHAR* Name,UStaticMesh* MeshAsset,UMaterialInterface* MeshMaterial) {
+        auto* Component=NewObject<UStaticMeshComponent>(NativeSky,Name);NativeSky->AddInstanceComponent(Component);
+        if(NativeSky->GetRootComponent()) Component->SetupAttachment(NativeSky->GetRootComponent());else NativeSky->SetRootComponent(Component);
+        Component->SetStaticMesh(MeshAsset);Component->SetMaterial(0,MeshMaterial);Component->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        Component->SetCastShadow(false);Component->SetCanEverAffectNavigation(false);Component->SetMobility(EComponentMobility::Movable);Component->RegisterComponent();return Component;
+    };
+    NativeSkyMaterial=UMaterialInstanceDynamic::Create(Material,this);if(NativeSkyMaterial) NativeSkyMaterial->SetVectorParameterValue(TEXT("NativeSkyColor"),NativeBackgroundColor);
+    NativeSkySphere=Prepare(TEXT("NativeSkySphere"),Sphere,NativeSkyMaterial?NativeSkyMaterial.Get():Material);NativeSkySphere->SetWorldScale3D(FVector(10000));
+    auto* Plane=LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Plane.Plane"));
+    auto* Celestial=LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/Bridge/Minecraft/M_NativeCelestial_v1.M_NativeCelestial_v1"));
+    if(Plane && Celestial) {
+        NativeSunMaterial=UMaterialInstanceDynamic::Create(Celestial,this);NativeMoonMaterial=UMaterialInstanceDynamic::Create(Celestial,this);
+        NativeSun=Prepare(TEXT("NativeSun"),Plane,NativeSunMaterial);NativeMoon=Prepare(TEXT("NativeMoon"),Plane,NativeMoonMaterial);
+        NativeSun->SetAbsolute(false,true,true);NativeMoon->SetAbsolute(false,true,true);NativeSun->SetWorldScale3D(FVector(1400));NativeMoon->SetWorldScale3D(FVector(1000));
+        NativeMoonMaterial->SetVectorParameterValue(TEXT("CelestialUVScale"),FLinearColor(.25,.5,0,0));
+    }
+    SetNativeSkyPalette(NativeSkyPalette);
+}
+void UBridgeVideo::UpdateNativeSky() {
+    if(!NativeSky || !SavedNativeFlags || LightingEnabled || !GetWorld()) return;
+    auto* PC=GetWorld()->GetFirstPlayerController();if(!PC || !PC->PlayerCameraManager) return;
+    const FVector Camera=PC->PlayerCameraManager->GetCameraLocation();NativeSky->SetActorLocation(Camera);
+    const double Time=NativeTimeOfDay+(NativeSkyEpoch>0?(FPlatformTime::Seconds()-NativeSkyEpoch)*20:0);
+    const double Angle=FMath::Fmod(Time,24000.)/24000.*2*PI;
+    const FVector SunDirection(FMath::Cos(Angle),0,FMath::Sin(Angle));
+    auto Place=[&](UStaticMeshComponent* Component,const FVector& Direction,bool Available) {
+        if(!Component) return;Component->SetHiddenInGame(!Available || NativeRain>=.95f);
+        Component->SetWorldLocation(Camera+Direction*450000.);Component->SetWorldRotation(FRotationMatrix::MakeFromZ(-Direction).Rotator());
+    };
+    Place(NativeSun,SunDirection,NativeSkyPalette && NativeSkyPalette->FindSprite(TEXT("environment/sun")));
+    Place(NativeMoon,-SunDirection,NativeSkyPalette && NativeSkyPalette->FindSprite(TEXT("environment/moon_phases")));
+    if(NativeMoonMaterial) {const int32 Phase=(FMath::FloorToInt(Time/24000.)%8+8)%8;NativeMoonMaterial->SetVectorParameterValue(TEXT("CelestialUVOffset"),FLinearColor((Phase%4)*.25,(Phase/4)*.5,0,0));}
+}
 void UBridgeVideo::ConfigureCapture(USceneCaptureComponent2D* Component,bool Mask) {
     if(!Component) return;
     // Use the engine's complete view-mode flags, including diffuse/specular and
     // reflection settings, instead of relying on one lighting flag alone.
     // Vanilla materials provide their own emissive lightmap. Editor Unlit adds a
     // BRDF/specular preview term, so both modes keep Lit with explicit show flags.
-    ApplyViewMode(VMI_Lit,true,Component->ShowFlags);
-    Component->ShowFlags.SetLighting(LightingEnabled);
-    Component->ShowFlags.SetDynamicShadows(LightingEnabled);
+    LightingFlags(Component->ShowFlags,LightingEnabled,!VanillaSkyEnabled || !ClientV3);
     Component->ShowFlags.SetPostProcessing(!Mask && LightingEnabled);
     Component->ShowFlags.SetSpecular(LightingEnabled);
     Component->ShowFlags.SetEyeAdaptation(LightingEnabled);
@@ -144,6 +253,7 @@ void UBridgeVideo::SetSource(UCameraComponent* Camera,const FString& Session,uin
 }
 void UBridgeVideo::TickComponent(float DeltaTime,ELevelTick TickType,FActorComponentTickFunction* ThisTickFunction) {
     Super::TickComponent(DeltaTime,TickType,ThisTickFunction);
+    UpdateNativeSky();
     TickStream(SourceCamera.Get(),SourceSession,SourceInput);
 }
 void UBridgeVideo::Start(int32 Port) {
@@ -156,7 +266,7 @@ void UBridgeVideo::Start(int32 Port) {
         if (Listener) { Listener->Close(); S->DestroySocket(Listener); Listener=nullptr; } return;
     }
     FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-    UE_LOG(LogTemp,Display,TEXT("Bridge 0.11.0 video listening on 127.0.0.1:%d (JPEG/GPU control TCP)"),Port);
+    UE_LOG(LogTemp,Display,TEXT("Bridge 0.12.0 video listening on 127.0.0.1:%d (JPEG/GPU control TCP)"),Port);
 }
 FString UBridgeVideo::GetTransportName() const {
     return ClientGpu && SharedGpu && SharedGpu->Initialized.load() && !SharedGpu->Failed.load() ? TEXT("D3D11 GPU shared") : TEXT("JPEG TCP");
@@ -165,6 +275,13 @@ FString UBridgeVideo::GetGpuDiagnostic() const {
     if(!ClientGpu) return TEXT("Client selected JPEG or does not support NVIDIA interop");
     if(!SharedGpu) return TEXT("Waiting for D3D11 initialization");
     FScopeLock Lock(&SharedGpu->DiagnosticLock);return SharedGpu->Diagnostic;
+}
+FString UBridgeVideo::GetDiagnosticSummary() const {
+    if(IsNativeRenderModeActive()) return FString::Printf(TEXT("display=native viewport videoTransfer=bypassed lighting=%s sky=%s GPUtime=unavailable"),
+        LightingEnabled?TEXT("UE-lit"):TEXT("Minecraft lightmap"),LightingEnabled?TEXT("UE"):NativeSky?TEXT("native"):TEXT("missing"));
+    return FString::Printf(TEXT("streaming=%s transport=%s requested=%dx%d@%d captured=%llu transmitted=%llu replaced=%llu stale=%llu backpressureTicks=%llu readbackQueue=%d outputBytes=%d framePreparationMs=%.2f connections=%llu GPUtime=unavailable"),
+        Streaming?TEXT("true"):TEXT("false"),*GetTransportName(),Width,Height,FramesPerSecond,static_cast<unsigned long long>(CapturedFrames),static_cast<unsigned long long>(TransmittedFrames),
+        static_cast<unsigned long long>(ReplacedFrames),static_cast<unsigned long long>(StaleFrames),static_cast<unsigned long long>(BackpressureTicks),Readbacks.Num(),FMath::Max(0,Output.Num()-Sent),LastCaptureMs,static_cast<unsigned long long>(Connections));
 }
 void UBridgeVideo::ResetSharedGpu() {
     if(SharedGpu) {
@@ -219,6 +336,7 @@ void UBridgeVideo::DropClient() {
     LastMaskPixels=LastMaskForeground=LastMaskTranslucent=0;
 }
 void UBridgeVideo::EndPlay(const EEndPlayReason::Type Reason) {
+    RestoreNativeRenderMode();
     DropClient();
     if (Listener) { Listener->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Listener); Listener=nullptr; }
     if (Encoding.IsValid()) Encoding.Wait(); // Worker owns pixels only; no UObject is touched by it.
@@ -236,11 +354,12 @@ void UBridgeVideo::Flush() {
     int32 Count=0;
     if (Client->Send(Output.GetData()+Sent,FMath::Min(Output.Num()-Sent,1024*1024),Count)) {
         if (Count>0) { Sent+=Count; LastProgress=FPlatformTime::Seconds(); }
-        if (Sent==Output.Num()) { Output.Empty(); Sent=0; }
+        if (Sent==Output.Num()) { ++TransmittedFrames;Output.Empty(); Sent=0; }
     } else if (ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->GetLastErrorCode()!=SE_EWOULDBLOCK) DropClient();
     if (Client && !Output.IsEmpty() && FPlatformTime::Seconds()-LastProgress>2) DropClient();
 }
 void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,uint64 InputSequence) {
+    if(IsNativeRenderModeActive()) return; // Native player never pays SceneCapture/encode/copy cost.
     if (!Listener) return;
     ISocketSubsystem* S=ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM); const double Now=FPlatformTime::Seconds();
     if (Client && (Session.IsEmpty() || (!ClientSession.IsEmpty() && ClientSession!=Session))) DropClient();
@@ -263,14 +382,16 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,ui
             ClientGpu=FMemory::Memcmp(Hello.GetData(),"UEB5",4)==0;
             ClientV3=ClientGpu || FMemory::Memcmp(Hello.GetData(),"UEB3",4)==0;
             if (Guid.Length()!=36 || (!ClientV3 && FMemory::Memcmp(Hello.GetData(),"UEBH",4)!=0) || FMemory::Memcmp(Hello.GetData()+4,Guid.Get(),36)!=0) { DropClient(); return; }
-            ClientSession=Session;Streaming=true;CaptureSchedule.Reset();
+            ClientSession=Session;Streaming=true;++Connections;CaptureSchedule.Reset();
+            UE_LOG(LogTemp,Display,TEXT("Bridge video connected: %s"),*GetDiagnosticSummary());
             LastSkyScan=-1;
         } else if (Now-AcceptedAt>2) { DropClient(); return; }
     }
     if(Streaming) {ReadGpuAcknowledgements();UpdateStandaloneViewport(Streaming);}
     if (Encoding.IsValid() && Encoding.IsReady()) {
         TArray<uint8> Frame=Encoding.Get(); Encoding=TFuture<TArray<uint8>>();
-        if (Streaming && ClientSession==EncodeSession && ModeRevision==EncodeRevision && Output.IsEmpty()) { Output=MoveTemp(Frame); Sent=0; LastProgress=Now; }
+        if (Streaming && ClientSession==EncodeSession && ModeRevision==EncodeRevision && Output.IsEmpty() && !Frame.IsEmpty()) { Output=MoveTemp(Frame); Sent=0; LastProgress=Now; }
+        else {++StaleFrames;++DroppedFrames;}
     }
     Flush();
     // Poll fences on the render thread; never wait for the GPU on the game thread.
@@ -326,7 +447,7 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,ui
         TSharedPtr<FBridgeGpuFrame,ESPMode::ThreadSafe> Ready;
         for(const auto& State:Readbacks) if(State->Done.load() && (!Ready || State->Sequence>Ready->Sequence)) Ready=State;
         for(const auto& State:Readbacks) if(State->Done.load() && State!=Ready) {
-            ++DroppedFrames;
+            ++DroppedFrames;++ReplacedFrames;
             if(State->GPU && State->Shared.Handle && State->Transport) {
                 ENQUEUE_RENDER_COMMAND(BridgeDiscardSharedFrame)([State](FRHICommandListImmediate&) {
                     if(State->Transport->Producer) State->Transport->Producer->Release(State->Shared.Sequence,State->Shared.Slot,State->Shared.Generation);
@@ -349,7 +470,7 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,ui
                 // even when the socket and consumer have ample capacity.
                 Flush();
             } else {
-                ++DroppedFrames;
+                ++DroppedFrames;++StaleFrames;
                 if(Ready->Shared.Handle && Ready->Transport) {
                     ENQUEUE_RENDER_COMMAND(BridgeDiscardStaleSharedFrame)([Ready](FRHICommandListImmediate&) {
                         if(Ready->Transport->Producer) Ready->Transport->Producer->Release(Ready->Shared.Sequence,Ready->Shared.Slot,Ready->Shared.Generation);
@@ -392,10 +513,12 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,ui
                 }
                 Frame.Append(Bytes.GetData(),int32(Bytes.Num()));Frame.Append(Mask);return Frame;
             });
-        }
+        } else if(Ready) {++DroppedFrames;++StaleFrames;}
     }
     const bool Share=ClientGpu && (!SharedGpu || !SharedGpu->Failed.load());
-    if(!Streaming || !Camera || Readbacks.Num()>=(Share?3:2) || !Output.IsEmpty()) return;
+    if(Streaming && (LastDiagnosticLog<0 || Now-LastDiagnosticLog>=10)) {LastDiagnosticLog=Now;UE_LOG(LogTemp,Display,TEXT("Bridge video diagnostics: %s"),*GetDiagnosticSummary());}
+    if(!Streaming || !Camera) return;
+    if(Readbacks.Num()>=(Share?3:2) || !Output.IsEmpty()) {++BackpressureTicks;return;}
     if(!CaptureSchedule.Capture(Now,FMath::Clamp(FramesPerSecond,1,60))) return;
     const int32 W=FMath::Clamp(Width,160,1920),H=FMath::Clamp(Height,90,1080);
     if(!Capture) {
@@ -427,7 +550,7 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,ui
     Capture->CaptureScene();
     auto State=MakeShared<FBridgeGpuFrame,ESPMode::ThreadSafe>();
     State->Width=W;State->Height=H;State->Quality=FMath::Clamp(Quality,30,95);State->Sequence=++Sequence;
-    State->Session=Session;State->Input=InputSequence;State->CapturedAt=Now;Readbacks.Add(State);
+    State->Session=Session;State->Input=InputSequence;State->CapturedAt=Now;Readbacks.Add(State);++CapturedFrames;
     State->Revision=ModeRevision;State->V3=ClientV3;State->HasMask=Mask;
     const FVector Relative=(View.Location-Anchor)/100;
     State->MCCamera=MCOrigin+FVector(-Relative.Y,Relative.Z,Relative.X);

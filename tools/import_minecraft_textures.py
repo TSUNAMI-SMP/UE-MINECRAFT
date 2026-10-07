@@ -320,7 +320,9 @@ def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mo
     return parent
 
 
-def import_minecraft_textures(filename):
+def import_minecraft_textures(filename, asset_root="/Game/Bridge/Minecraft"):
+    if not isinstance(asset_root, str) or not re.fullmatch(r"/Game(?:/[A-Za-z0-9_]+)+", asset_root):
+        raise ValueError("Invalid generated texture asset root")
     import unreal
     manifest = load_texture_manifest(filename)  # Validate all files before mutating UE assets.
     project = pathlib.Path(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()))
@@ -348,7 +350,7 @@ def import_minecraft_textures(filename):
         raise RuntimeError("The current saved level must have exactly one BridgeReceiver")
     assets, tools = unreal.EditorAssetLibrary, unreal.AssetToolsHelpers.get_asset_tools()
     editing = unreal.MaterialEditingLibrary
-    root = "/Game/Bridge/Minecraft"
+    root = asset_root
 
     def asset_name(prefix, identifier, digest):
         label = re.sub(r"[^a-zA-Z0-9_]", "_", identifier)[:48]

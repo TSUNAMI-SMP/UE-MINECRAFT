@@ -27,6 +27,27 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Player") TObjectPtr<class UBridgePlayerAppearance> PlayerAppearance;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Particles") TObjectPtr<class UMaterialInterface> VanillaParticleMaterial;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Mobs") TObjectPtr<class UBridgeMobPalette> MobPalette;
+    /** Immutable local export; runtime saves stay under Saved/NativeWorlds. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Native") FString NativeWorldFile;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Native") bool PreferNativePlay = true;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Native") TObjectPtr<class UBridgeNativeUiPalette> NativeUiPalette;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Native") TObjectPtr<class UBridgeNativeSoundPalette> NativeSoundPalette;
+    UPROPERTY(BlueprintReadOnly, Category="Bridge|Native") bool NativePlayActive = false;
+    UPROPERTY(BlueprintReadOnly, Category="Bridge|Native") bool NativeCreative = true;
+    UPROPERTY(BlueprintReadOnly, Category="Bridge|Native") bool NativeLighting = true;
+    UPROPERTY(BlueprintReadOnly, Category="Bridge|Native") FString NativeStatus = TEXT("not started");
+    bool IsNativeReady() const;
+    bool IsNativeSaving() const;
+    float GetNativeHealth() const;
+    const FString& GetNativeLastAction() const { return LastAction; }
+    void SetNativeInput(float Forward,float Right,bool Jump,bool Sneak,bool Sprint,bool Flying,int32 Perspective,float UEYaw,float UEPitch);
+    void NativeSelect(const FString& ItemId);
+    void NativeAction(const FString& Action);
+    /** Caller removes its exact slot/cursor only after spawning succeeds. */
+    bool NativeDrop(const FString& ItemId,int32 Count);
+    void NativeSetLighting(bool Enabled);
+    bool NativeSave();
+    void NativeRespawn();
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Bow") bool SpawnBowProjectiles = true;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") bool Connected = false;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") int32 InvalidPackets = 0;
@@ -74,6 +95,28 @@ private:
     double LastPerformance=-1,LastLightActors=-1;
     double PerformanceSeconds=0;int32 PerformanceFrames=0;
     FString LastAction=TEXT("ready");
+    TSharedPtr<class FBridgeNativeWorldStore> NativeStore;
+    bool NativeInitialized=false;
+    bool NativeControllerConfigured=false,NativeRestoreFailed=false,NativeExitPrepared=false;
+    bool NativeSavePausedWorld=false;
+    FDelegateHandle NativeTearDownHandle;
+    double NativeLastDiagnostic=-1,NativeLastAutosave=-1;
+    TMap<FString,FString> NativeDropItems;
+    TMap<FString,int32> NativeDropRevisions;
+    struct FNativeFuse {FVector Position;double Deadline;};
+    TArray<FNativeFuse> NativeFuses;
+    TSet<FString> MissingNativeSounds;
+    float NativeMasterVolume=1;
+    FVector NativeRespawnPosition=FVector::ZeroVector;
+    double NativeBowStart=-1;
+    TMap<FString,float> NativeSoundVolumes;
+    UPROPERTY() TObjectPtr<class USoundAttenuation> NativeSoundAttenuation;
+    void BeginNativePlay();
+    void PrepareNativeExit(class UWorld* World);
+    void TickNativePlay(float DeltaSeconds);
+    void LogDiagnostics(double Now,bool Force=false);
+    void PlayNativeSound(const FString& Id,const FVector& Position,float Volume=1,float Pitch=1,const FString& Category=TEXT(""));
+    bool SpawnNativeDrop(const FString& ItemId,int32 Count,const FVector& Position,const FVector& Velocity);
     void BlockAction(const FBridgePacket& Packet);
     bool HasNewInput = false;
     uint64 PreviewGeneration = 0;

@@ -82,6 +82,7 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
     private String lastReceiverId = "";
     private String lastVideoConfig = "";
     private TextureExportJob textureJob;
+    private NativePlayExport nativeJob;
     private final InitialImport initialImport=new InitialImport();
     private net.minecraft.item.ItemStack cachedModelStack=net.minecraft.item.ItemStack.EMPTY;
     private String cachedModelKey="";
@@ -113,7 +114,7 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
             }
         });
         ClientTickEvents.END_CLIENT_TICK.register(mc -> tick(mc));
-        ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> { disconnect(); if(textureJob!=null) textureJob.close(); });
+        ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> { disconnect(); if(textureJob!=null) textureJob.close(); if(nativeJob!=null) nativeJob.close(); });
     }
     private void reload() {
         disconnect();
@@ -207,6 +208,7 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         PlayerVisualState.swing(mc);
     }
     private void tick(MinecraftClient mc) {
+        if(nativeJob!=null && nativeJob.running()) nativeJob.tick(mc);
         PlayerVisualState.tick(mc,controllerMode());
         ensureConnection(mc); if (transport == null) return;
         try {
@@ -409,6 +411,14 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
                 message->mc.execute(()->feedback(message)));
         return feedback("使用中のブロックテクスチャを別スレッドで書き出します。/uebridge textures で進捗を確認できます");
     }
+    private int exportNative(int chunks) {
+        if(nativeJob!=null && nativeJob.running()) return feedback(nativeJob.status());
+        if(controllerMode()) return feedback("UE同期操作を /uebridge control off で停止してから、書き出し元の開始地点で /uebridge native export を実行してください");
+        if(textureJob!=null && textureJob.running()) return feedback("既存のテクスチャ書き出し完了後に実行してください");
+        try {nativeJob=new NativePlayExport(MinecraftClient.getInstance(),FabricLoader.getInstance().getGameDir().resolve("uebridge-export"),chunks,this::feedback);
+            return feedback("UE単独プレイ用にワールド・素材・HUD・キー設定・音声をまとめて書き出します。開始地点で待機してください。/uebridge native で進捗を確認できます");}
+        catch(IOException | RuntimeException error) {return feedback("UEネイティブ書き出しを開始できません: "+error.getMessage());}
+    }
     private int change(Consumer<BridgeConfig> update, boolean reconnect) {
         if (configError != null) return feedback(configError + "。設定を修正して /uebridge reload を実行してください");
         BridgeConfig next = config.copy(); update.accept(next);
@@ -479,6 +489,9 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registry) -> dispatcher.register(literal("uebridge")
             .executes(c -> feedback(status()))
             .then(literal("status").executes(c -> feedback(status())))
+            .then(literal("native").executes(c->feedback(nativeJob==null ? "/uebridge native export でUE単独プレイ用パッケージを書き出します" : nativeJob.status()))
+                .then(literal("export").executes(c->exportNative(4)).then(argument("chunks",IntegerArgumentType.integer(4,6)).executes(c->exportNative(IntegerArgumentType.getInteger(c,"chunks")))))
+                .then(literal("cancel").executes(c->{if(nativeJob!=null) nativeJob.close();return feedback(nativeJob==null ? "書き出しは実行されていません" : nativeJob.status());})))
             .then(literal("performance").executes(c -> feedback((transport==null ? "接続待ち" : transport.perfStatus())+" / "+worldSync.sourceStatus()))
                 .then(literal("target").then(argument("chunks",IntegerArgumentType.integer(4,6))
                     .executes(c -> performanceTarget(IntegerArgumentType.getInteger(c,"chunks"))))))

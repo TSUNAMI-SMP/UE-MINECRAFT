@@ -1,5 +1,21 @@
 # ダウンロード
 
+## UE単独プレイ0.12.0
+
+- [MOD 0.12.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.0/downloads/minecraft-ue-bridge-0.12.0.jar)
+- [既存UEプロジェクト用更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.0/downloads/UEBridge-update-0.12.0.zip)
+- [ソース＋MOD一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.0/downloads/UE-Minecraft-MVP-0.12.0.zip)
+- [更新・書き出し・ダブルクリック起動の手順](../docs/UPGRADE_0.12.0.md)
+- [対応範囲・残る機能・Windows実機の確認](../docs/NATIVE_PLAY.md)
+
+Minecraftで `/uebridge native export` を1回実行し、完了後は **Play-Native.cmd** でUEを起動します。初回だけJSONを選び、次回からはダブルクリックで再開します。Minecraftを終了した状態で、UEへ直接入力し、手元の素材を使うHUD・インベントリ・音を表示／再生します。UE地形とプレイヤー・所持品・モブ・投下物を同じ保存へ記録します。
+
+**MODとUEの両方を更新し、素材をnativeパッケージとして書き出してください。** 既存UE更新ZIPにはSource、ビルド・起動スクリプト、すべてのPython補助ファイルを含め、Content／Config／Saved／uproject／既存レベルは含めません。旧配布物は保持します。配布ブランチは `ue-native-play-0.12.0` です。
+
+**Minecraftの完全移植には未達です。** オフハンド・クラフト・食料／経験値／防具・流体・全モブ固有AI等は未実装です。UE 5.8のWindowsビルド・実描画・IME・実FPSは未確認です。クラウドでの検証と実機確認の範囲は上記の手順に記載しています。
+
+MODビルド、Java185件・Python123件、UEから独立したC++計算とPowerShellの構文・設定保持の検証が成功しました。実機向けのUE自動テストは追加済みですが、このクラウドでは実行していません。
+
 ## 更新版0.11.0
 
 `UE映像待ち: EOFException` でMinecraftが黒画面になり、UE側は描画を続けている場合は、[映像再接続修正MOD 0.11.6](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/minecraft-ue-bridge-0.11.0-video-reconnect-fix.jar)へ差し替えます。GPU共有の切断を検出すると、次の接続をJPEGへ自動降格します。[差し替え手順](../docs/VIDEO_RECONNECT_FIX_0.11.6.md)。既存の0.11.0 JARと配布ZIPは保持します。

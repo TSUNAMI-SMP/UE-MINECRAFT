@@ -5,6 +5,8 @@
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
 #include "Engine/World.h"
+#include "Dom/JsonValue.h"
+#include "Dom/JsonObject.h"
 
 ABridgeMobWorld::ABridgeMobWorld() { PrimaryActorTick.bCanEverTick=false; }
 
@@ -154,3 +156,82 @@ TArray<FVector> ABridgeMobWorld::CollisionAnchors() const {
     return Feet;
 }
 void ABridgeMobWorld::RespawnPlayer() { PlayerHealth=20;LastPlayerDamage=GetWorld() ? GetWorld()->GetTimeSeconds()+1.f : -1; }
+
+TArray<TSharedPtr<FJsonValue>> ABridgeMobWorld::ExportNativeSnapshots(const FVector& Anchor,const FVector& SourceOrigin) const {
+    TArray<TSharedPtr<FJsonValue>> Result;
+    for(const ABridgeMobCharacter* Mob:Mobs) {
+        if(!IsValid(Mob) || !Mob->Alive()) continue;
+        const auto Snapshot=Mob->NativeSnapshot(Anchor,SourceOrigin);
+        auto Json=MakeShared<FJsonObject>();
+        Json->SetStringField(TEXT("id"),Snapshot.Id);Json->SetStringField(TEXT("type"),Snapshot.Type);
+        Json->SetStringField(TEXT("appearance"),Snapshot.Appearance);
+        Json->SetArrayField(TEXT("position"),{MakeShared<FJsonValueNumber>(Snapshot.Position.X),MakeShared<FJsonValueNumber>(Snapshot.Position.Y),MakeShared<FJsonValueNumber>(Snapshot.Position.Z)});
+        Json->SetNumberField(TEXT("yaw"),Snapshot.Yaw);Json->SetNumberField(TEXT("pitch"),Mob->GetNativeViewPitch());
+        Json->SetNumberField(TEXT("width"),Snapshot.Width);Json->SetNumberField(TEXT("height"),Snapshot.Height);
+        Json->SetNumberField(TEXT("health"),Snapshot.Health);Json->SetNumberField(TEXT("maxHealth"),Snapshot.MaxHealth);
+        Json->SetNumberField(TEXT("speed"),Snapshot.Speed);Json->SetNumberField(TEXT("damage"),Snapshot.Damage);
+        Json->SetBoolField(TEXT("hostile"),Snapshot.Hostile);Json->SetBoolField(TEXT("baby"),Snapshot.Baby);
+        Result.Add(MakeShared<FJsonValueObject>(Json));
+    }
+    return Result;
+}
+
+bool ABridgeMobWorld::ImportNativeSnapshots(const TArray<TSharedPtr<FJsonValue>>& Snapshots,const FVector& Anchor,const FVector& SourceOrigin) {
+    if(Snapshots.Num()>128) return Reject(TEXT("native_mob_save_limit"),FString(),FString());
+    if(!Snapshots.IsEmpty() && !Palette) return Reject(TEXT("native_mob_palette_missing"),FString(),FString());
+    TArray<FBridgeMobSnapshot> Parsed;TArray<float> Pitch;TSet<FString> UniqueIds;
+    const FString EnvelopeId=FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower);
+    for(const auto& Value:Snapshots) {
+        if(!Value.IsValid() || Value->Type!=EJson::Object) return Reject(TEXT("native_mob_save_object"),FString(),FString());
+        const auto Json=Value->AsObject();FString Id,Type,AppearanceKey;
+        if(!Json.IsValid() || !Json->TryGetStringField(TEXT("id"),Id) || !Json->TryGetStringField(TEXT("type"),Type)
+            || !Json->TryGetStringField(TEXT("appearance"),AppearanceKey) || UniqueIds.Contains(Id))
+            return Reject(TEXT("native_mob_save_identity"),Type,Id);
+        const auto* Appearance=Palette->Find(AppearanceKey);
+        if(!Appearance || Appearance->Type!=Type) return Reject(TEXT("native_mob_saved_appearance_missing"),Type,Id);
+        const TArray<TSharedPtr<FJsonValue>>* Position=nullptr;
+        if(!Json->TryGetArrayField(TEXT("position"),Position) || Position->Num()!=3) return Reject(TEXT("native_mob_save_position"),Type,Id);
+        auto Packet=MakeShared<FJsonObject>();Packet->Values=Json->Values;
+        Packet->SetNumberField(TEXT("v"),1);Packet->SetStringField(TEXT("kind"),TEXT("event"));Packet->SetNumberField(TEXT("seq"),1);
+        Packet->SetStringField(TEXT("session"),EnvelopeId);Packet->SetStringField(TEXT("eventId"),EnvelopeId);
+        Packet->SetStringField(TEXT("event"),TEXT("mob_spawn"));Packet->SetStringField(TEXT("importId"),EnvelopeId);
+        Packet->SetStringField(TEXT("mobId"),Id);Packet->SetStringField(TEXT("mobType"),Type);
+        const TCHAR* Axes[]={TEXT("x"),TEXT("y"),TEXT("z")};
+        for(int32 I=0;I<3;++I) {
+            double Coordinate=0;
+            if(!(*Position)[I].IsValid() || !(*Position)[I]->TryGetNumber(Coordinate) || !FMath::IsFinite(Coordinate) || FMath::Abs(Coordinate)>30000000)
+                return Reject(TEXT("native_mob_save_position"),Type,Id);
+            Packet->SetNumberField(Axes[I],Coordinate-SourceOrigin[I]);
+        }
+        // Initial Fabric snapshots contain identity/pose/health only. All other
+        // values come from their captured species profile, not hardcoded zombies.
+        auto DefaultNumber=[&](const TCHAR* Key,double Default) {if(!Packet->HasField(Key)) Packet->SetNumberField(Key,Default);};
+        DefaultNumber(TEXT("width"),Appearance->Width);DefaultNumber(TEXT("height"),Appearance->Height);
+        DefaultNumber(TEXT("maxHealth"),Appearance->MaxHealth);DefaultNumber(TEXT("health"),Appearance->MaxHealth);
+        DefaultNumber(TEXT("speed"),Appearance->Speed);DefaultNumber(TEXT("damage"),Appearance->Damage);DefaultNumber(TEXT("yaw"),0);
+        if(!Packet->HasField(TEXT("hostile"))) Packet->SetBoolField(TEXT("hostile"),Appearance->Hostile);
+        if(!Packet->HasField(TEXT("baby"))) Packet->SetBoolField(TEXT("baby"),Appearance->Baby);
+        FBridgePacket Decoded;
+        if(!BridgeProtocol::Parse(Packet,Decoded)) return Reject(TEXT("native_mob_save_validation"),Type,Id);
+        double NativePitch=0;
+        if(Json->HasField(TEXT("pitch")) && (!Json->TryGetNumberField(TEXT("pitch"),NativePitch) || !FMath::IsFinite(NativePitch) || FMath::Abs(NativePitch)>90))
+            return Reject(TEXT("native_mob_save_pitch"),Type,Id);
+        Parsed.Add(Decoded.Mob);Pitch.Add(float(NativePitch));UniqueIds.Add(Id);
+    }
+    // Malformed files never clear a running population. Empty arrays are valid
+    // and intentionally clear all source mobs after the last one was killed.
+    const float SavedPlayerHealth=PlayerHealth;
+    Clear();PlayerHealth=SavedPlayerHealth;
+    bool Complete=true;
+    for(int32 I=0;I<Parsed.Num();++I) {
+        if(!Import(Parsed[I],Anchor)) {Complete=false;continue;}
+        ABridgeMobCharacter* Mob=Mobs.Last();
+        // Import already restored yaw and selected a supported, unblocked
+        // location. Keep that safety correction if the player occupies the
+        // original saved pose or the terrain has since changed.
+        Mob->SetNativeViewPitch(Pitch[I]);
+    }
+    if(Complete) UE_LOG(LogTemp,Display,TEXT("Bridge native mobs restored: requested=%d alive=%d complete=true"),Snapshots.Num(),AliveCount());
+    else UE_LOG(LogTemp,Warning,TEXT("Bridge native mobs restored: requested=%d alive=%d complete=false"),Snapshots.Num(),AliveCount());
+    return Complete;
+}

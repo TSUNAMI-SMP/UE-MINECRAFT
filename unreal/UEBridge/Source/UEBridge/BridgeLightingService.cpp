@@ -56,6 +56,13 @@ TSet<FIntVector> FBridgeLightingService::ConsumeChangedCells() {
 FLinearColor FBridgeLightingService::Sample(const FIntVector& Voxel) const {
     const auto L=Field.sample(Point(Voxel));return FLinearColor(L.sky/15.f,L.block/15.f,1,1);
 }
+FString FBridgeLightingService::Describe(const FIntVector& Voxel) const {
+    if(!Field.valid()) return TEXT("field=unavailable");
+    const auto P=Point(Voxel);const auto L=Field.sample(P);const auto Low=Field.minimum(),High=Field.maximum();
+    return FString::Printf(TEXT("voxel=(%d,%d,%d) inside=%s sky=%u block=%u opacity=%u emission=%u initialized=%s propagationPending=%llu bounds=(%d,%d,%d)..(%d,%d,%d) voxels=%llu"),
+        Voxel.X,Voxel.Y,Voxel.Z,Field.inside(P)?TEXT("true"):TEXT("false"),unsigned(L.sky),unsigned(L.block),unsigned(Field.opacityAt(P)),unsigned(Field.emissionAt(P)),
+        Field.ready()?TEXT("true"):TEXT("false"),static_cast<unsigned long long>(Field.pending()),Low.x,Low.y,Low.z,High.x,High.y,High.z,static_cast<unsigned long long>(Field.voxelCount()));
+}
 FLinearColor FBridgeLightingService::Vertex(const FIntVector& Voxel,const FVector& Local,const FVector& Normal) const {
     const FVector Abs=Normal.GetAbs();const int Axis=Abs.Y>=Abs.X && Abs.Y>=Abs.Z?1:(Abs.Z>=Abs.X?2:0);
     const int OtherA=(Axis+1)%3,OtherB=(Axis+2)%3;
@@ -67,10 +74,8 @@ FLinearColor FBridgeLightingService::Vertex(const FIntVector& Voxel,const FVecto
     SideA[OtherA]+=Local[OtherA]>.5?1:-1;SideB[OtherB]+=Local[OtherB]>.5?1:-1;
     Corner[OtherA]=SideA[OtherA];Corner[OtherB]=SideB[OtherB];
     const bool A=Field.opaque(Point(SideA)),B=Field.opaque(Point(SideB)),C=Field.opaque(Point(Corner));
-    const FIntVector Samples[4]={Base,SideA,SideB,(A&&B)?Base:Corner};
-    float Sky=0,Block=0;
-    for(const auto& P:Samples) {const auto L=Field.sample(Point(P));Sky+=L.sky;Block+=L.block;}
-    return FLinearColor(Sky/60.f,Block/60.f,BridgeLightingMath::FaceShade(Normal.X,Normal.Y,Normal.Z)*BridgeLightingMath::AO(A,B,C),1);
+    const auto Light=BridgeLightingMath::CornerLight(Field.sample(Point(Base)),Field.sample(Point(SideA)),Field.sample(Point(SideB)),Field.sample(Point((A&&B)?SideA:Corner)));
+    return FLinearColor(Light[0],Light[1],BridgeLightingMath::FaceShade(Normal.X,Normal.Y,Normal.Z)*BridgeLightingMath::AO(A,B,C),1);
 }
 bool FBridgeLightingService::StateProperties(const UBridgeBlockPalette* Palette,const FString& BlockId,const FString& State,uint8& Opacity,uint8& Emission) {
     if(!Palette) return false;
@@ -118,21 +123,29 @@ uint8 FBridgeLightingService::StateFaceMask(const UBridgeBlockPalette* Palette,c
     }
     return Cached.FindChecked(BlockId).FindRef(State);
 }
-bool FBridgeLightingService::SetEnvironment(UWorld* World,const TSharedPtr<FJsonObject>& Values,bool Vanilla) {
-    if(!World) return false;
+bool FBridgeLightingService::SetEnvironment(UWorld* World,const TSharedPtr<FJsonObject>& Values,bool Vanilla,FString* FailureReason) {
+    if(FailureReason) FailureReason->Empty();
+    auto Fail=[&](const FString& Reason) {if(FailureReason) *FailureReason=Reason;return false;};
+    if(!World) return Fail(TEXT("world_unavailable"));
     auto* Collection=LoadObject<UMaterialParameterCollection>(nullptr,TEXT("/Game/Bridge/Minecraft/MPC_BridgeLighting_v1.MPC_BridgeLighting_v1"));
     auto* Instance=Collection?World->GetParameterCollectionInstance(Collection):nullptr;
-    if(!Instance) return false;
-    Instance->SetScalarParameterValue(TEXT("BridgeVanillaMode"),Vanilla?1:0);
+    if(!Collection) return Fail(TEXT("lighting_collection_missing: run native project setup"));
+    if(!Instance) return Fail(TEXT("lighting_collection_instance_unavailable"));
+    if(!Instance->SetScalarParameterValue(TEXT("BridgeVanillaMode"),Vanilla?1:0)) return Fail(TEXT("lighting_parameter_missing: BridgeVanillaMode"));
     if(!Values.IsValid()) return true;
     const struct {const TCHAR* Json;const TCHAR* Parameter;double Fallback;} Scalars[]={
         {TEXT("skyFactor"),TEXT("BridgeSkyFactor"),1},{TEXT("blockFactor"),TEXT("BridgeBlockFactor"),1.5},
         {TEXT("ambient"),TEXT("BridgeAmbient"),0},{TEXT("gamma"),TEXT("BridgeGamma"),.5},{TEXT("nightVision"),TEXT("BridgeNightVision"),0},
         {TEXT("darkness"),TEXT("BridgeDarkness"),0},{TEXT("darkenWorld"),TEXT("BridgeDarkenWorld"),0}};
-    for(const auto& S:Scalars) {double Value=S.Fallback;Values->TryGetNumberField(S.Json,Value);Instance->SetScalarParameterValue(S.Parameter,Value);}
+    for(const auto& S:Scalars) {
+        double Value=S.Fallback;Values->TryGetNumberField(S.Json,Value);
+        if(!FMath::IsFinite(Value)) return Fail(FString(TEXT("lighting_environment_nonfinite: "))+S.Json);
+        if(!Instance->SetScalarParameterValue(S.Parameter,Value)) return Fail(FString(TEXT("lighting_parameter_missing: "))+S.Parameter);
+    }
     for(const auto& Pair:TArray<TPair<FString,FString>>{{TEXT("skyColor"),TEXT("BridgeSkyColor")},{TEXT("ambientColor"),TEXT("BridgeAmbientColor")}}) {
         double Color=0xffffff;Values->TryGetNumberField(Pair.Key,Color);const uint32 RGB=static_cast<uint32>(Color);
-        Instance->SetVectorParameterValue(*Pair.Value,FLinearColor(((RGB>>16)&255)/255.f,((RGB>>8)&255)/255.f,(RGB&255)/255.f,1));
+        if(!Instance->SetVectorParameterValue(*Pair.Value,FLinearColor(((RGB>>16)&255)/255.f,((RGB>>8)&255)/255.f,(RGB&255)/255.f,1)))
+            return Fail(TEXT("lighting_parameter_missing: ")+Pair.Value);
     }
     return true;
 }

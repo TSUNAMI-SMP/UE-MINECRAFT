@@ -11,6 +11,8 @@ import re
 import struct
 import zlib
 
+BASELINE_MOBS = ("minecraft:zombie", "minecraft:villager")
+
 
 def _number(value, limit=4096):
     if type(value) not in (int, float) or not math.isfinite(value) or abs(value) > limit:
@@ -142,7 +144,7 @@ def load_mob_manifest(filename):
     if not isinstance(templates, dict) or len(templates) > 128:
         raise ValueError("Invalid mob templates")
     for species, key in templates.items():
-        if not isinstance(species, str) or not re.fullmatch(r"minecraft:[a-z0-9_]+", species) or not isinstance(key, str) or key not in appearances or appearances[key]["type"] != species or "stats" not in appearances[key]:
+        if not isinstance(species, str) or not re.fullmatch(r"minecraft:[a-z0-9_]+", species) or not isinstance(key, str) or key not in appearances or appearances[key]["type"] != species or not isinstance(appearances[key].get("stats"), dict):
             raise ValueError("Invalid mob template appearance")
     for appearance in appearances.values():
         stats = appearance.get("stats")
@@ -172,9 +174,43 @@ def minecraft_part_transform(values):
     return ((-z*6.25, -x*6.25, -y*6.25), (qz, qx, qy, qw), (sz, sx, sy))
 
 
-def import_minecraft_mobs(filename):
+def validate_mob_baseline(manifest):
+    """A native-play export must support both baseline spawn-egg species."""
+    missing = []
+    for species in BASELINE_MOBS:
+        appearance = manifest["appearances"].get(manifest.get("templates", {}).get(species))
+        if appearance is None or appearance.get("stats", {}).get("baby", True) or not any(part["quads"] for part in appearance["parts"]):
+            missing.append(species)
+    if missing:
+        raise RuntimeError("Mob export is incomplete: missing usable adult templates for " + ", ".join(missing)
+                           + ". Re-run /uebridge mobs export and check its per-species errors; no UE assets were changed.")
+    return manifest
+
+
+def import_minecraft_mobs(filename, require_baseline=True):
     manifest = load_mob_manifest(filename)
+    if require_baseline:
+        validate_mob_baseline(manifest)
     import unreal
+    try:
+        return _import_minecraft_mobs(unreal, manifest, lambda value: _log_mob_stage(unreal, value), filename)
+    except Exception as error:
+        # Stage markers remain in the normal editor log even if the import is run
+        # indirectly by the native-play setup orchestrator.
+        getattr(unreal, "log_error", unreal.log)("Minecraft mob import FAILED: " + str(error)
+            + ". The last stage above identifies the incomplete step; existing registered assets are retained.")
+        raise
+
+
+def _log_mob_stage(unreal, value):
+    unreal.log("Minecraft mob import stage=" + value)
+
+
+def _import_minecraft_mobs(unreal, manifest, stage, filename):
+    stage("preflight manifest=" + str(filename))
+    project = pathlib.Path(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir())).resolve()
+    if not (project / "UEBridge.uproject").is_file():
+        raise RuntimeError("Use the built UEBridge project")
     palette_class = getattr(unreal, "BridgeMobPalette", None)
     if palette_class is None or not hasattr(unreal, "BridgeMobPart") or not hasattr(unreal, "BridgeMobAppearance"):
         raise RuntimeError("Build the updated UEBridge before importing mobs")
@@ -182,6 +218,9 @@ def import_minecraft_mobs(filename):
         raise RuntimeError("Stop Play before importing mobs")
     if unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages():
         raise RuntimeError("Save the current level before importing mobs")
+    world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+    if world is None or world.get_path_name().startswith("/Temp/"):
+        raise RuntimeError("Save the current level to your project before importing mobs")
     receivers = [actor for actor in unreal.get_editor_subsystem(unreal.EditorActorSubsystem).get_all_level_actors() if isinstance(actor, unreal.BridgeReceiver)]
     if len(receivers) != 1:
         raise RuntimeError("The current saved level must have exactly one BridgeReceiver")
@@ -190,12 +229,21 @@ def import_minecraft_mobs(filename):
     assets, tools = unreal.EditorAssetLibrary, unreal.AssetToolsHelpers.get_asset_tools()
     editing = unreal.MaterialEditingLibrary
     root = "/Game/Bridge/Minecraft/Mobs"
-    parent = unreal.load_asset(root + "/M_MinecraftMob_v1")
+    # New lighting graphs and material instances do not overwrite a previously
+    # working registered palette. Hashes include the actual helper revision.
+    revision = hashlib.sha256(b"mob-import-v2\0" + (project / "bridge_lighting_materials.py").read_bytes()).hexdigest()[:12]
+    parent_name = "M_MinecraftMob_v2_" + revision
+    parent = unreal.load_asset(root + "/" + parent_name)
     if parent is None:
-        parent = tools.create_asset("M_MinecraftMob_v1", root, unreal.Material, unreal.MaterialFactoryNew())
+        parent = tools.create_asset(parent_name, root, unreal.Material, unreal.MaterialFactoryNew())
     if not isinstance(parent, unreal.Material):
         raise RuntimeError("Mob master material path is occupied")
-    editing.delete_all_material_expressions(parent)
+    stage("textures and material")
+    # A complete graph is immutable. A partial graph from a failed earlier attempt
+    # can be rebuilt because it has never passed palette assignment.
+    complete_parent = "MobTexture" in {str(name) for name in editing.get_texture_parameter_names(parent)} and all(editing.get_material_property_input_node(parent, prop) is not None for prop in (unreal.MaterialProperty.MP_OPACITY_MASK, unreal.MaterialProperty.MP_ROUGHNESS, unreal.MaterialProperty.MP_BASE_COLOR, unreal.MaterialProperty.MP_EMISSIVE_COLOR))
+    if not complete_parent:
+        editing.delete_all_material_expressions(parent)
     parent.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED)
     parent.set_editor_property("two_sided", True)
     parent.set_editor_property("opacity_mask_clip_value", 0.1)
@@ -221,23 +269,25 @@ def import_minecraft_mobs(filename):
             raise RuntimeError("Cannot save mob texture")
         imported_textures[digest] = texture
         return texture
-    sample = editing.create_material_expression(parent, unreal.MaterialExpressionTextureSampleParameter2D, -250, 0)
-    if sample is None:
-        raise RuntimeError("Cannot create mob texture parameter")
-    sample.set_editor_property("parameter_name", "MobTexture")
-    sample.set_editor_property("texture", texture_for(first))
-    import runpy
-    helper = project / 'bridge_lighting_materials.py'
-    if not helper.is_file():
-        raise RuntimeError('Copy bridge_lighting_materials.py next to UEBridge.uproject first')
-    runpy.run_path(str(helper))['wire_vanilla_lighting'](unreal, editing, parent, sample, use_vertex=False)
-    if not editing.connect_material_property(sample, "A", unreal.MaterialProperty.MP_OPACITY_MASK):
-        raise RuntimeError("Cannot connect mob texture color/alpha")
-    roughness = editing.create_material_expression(parent, unreal.MaterialExpressionConstant, -250, 180)
-    roughness.set_editor_property("r", 0.85)
-    if not editing.connect_material_property(roughness, "", unreal.MaterialProperty.MP_ROUGHNESS):
-        raise RuntimeError("Cannot connect mob roughness")
-    editing.recompile_material(parent)
+    if not complete_parent:
+        sample = editing.create_material_expression(parent, unreal.MaterialExpressionTextureSampleParameter2D, -250, 0)
+        if sample is None:
+            raise RuntimeError("Cannot create mob texture parameter")
+        sample.set_editor_property("parameter_name", "MobTexture")
+        sample.set_editor_property("texture", texture_for(first))
+        import runpy
+        runpy.run_path(str(project / 'bridge_lighting_materials.py'))['wire_vanilla_lighting'](unreal, editing, parent, sample, use_vertex=False)
+        if not editing.connect_material_property(sample, "A", unreal.MaterialProperty.MP_OPACITY_MASK):
+            raise RuntimeError("Cannot connect mob texture color/alpha")
+        roughness = editing.create_material_expression(parent, unreal.MaterialExpressionConstant, -250, 180)
+        if roughness is None:
+            raise RuntimeError("Cannot create mob roughness")
+        roughness.set_editor_property("r", 0.85)
+        if not editing.connect_material_property(roughness, "", unreal.MaterialProperty.MP_ROUGHNESS):
+            raise RuntimeError("Cannot connect mob roughness")
+        editing.recompile_material(parent)
+        if "MobTexture" not in {str(name) for name in editing.get_texture_parameter_names(parent)}:
+            raise RuntimeError("Cannot validate/save mob master material")
     if not assets.save_loaded_asset(parent, False):
         raise RuntimeError("Cannot save mob master material")
     def transform_for(values):
@@ -245,7 +295,7 @@ def import_minecraft_mobs(filename):
         return unreal.Transform(location=unreal.Vector(*position), rotation=unreal.Quat(*rotation), scale=unreal.Vector(*scale))
     appearances = []
     for key, source in manifest["appearances"].items():
-        material_name = "MI_Mob_" + source["textureHash"][:20]
+        material_name = "MI_Mob_v2_" + source["textureHash"][:20] + "_" + revision
         material = unreal.load_asset(root + "/" + material_name)
         if material is None:
             material = tools.create_asset(material_name, root, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
@@ -280,7 +330,8 @@ def import_minecraft_mobs(filename):
         appearance.set_editor_property("render_offset", unreal.Vector(-source["rendererOffset"][2]*100, -source["rendererOffset"][0]*100, -source["rendererOffset"][1]*100))
         appearance.set_editor_property("parts", parts)
         appearances.append(appearance)
-    palette_name = "DA_Mobs_" + manifest["manifestHash"][:20]
+    stage("models complete appearances=" + str(len(appearances)) + " species=" + ",".join(sorted({entry["type"] for entry in manifest["appearances"].values()})))
+    palette_name = "DA_Mobs_v2_" + manifest["manifestHash"][:20] + "_" + revision
     palette = unreal.load_asset(root + "/" + palette_name)
     if palette is None:
         factory = unreal.DataAssetFactory()
@@ -288,20 +339,32 @@ def import_minecraft_mobs(filename):
         palette = tools.create_asset(palette_name, root, palette_class, factory)
     if not isinstance(palette, palette_class):
         raise RuntimeError("Cannot create mob palette")
+    previous = receivers[0].get_editor_property("mob_palette")
+    stage("palette commit templates=" + str(len(manifest.get("templates", {}))))
     with unreal.ScopedEditorTransaction("Assign Minecraft mob palette"):
         palette.set_editor_property("appearances", appearances)
         palette.set_editor_property("templates", manifest.get("templates", {}))
         if not assets.save_loaded_asset(palette, False):
             raise RuntimeError("Cannot save mob palette")
         receivers[0].set_editor_property("mob_palette", palette)
-    if not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level():
-        raise RuntimeError("Cannot save level with mob palette")
-    unreal.log("Minecraft mob body models ready: " + str(len(appearances)) + "; ground movement/AI; features and species-specific behavior are not implemented")
+    try:
+        if not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level():
+            raise RuntimeError("Cannot save level with mob palette")
+        if receivers[0].get_editor_property("mob_palette") != palette or len(palette.get_editor_property("appearances")) != len(appearances) or dict(palette.get_editor_property("templates")) != manifest.get("templates", {}):
+            raise RuntimeError("Mob palette assignment verification failed")
+    except Exception:
+        receivers[0].set_editor_property("mob_palette", previous)
+        if not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level():
+            getattr(unreal, "log_warning", unreal.log)("Minecraft mob rollback restored the editor assignment but could not save it; do not save the failed new assignment.")
+        raise
+    unreal.log("Minecraft mob body models ready: appearances=" + str(len(appearances)) + " templates=" + str(len(manifest.get("templates", {})))
+               + " palette=" + palette_name + "; assigned and saved. Basic ground AI; species-specific features are not yet implemented.")
+    return palette
 
 
 def setup_minecraft_mobs(game_dir):
     root = pathlib.Path(game_dir).expanduser().resolve() / "uebridge-export"
-    exports = sorted(p / "manifest.json" for p in root.glob("mobs-*") if (p / "manifest.json").is_file())
+    exports = [p / "manifest.json" for p in root.glob("mobs-*") if (p / "manifest.json").is_file()]
     if not exports:
         raise FileNotFoundError("Run /uebridge mobs export near the desired mobs in Minecraft first")
-    return import_minecraft_mobs(str(exports[-1]))
+    return import_minecraft_mobs(str(max(exports, key=lambda path: path.stat().st_mtime_ns)))

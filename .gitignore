@@ -13,3 +13,4 @@ DerivedDataCache/
 *.sln
 .local/
 uebridge-export/
+minecraft-mod/logs/

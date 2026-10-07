@@ -1,7 +1,16 @@
 # Minecraft ↔ Unreal Engine bridge MVP
 
-Fabric **Minecraft Java 1.21.11 / Java 21** と **Unreal Engine 5.8** を同じPCで
-接続する実験用プロジェクト。Minecraftが入力・HUD・既存の音を担当し、UE主体モードではUEが移動・衝突・設置・破壊の判定と描画を担当します。既存サーバーへのインストールは不要です。
+Fabric **Minecraft Java 1.21.11 / Java 21** から地形・素材・スキン・HUD・操作設定・音を
+書き出し、**Unreal Engine 5.8で直接プレイ** する実験用プロジェクトです。
+書き出し後はMinecraftを終了できます。UE映像をMinecraftへ送る従来の接続モードも残しています。
+
+**UE単独プレイ0.12.0：** `/uebridge native export` の1回で書き出し、**Play-Native.cmd** の初回ファイル選択でビルド・取り込み・起動。次回はダブルクリックで保存状態を再開します。直接入力、手元のリソースパックを使うHUD、インベントリ・検索、モブPaletteの作成と割り当て、光・粒子・診断の修正、地形・所持品・モブ・投下物の永続化を実装しました。
+
+[MOD 0.12.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.0/downloads/minecraft-ue-bridge-0.12.0.jar) / [既存UE用更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.0/downloads/UEBridge-update-0.12.0.zip) / [一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.0/downloads/UE-Minecraft-MVP-0.12.0.zip) / [最小操作の導入手順](docs/UPGRADE_0.12.0.md)。
+
+**Minecraftの完全移植には未達です。** オフハンド、クラフト、食料・経験値・防具、流体、全モブ固有AI等は未実装です。地形はロード済みの有限範囲で、UEの編集はUEの保存へ記録します。UE 5.8のWindowsビルド・描画・IME・実FPSはクラウドでは未確認です。[対応範囲と実機確認](docs/NATIVE_PLAY.md)に、実装済みの機能と残る機能を記載しています。
+
+## 過去版の更新履歴
 
 **UEメモリ修正0.11.5：** セル更新時のProceduralMesh再利用と古いコンポーネント解放。[2ファイルの上書き・再ビルド手順](docs/MEMORY_FIX_0.11.5.md)。`control ue`中のページングファイル不足対策です。
 
@@ -44,6 +53,13 @@ UE5.8ビルド・描画はWindows実機での確認が必要です。
 
 ## 現在の状態
 
+- 0.12.0ではMinecraftを素材・地形の書き出しに使い、UEで直接入力・HUD描画・プレイ・保存します。Minecraftへの映像配信を省くため、その経路の圧縮・転送待ちは発生しません。UE自体の実FPSは実機で確認します。
+- 1回の書き出しパッケージのハッシュ・素材・Paletteを検証し、専用nativeマップを作成します。既存UEレベルとMinecraftの元ワールドは保持します。
+- 地形・プレイヤー・インベントリ・モブ・投下物・着火済みTNTを同じUE保存ファイルへ記録します。書き出しは水平4～6チャンク・上下104ブロックの有限範囲です。
+- MODビルド、Java185件・Python123件と独立C++計算の検証が成功。PowerShellの構文とプラグイン設定保持も確認しました。UEモジュールビルド、実エディター取り込み、実描画、Windows入力・IME・性能は未確認です。[対応範囲と実機確認](docs/NATIVE_PLAY.md)を参照してください。
+
+### 過去版の確認記録
+
 - 0.10.0のMODビルド、Java108件・Python49件、独立C++計算53項目・アウトライン8項目・マスク15往復成功。UEモジュールビルド・実機描画は未確認。
 
 - 0.9.0のMODビルド・Java95件・Python41件、UEから独立したC++計算53項目とマスク15往復が成功。失敗・スキップ0。
@@ -78,6 +94,10 @@ tools/bridge_lighting_materials.py UE照明／バニラ風光の生成素材
 tools/setup_bridge_rendering.py    生成素材の照明分離・黒い輪郭を設定
 tools/setup_vanilla_effects.py      UE内のバニラ風ブロック粒子設定
 unreal/UEBridge/Build-UEBridge.cmd  Windows用C++ビルド補助
+tools/import_native_play.py        同じnative書き出しを検証・一括取り込み
+tools/import_minecraft_ui.py       HUD・アイコン・フォントを取り込み
+tools/import_minecraft_sounds.py   ローカルで書き出した音を取り込み
+unreal/UEBridge/Play-Native.cmd     UE単独プレイの初回準備・起動・再開
 ```
 
 GitHubはファイルの保存場所です。Minecraft/UEそのものをGitHub内で起動するわけでは
@@ -103,7 +123,7 @@ cd minecraft-mod
 ./gradlew build
 ```
 
-`build/libs/minecraft-ue-bridge-0.11.0.jar` がMOD本体です（`-sources.jar`ではありません）。
+`build/libs/minecraft-ue-bridge-0.12.0.jar` がMOD本体です（`-sources.jar`ではありません）。
 Minecraft Launcherに **1.21.11 / Fabric Loader 0.19.5** の専用インストールを作り、
 ゲームディレクトリを新しい `MC-UE-Test` フォルダに設定してください。その `mods/` に
 本MODと **Fabric API 0.141.6+1.21.11** を配置します。新しいシングルプレイ・クリエイティブ
@@ -112,7 +132,15 @@ Minecraftの購入済みアカウントによる起動認証は通常のLauncher
 
 開発者向け起動は `gradlew runClient` ですが、受け入れテストはLauncherの専用環境で行います。
 
-## UEの起動
+## UE単独プレイの起動
+
+導入済みの専用Minecraftで `/uebridge native export` を実行し、完了後にMinecraftを終了します。
+`UEBridge.uproject` の隣の **Play-Native.cmd** をダブルクリックし、初回だけ書き出された
+`native_manifest.json` を選びます。必要なビルドと一括取り込みの後、専用レベルでUEゲームが起動します。
+次回は同じCMDをダブルクリックして保存状態を再開します。
+[具体的な更新・導入操作](docs/UPGRADE_0.12.0.md)を参照してください。
+
+## 従来のUE↔MC接続モード
 
 UE 5.8と対応C++ビルドツールが必要です。WindowsではEpicの対応表に合う
 Visual Studio 2022の「C++によるゲーム開発」とWindows SDKを用意してください。
@@ -132,7 +160,7 @@ TNTを置くだけでは発火しません。レッドストーン・連鎖爆�
 **UE主体の移動・衝突の更新手順は [UPGRADE_0.5.0.md](docs/UPGRADE_0.5.0.md)。**
 旧版ダウンロードZIPは保持しています。最新版のMODとUEを両方揃えてください。
 
-## 設計上の範囲
+## 従来の接続モードの設計上の範囲
 
 - localhost UDP `127.0.0.1:7779`。カメラ入力は最大120Hz（実FPS以下）。
 - 映像は独立したlocalhost TCP `127.0.0.1:7780`。既定960×540・最大60fps JPEG（実FPSはPC性能で変化）。圧縮/デコードは別スレッド。

@@ -35,16 +35,31 @@ public final class ItemModelExport {
         Set<String> names=new HashSet<>();for(ItemDisplayContext context:CONTEXTS) names.add(context.asString());return Set.copyOf(names);
     }
     public static Path export(MinecraftClient client,Path root) throws IOException {
+        Session session=new Session(client,root);
+        while(!session.complete()) session.advance(client,Long.MAX_VALUE);
+        return session.finish(client);
+    }
+    /** Native bundles use the same capture, but yield between items instead of blocking a whole registry. */
+    public static final class Session {
+        final Path dir; final JsonObject manifest=new JsonObject(),models=new JsonObject(),textures=new JsonObject(),excluded=new JsonObject();
+        final long[] written={0};final Map<String,String> cache=new HashMap<>();final List<ItemStack> stacks=new ArrayList<>();int cursor;
+        public Session(MinecraftClient client,Path root) throws IOException {
         if(!client.isOnThread() || client.player==null || client.world==null) throw new IOException("Enter a world first");
         Files.createDirectories(root);
-        Path dir=root.resolve("items-"+java.time.LocalDateTime.now().toString().replace(':','-')+"-"+UUID.randomUUID().toString().substring(0,8));
+        dir=root.resolve("items-"+java.time.LocalDateTime.now().toString().replace(':','-')+"-"+UUID.randomUUID().toString().substring(0,8));
         Files.createDirectory(dir);Files.createDirectory(dir.resolve("textures"));
-        JsonObject manifest=new JsonObject(),models=new JsonObject(),textures=new JsonObject(),excluded=new JsonObject();
         manifest.addProperty("kind","items");manifest.addProperty("version",1);
-        long[] written={0};Map<String,String> cache=new HashMap<>();int count=0;
         for(Item item:Registries.ITEM) {
-            if(++count>4096) throw new IOException("Item registry limit exceeded");
-            ItemStack stack=item.getDefaultStack();if(stack.isEmpty()) continue;
+            if(stacks.size()>=4096) throw new IOException("Item registry limit exceeded");
+            ItemStack stack=item.getDefaultStack();if(!stack.isEmpty()) stacks.add(stack);
+        }
+        }
+        public int completed() {return cursor;}
+        public int total() {return stacks.size();}
+        public boolean complete() {return cursor==stacks.size();}
+        public void advance(MinecraftClient client,long deadline) throws IOException {
+        do {
+            if(complete()) return;ItemStack stack=stacks.get(cursor++);
             String id=modelKey(client,stack);
             try {
                 JsonObject contexts=new JsonObject();
@@ -59,7 +74,10 @@ public final class ItemModelExport {
                 }
                 models.add(id,contexts);
             } catch(IOException | RuntimeException error) {excluded.addProperty(id,error.getMessage()==null ? error.getClass().getSimpleName() : error.getMessage());}
+        } while(System.nanoTime()<deadline);
         }
+        public Path finish(MinecraftClient client) throws IOException {
+        if(!complete()) throw new IOException("Item export is still in progress");
         // Actual hotbar/offhand stacks preserve component-driven tints/models for the selected items.
         // These override only their own ID in this local snapshot, not the Minecraft inventory.
         for(int slot=0;slot<9;slot++) captureStack(client,client.player.getInventory().getStack(slot),dir,textures,written,cache,models,excluded);
@@ -67,6 +85,16 @@ public final class ItemModelExport {
         manifest.add("items",models);manifest.add("textures",textures);manifest.add("excluded",excluded);
         manifest.addProperty("snapshot","Resolved default stacks and current hotbar/offhand; changing components, animated textures, glint and use-state animation require a fresh export or future live model transfer.");
         return writeManifest(dir,manifest,256L*1024*1024);
+        }
+    }
+    /** Captures the active resource-pack GUI model without altering a framebuffer or item stack. */
+    static JsonArray guiFaces(MinecraftClient client,ItemStack stack,Path directory,JsonObject textures,long[] written,Map<String,String> cache) throws IOException {
+        Capture capture=new Capture(client,directory,textures,written,cache);ItemRenderState state=new ItemRenderState();
+        client.getItemModelManager().updateForLivingEntity(state,stack,ItemDisplayContext.GUI,client.player);
+        if(state.isEmpty()) throw new IOException("Native GUI item model is empty");
+        state.render(new MatrixStack(),capture.queue(),0xf000f0,0,0);
+        if(capture.faces.isEmpty()) throw new IOException("Native GUI renderer emitted no geometry");
+        return capture.faces;
     }
     static Path writeManifest(Path directory,JsonObject manifest,long limit) throws IOException {
         Path payload=directory.resolve("items.json.gz");LimitedOutputStream counted;

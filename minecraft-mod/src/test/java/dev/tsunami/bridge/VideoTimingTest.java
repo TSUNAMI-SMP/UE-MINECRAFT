@@ -23,4 +23,11 @@ public class VideoTimingTest {
         stats.displayed(513,1_000_000_001L,-1);stats.displayed(514,1_000_000_002L,Double.NaN);
         assertEquals(257,stats.percentile(.5),0);
     }
+    @Test public void reconnectResetsSequenceIdentityWithoutLosingLifetimeCounters() {
+        var stats=new VideoTiming();stats.connected();stats.received(1);
+        assertTrue(stats.displayed(1,1,10));assertFalse(stats.displayed(1,2,10));
+        stats.replaced();stats.stale();stats.uploadFailed();stats.connected();
+        assertTrue(stats.displayed(1,3,12));
+        assertEquals("受信=1 描画投入=2 最新へ置換=1 古い映像破棄=1 upload失敗=1 接続=2",stats.counts());
+    }
 }

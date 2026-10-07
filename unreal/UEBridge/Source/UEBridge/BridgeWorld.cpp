@@ -15,6 +15,7 @@ bool ABridgeWorld::Inside(const FIntVector& C) const {
     return Scoped && FMath::Abs(C.X-Center.X)<=Radius && FMath::Abs(C.Y-Center.Y)<=HalfHeight && FMath::Abs(C.Z-Center.Z)<=Radius;
 }
 void ABridgeWorld::Clear(uint64 Barrier) {
+    ++MutationSerial;
     for (auto& Pair:Cells) if (IsValid(Pair.Value)) { Pair.Value->Clear(); Pair.Value->Destroy(); }
     for(auto& Box:Boundary) if(Box) Box->DestroyComponent(); Boundary.Empty();
     Sealed=false;ImportId.Empty();Stored.Empty();ButtonRelease.Empty();LastModelError.Empty();SurfaceReason=TEXT("not_sampled");
@@ -69,6 +70,7 @@ bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterial
     if (P.Kind==EBridgeKind::WorldScope) {
         if (P.Sequence<=FMath::Max(ScopeSequence,ClearBarrier)) return true;
         Center=P.Cell; Radius=P.Radius; HalfHeight=P.HalfHeight; ScopeSequence=P.Sequence; Scoped=true;
+        ++MutationSerial;
         for (auto It=Cells.CreateIterator();It;++It) if (!Inside(It.Key())) {
             if (IsValid(It.Value())) { It.Value()->Clear(); It.Value()->Destroy(); } Shapes-=Counts.FindRef(It.Key()); Counts.Remove(It.Key()); It.RemoveCurrent();
         }
@@ -147,7 +149,7 @@ bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterial
         auto& Cell=Cells.FindOrAdd(P.Cell);if(!IsValid(Cell)) Cell=GetWorld()->SpawnActor<ABridgeBlockPreview>();
         if(!Cell) return false;Cell->Replace(Blocks,Anchor,Material,Palette,false);
     }
-    Shapes=NewCount; Revisions.Add(P.Cell,P.SnapshotSequence); Stages.Remove(P.Cell); return true;
+    Shapes=NewCount; Revisions.Add(P.Cell,P.SnapshotSequence); Stages.Remove(P.Cell); ++MutationSerial; return true;
 }
 
 bool ABridgeWorld::BeginImport(const FBridgePacket& P,const FVector& Anchor) {
@@ -264,7 +266,13 @@ bool ABridgeWorld::GetSupportingBlock(const FVector& Feet,FIntVector& SourceVoxe
     FCollisionQueryParams Params(SCENE_QUERY_STAT(BridgeSurface),false);
     if(Ignored) Params.AddIgnoredActor(Ignored);
     FHitResult Hit;
-    if(!GetWorld()->LineTraceSingleByChannel(Hit,Feet+FVector(0,0,8),Feet-FVector(0,0,35),ECC_Pawn,Params)) {SurfaceReason=TEXT("no_floor_hit");return false;}
+    if(!GetWorld()->LineTraceSingleByChannel(Hit,Feet+FVector(0,0,8),Feet-FVector(0,0,35),ECC_Pawn,Params)) {
+        // Collision cooking/registration can lag a frame after a cell edit. A
+        // logical fallback is valid only when the feet actually touch a solid
+        // shape (5 cm tolerance), never while jumping above it or over a hole.
+        if(SupportingLogical(Feet,SourceVoxel,BlockId,Tint,ImpactPoint)) {SurfaceReason=TEXT("native_surface_fallback; collision pending");return true;}
+        SurfaceReason=TEXT("no_floor_hit");return false;
+    }
     const auto* PreviewActor=Cast<ABridgeBlockPreview>(Hit.GetActor());
     FBridgeBlock Shape;
     if(!PreviewActor || !PreviewActor->ResolveHit(Hit.GetComponent(),Hit.Item,Shape)) {
@@ -410,6 +418,7 @@ void ABridgeWorld::BeginLightingRecenter() {
         for(int32 Z=0;Z<8;++Z) for(int32 X=0;X<8;++X) PendingLighting->SetSkyBoundary(Pair.Key.X*8+X,Pair.Key.Z*8+Z,Pair.Value[X+(Z<<3)]);
 }
 void ABridgeWorld::MarkEdited(const FIntVector& Block) {
+    ++MutationSerial;
     const auto* Rows=Stored.Find(CellOf(Block));TArray<FBridgeBlock> Edited;
     if(Rows) for(const auto& Row:*Rows) if(OwnerOf(Row)==Block) Edited.Add(Row);
     if(Edited.IsEmpty()) {EditedBlocks.Remove(Block);if(auto* Owners=EditedCellOwners.Find(CellOf(Block))) Owners->Remove(Block);RemovedBlocks.Add(Block);ClearOpaqueVoxel(Block);if(Lighting) Lighting->ClearVoxel(Block);if(PendingLighting) PendingLighting->ClearVoxel(Block);}
@@ -444,6 +453,21 @@ void ABridgeWorld::UpdateCollisionCenters(const FVector& UEFeet,const TArray<FVe
 }
 int32 ABridgeWorld::RenderedFaceCount() const {int32 Count=0;for(const auto& Pair:Cells) if(IsValid(Pair.Value)) Count+=Pair.Value->FaceCount();return Count;}
 int32 ABridgeWorld::RenderSectionCount() const {int32 Count=0;for(const auto& Pair:Cells) if(IsValid(Pair.Value)) Count+=Pair.Value->SectionCount();return Count;}
+void ABridgeWorld::GetNativeCellKeys(TArray<FIntVector>& Out) const {
+    Stored.GetKeys(Out);
+    Out.Sort([](const FIntVector& A,const FIntVector& B){return A.Y!=B.Y ? A.Y<B.Y : A.Z!=B.Z ? A.Z<B.Z : A.X<B.X;});
+}
+bool ABridgeWorld::GetNativeCell(const FIntVector& Cell,TArray<FBridgeBlock>& Rows,TArray<uint8>& SkyTop) const {
+    Rows.Empty();SkyTop.Empty();if(!Sealed) return false;
+    const auto* Source=Stored.Find(Cell);if(!Source) return false;
+    for(const auto& Row:*Source) if(Row.Role==0 || Row.Role==1) Rows.Add(Row);
+    if(const auto* Top=SkyTops.Find(Cell)) SkyTop=*Top;
+    return true;
+}
+bool ABridgeWorld::GetNativeScope(FIntVector& OutCenter,int32& OutRadius,int32& OutHalfHeight,FVector& OutOrigin) const {
+    if(!Sealed || !Scoped) return false;
+    OutCenter=Center;OutRadius=Radius;OutHalfHeight=HalfHeight;OutOrigin=ImportOrigin;return true;
+}
 bool ABridgeWorld::BreakBlock(const FIntVector& Block) {
     if(!Sealed) return false;
     const FIntVector CellKey=CellOf(Block);auto* Data=Stored.Find(CellKey); if(!Data) return false;

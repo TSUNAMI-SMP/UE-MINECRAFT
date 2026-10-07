@@ -1,5 +1,6 @@
 #include "BridgeCharacterMath.h"
 #include "BridgeParticleMath.h"
+#include "BridgeNativeInputMath.h"
 #include <iostream>
 #include <limits>
 #include <string>
@@ -16,6 +17,23 @@ bool Same(const BridgeCharacterMath::Vector& A,const BridgeCharacterMath::Vector
 }
 }
 int main() {
+    using namespace BridgeNativeInputMath;
+    Check(Near(MouseDegreesPerCount(.5),.15),"Minecraft default sensitivity is .15 degrees per raw mouse count");
+    Check(MouseDegreesPerCount(1)>MouseDegreesPerCount(.5)&&MouseDegreesPerCount(.5)>MouseDegreesPerCount(0),"mouse sensitivity curve stays monotonic");
+    Check(Near(MouseDegreesPerCount(-3),MouseDegreesPerCount(0))&&Near(MouseDegreesPerCount(3),MouseDegreesPerCount(1)),"mouse settings stay in vanilla supported range");
+    Check(Near(MouseDegreesPerCount(std::numeric_limits<double>::quiet_NaN()),.15),"invalid imported sensitivity falls back safely");
+    Check(MouseTranslation("key.mouse.3")==MouseButton::Side4&&MouseTranslation("key.mouse.4")==MouseButton::Side5,"Minecraft zero-index side-button bindings preserve Mouse4 and Mouse5");
+    Check(MouseTranslation("key.mouse.7")==MouseButton::Unbound,"unsupported mouse binding never silently becomes F5");
+    Check(IsDoubleTap(1,1.3)&&!IsDoubleTap(1,1.4)&&!IsDoubleTap(-1,.1)&&!IsDoubleTap(2,1),"creative double jump requires two ordered taps within seven vanilla ticks");
+    Check(WrapSlot(-1)==8&&WrapSlot(9)==0&&WrapSlot(18)==0,"hotbar scroll wraps through exactly nine slots");
+    double WheelRemainder=0;
+    Check(WheelSteps(1,.5,WheelRemainder)==0&&WheelSteps(1,.5,WheelRemainder)==1,"fractional mouse wheel sensitivity accumulates without losing a step");
+    Check(WrapSlot(0-WheelSteps(1,1,WheelRemainder))==8,"upward wheel selects the previous Minecraft hotbar slot");
+    WheelRemainder=.75;
+    Check(WheelSteps(-1,.5,WheelRemainder)==0&&Near(WheelRemainder,-.5),"changing wheel direction discards the opposite fractional remainder");
+    Check(WheelSteps(-1,.5,WheelRemainder)==-1,"downward fractional wheel movement accumulates with its sign");
+    Check(WheelSteps(std::numeric_limits<double>::quiet_NaN(),1,WheelRemainder)==0,"invalid mouse wheel delta never selects an item");
+    Check(Near(ClampPitch(200),90)&&Near(ClampPitch(-200),-90),"mouse look remains in vanilla pitch range");
     using namespace BridgeCharacterMath;
     Check(Near(SprintFovMultiplier(1,true,.05),1.075),"sprint FOV approaches half target in one MC tick");
     double LowRate=1,HighRate=1;

@@ -74,6 +74,9 @@ def import_minecraft_player(filename):
         raise RuntimeError("Stop Play before importing your player skin")
     if unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages():
         raise RuntimeError("Save your current level before importing your player skin")
+    world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+    if world is None or world.get_path_name().startswith("/Temp/"):
+        raise RuntimeError("Save the current level to your project before importing your skin")
     appearance_class = getattr(unreal, "BridgePlayerAppearance", None)
     receiver_class = getattr(unreal, "BridgeReceiver", None)
     if appearance_class is None or receiver_class is None:
@@ -109,40 +112,44 @@ def import_minecraft_player(filename):
     texture.set_editor_property("srgb", True)
     if not assets.save_loaded_asset(texture, False):
         raise RuntimeError("Cannot save player skin texture")
-    parent_path = root + "/M_PlayerSkin_v1"
+    revision = hashlib.sha256(b"player-import-v2\0" + (project / "bridge_lighting_materials.py").read_bytes()).hexdigest()[:12]
+    parent_name = "M_PlayerSkin_v2_" + revision
+    parent_path = root + "/" + parent_name
     parent = unreal.load_asset(parent_path) if assets.does_asset_exist(parent_path) else None
     if parent is None:
-        parent = tools.create_asset("M_PlayerSkin_v1", root, unreal.Material, unreal.MaterialFactoryNew())
+        parent = tools.create_asset(parent_name, root, unreal.Material, unreal.MaterialFactoryNew())
     if not isinstance(parent, unreal.Material):
         raise RuntimeError("Player skin master path is occupied by a different asset type")
-    # Repair only our generated master on every import, including a partial prior failure.
-    # Existing hash-named textures/instances and unrelated materials are retained.
-    editing.delete_all_material_expressions(parent)
-    parent.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED)
-    parent.set_editor_property("two_sided", True)
-    parent.set_editor_property("opacity_mask_clip_value", 0.1)
-    sample = editing.create_material_expression(parent, unreal.MaterialExpressionTextureSampleParameter2D, -250, 0)
-    if sample is None:
-        raise RuntimeError("Cannot create skin texture parameter")
-    sample.set_editor_property("parameter_name", "SkinTexture")
-    sample.set_editor_property("texture", texture)
-    import runpy
-    helper = project / 'bridge_lighting_materials.py'
-    if not helper.is_file():
-        raise RuntimeError('Copy bridge_lighting_materials.py next to UEBridge.uproject first')
-    runpy.run_path(str(helper))['wire_vanilla_lighting'](unreal, editing, parent, sample, use_vertex=False)
-    if not editing.connect_material_property(sample, "A", unreal.MaterialProperty.MP_OPACITY_MASK):
-        raise RuntimeError("Cannot connect skin color/outer-layer alpha")
-    roughness = editing.create_material_expression(parent, unreal.MaterialExpressionConstant, -250, 180)
-    roughness.set_editor_property("r", 0.85)
-    if not editing.connect_material_property(roughness, "", unreal.MaterialProperty.MP_ROUGHNESS):
-        raise RuntimeError("Cannot connect skin roughness")
-    editing.recompile_material(parent)
+    # Keep registered materials intact if a new graph build fails. The helper
+    # revision selects a new generated master and instances instead of editing v1.
+    complete = "SkinTexture" in {str(name) for name in editing.get_texture_parameter_names(parent)} and all(editing.get_material_property_input_node(parent, prop) is not None for prop in (unreal.MaterialProperty.MP_OPACITY_MASK, unreal.MaterialProperty.MP_ROUGHNESS, unreal.MaterialProperty.MP_BASE_COLOR, unreal.MaterialProperty.MP_EMISSIVE_COLOR))
+    if not complete:
+        editing.delete_all_material_expressions(parent)
+        parent.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED)
+        parent.set_editor_property("two_sided", True)
+        parent.set_editor_property("opacity_mask_clip_value", 0.1)
+        sample = editing.create_material_expression(parent, unreal.MaterialExpressionTextureSampleParameter2D, -250, 0)
+        if sample is None:
+            raise RuntimeError("Cannot create skin texture parameter")
+        sample.set_editor_property("parameter_name", "SkinTexture")
+        sample.set_editor_property("texture", texture)
+        import runpy
+        helper = project / 'bridge_lighting_materials.py'
+        if not helper.is_file():
+            raise RuntimeError('Copy bridge_lighting_materials.py next to UEBridge.uproject first')
+        runpy.run_path(str(helper))['wire_vanilla_lighting'](unreal, editing, parent, sample, use_vertex=False)
+        if not editing.connect_material_property(sample, "A", unreal.MaterialProperty.MP_OPACITY_MASK):
+            raise RuntimeError("Cannot connect skin color/outer-layer alpha")
+        roughness = editing.create_material_expression(parent, unreal.MaterialExpressionConstant, -250, 180)
+        roughness.set_editor_property("r", 0.85)
+        if not editing.connect_material_property(roughness, "", unreal.MaterialProperty.MP_ROUGHNESS):
+            raise RuntimeError("Cannot connect skin roughness")
+        editing.recompile_material(parent)
+        if "SkinTexture" not in {str(name) for name in editing.get_texture_parameter_names(parent)}:
+            raise RuntimeError("Skin master material is incomplete")
     if not assets.save_loaded_asset(parent, False):
         raise RuntimeError("Cannot save player skin material")
-    if "SkinTexture" not in {str(name) for name in editing.get_texture_parameter_names(parent)}:
-        raise RuntimeError("Skin master material is incomplete")
-    material_name = "MI_PlayerSkin_" + digest[:16]
+    material_name = "MI_PlayerSkin_v2_" + digest[:16] + "_" + revision
     material_path = root + "/" + material_name
     material = unreal.load_asset(material_path) if assets.does_asset_exist(material_path) else None
     if material is None:
@@ -155,7 +162,7 @@ def import_minecraft_player(filename):
     editing.update_material_instance(material)
     if editing.get_material_instance_texture_parameter_value(material, "SkinTexture") != texture or not assets.save_loaded_asset(material, False):
         raise RuntimeError("Skin texture override/save failed")
-    appearance_name = "DA_PlayerSkin_" + digest[:16] + ("_Slim" if manifest["skin"]["model"] == "slim" else "_Classic")
+    appearance_name = "DA_PlayerSkin_v2_" + digest[:16] + "_" + revision + ("_Slim" if manifest["skin"]["model"] == "slim" else "_Classic")
     appearance_path = root + "/" + appearance_name
     appearance = unreal.load_asset(appearance_path) if assets.does_asset_exist(appearance_path) else None
     if appearance is None:
@@ -164,6 +171,7 @@ def import_minecraft_player(filename):
         appearance = tools.create_asset(appearance_name, root, appearance_class, factory)
     if not isinstance(appearance, appearance_class):
         raise RuntimeError("Cannot create player appearance asset")
+    previous = receivers[0].get_editor_property("player_appearance")
     with unreal.ScopedEditorTransaction("Assign Minecraft player skin"):
         appearance.set_editor_property("skin_material", material)
         appearance.set_editor_property("is_slim", manifest["skin"]["model"] == "slim")
@@ -172,12 +180,18 @@ def import_minecraft_player(filename):
         if not assets.save_loaded_asset(appearance, False):
             raise RuntimeError("Cannot save player appearance")
         receivers[0].set_editor_property("player_appearance", appearance)
-    if not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level():
-        raise RuntimeError("Cannot save current level with player skin")
+    try:
+        if not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level() or receivers[0].get_editor_property("player_appearance") != appearance:
+            raise RuntimeError("Cannot save/verify current level with player skin")
+    except Exception:
+        receivers[0].set_editor_property("player_appearance", previous)
+        unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level()
+        raise
     # The source-only update copies these scripts next to UEBridge.uproject.
     import runpy
     runpy.run_path(str(effects_script))["setup_vanilla_effects"]()
     unreal.log("Minecraft player ready: " + manifest["player"]["name"] + " / " + manifest["skin"]["model"] + ". Start Play; your configured perspective key controls first/rear/front view.")
+    return appearance
 
 
 def _latest_export(game_dir, prefix, command):
@@ -213,7 +227,7 @@ def setup_minecraft_visuals(game_dir):
             raise RuntimeError("Copy import_minecraft_mobs.py next to UEBridge.uproject first")
         mobs_manifest = max(mob_exports, key=lambda path: path.stat().st_mtime_ns)
         mobs_functions = runpy.run_path(str(mobs_script))
-        mobs_functions["load_mob_manifest"](str(mobs_manifest))
+        mobs_functions["validate_mob_baseline"](mobs_functions["load_mob_manifest"](str(mobs_manifest)))
     # An incomplete/bad player export must not leave a half-updated texture palette.
     textures_functions["load_texture_manifest"](str(textures_manifest))
     load_player_manifest(str(player_manifest))
@@ -225,12 +239,15 @@ def setup_minecraft_visuals(game_dir):
         raise RuntimeError("Copy import_minecraft_items.py next to UEBridge.uproject first")
     items_functions = runpy.run_path(str(items_script))
     items_functions["load_item_manifest"](str(items_manifest))
-    textures_functions["import_minecraft_textures"](str(textures_manifest))
-    import_minecraft_player(str(player_manifest))
-    items_functions["import_minecraft_items"](str(items_manifest))
+    unreal.log("Minecraft visuals preflight complete: all manifests validated before imports")
+    texture_palette = textures_functions["import_minecraft_textures"](str(textures_manifest))
+    player_appearance = import_minecraft_player(str(player_manifest))
+    item_palette = items_functions["import_minecraft_items"](str(items_manifest))
+    mob_palette = None
     if mobs_functions is not None:
-        mobs_functions["import_minecraft_mobs"](str(mobs_manifest))
+        mob_palette = mobs_functions["import_minecraft_mobs"](str(mobs_manifest))
     else:
         unreal.log("No local mob export. Run /uebridge mobs export, then import its spawn-egg templates before starting UE control.")
     runpy.run_path(str(rendering_script))["setup_bridge_rendering"]()
-    unreal.log("Minecraft visuals ready. Block textures, your skin, and vanilla particles are assigned to the saved current level.")
+    unreal.log("Minecraft visuals ready. Block textures, your skin, and vanilla particles are assigned to the saved current level. Mobs=" + ("assigned" if mob_palette is not None else "not exported"))
+    return dict(textures=texture_palette, player=player_appearance, items=item_palette, mobs=mob_palette)

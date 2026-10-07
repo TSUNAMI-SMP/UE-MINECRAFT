@@ -136,6 +136,7 @@ void ABridgeCharacter::ApplyMinecraftPose(double BodyHeight, double EyeHeight, b
 void ABridgeCharacter::SetAuthorityEnabled(bool Enabled) {
     if(UEAuthority==Enabled) return;
     UEAuthority=Enabled; BridgeFlying=false; FlightWasAirborne=FlightLandingLatch=false; PreviousJump=false; SprintRequested=false;BodyYawInitialized=false;StopJumping();
+    if(!Enabled) {NativePresentation=false;NativePendingVisual=NativeEquipLowering=NativeUsingItem=false;}
     auto* Movement=GetCharacterMovement(); Movement->StopMovementImmediately();
     // Landing uses DefaultLandMovementMode, not just the current movement mode.
     Movement->DefaultLandMovementMode=Enabled ? MOVE_Walking : MOVE_None;
@@ -209,7 +210,7 @@ void ABridgeCharacter::Tick(float DeltaSeconds) {
     BridgeFloorGapCm=GetFloorGapCm();BaseEyeHeight=BridgeEyeHeightCm-GetCapsuleComponent()->GetScaledCapsuleHalfHeight()-BridgeFloorGapCm;
     BridgeSprinting=IsAuthoritySprinting();
     FovSprintMultiplier=float(BridgeCharacterMath::SprintFovMultiplier(FovSprintMultiplier,BridgeSprinting,DeltaSeconds));
-    BridgeVerticalFov=MinecraftBaseFov*FovSprintMultiplier;
+    BridgeVerticalFov=MinecraftBaseFov*(1.f+(FovSprintMultiplier-1.f)*NativeFovEffectScale);
     BridgeCamera->SetFieldOfView(float(BridgeCharacterMath::HorizontalFov(BridgeVerticalFov,BridgeCamera->AspectRatio)));
     SwingRemaining=FMath::Max(0.f,SwingRemaining-DeltaSeconds);
     const float ViewYaw=GetControlRotation().Yaw;
@@ -219,7 +220,7 @@ void ABridgeCharacter::Tick(float DeltaSeconds) {
     LimbAmplitude=float(BridgeCharacterMath::Smooth(LimbAmplitude,FMath::Min(1.f,GetVelocity().Size2D()/500.f),8.f,DeltaSeconds));
     const bool Backwards=FVector::DotProduct(GetVelocity(),FRotator(0,BridgeBodyYaw,0).Vector())<0.f;
     BobPhase+=DeltaSeconds*20.f*.6662f*LimbAmplitude*(Backwards ? -1.f : 1.f);
-    const float Bob=UEAuthority && GetCharacterMovement()->IsMovingOnGround() ? FMath::Sin(BobPhase)*FMath::Min(1.f,GetVelocity().Size2D()/432.f) : 0;
+    const float Bob=NativeBobView && UEAuthority && GetCharacterMovement()->IsMovingOnGround() ? FMath::Sin(BobPhase)*FMath::Min(1.f,GetVelocity().Size2D()/432.f) : 0;
     HandBob=float(BridgeCharacterMath::Smooth(HandBob,Bob,14.f,DeltaSeconds));
     if(BridgeFlying) {
         FFindFloorResult Floor;GetCharacterMovement()->FindFloor(GetActorLocation(),Floor,false);
@@ -270,6 +271,12 @@ void ABridgeCharacter::Tick(float DeltaSeconds) {
 }
 
 void ABridgeCharacter::ConfigureVisuals(UMaterialInterface* Material,UBridgeBlockPalette* Palette,const FString& Item,const FString& Block,int32 Color,const FString& ModelKey) {
+    if(NativePresentation && !NativeApplyingVisual && VisualsConfigured && (VisualItem!=Item || VisualModelKey!=ModelKey)) {
+        NativePendingVisual=true;NativeEquipLowering=true;
+        NativePendingMaterial=Material;NativePendingPalette=Palette;NativePendingItem=Item;
+        NativePendingBlock=Block;NativePendingColor=Color;NativePendingModel=ModelKey;
+        return;
+    }
     if(!VisualsConfigured || VisualMaterial!=Material) {
         auto Tint=[&](UStaticMeshComponent* VisualMesh,const FColor& ColorValue) {
             UMaterialInterface* Base=Material ? Material : VisualMesh->GetMaterial(0);if(!Base) return;
@@ -316,6 +323,26 @@ void ABridgeCharacter::ApplyPlayerVisuals(int32 Perspective,float SwingProgress,
     UpdatePlayerCamera();
 }
 
+void ABridgeCharacter::ApplyNativePresentation(int32 Perspective,bool LeftHanded,int32 SkinLayers,bool SlimArms,float DeltaSeconds) {
+    NativePresentation=true;
+    // Vanilla equips at a maximum of .4 per game tick. Advance locally every UE
+    // frame so direct play does not inherit the old Fabric pose send frequency.
+    PlayerEquip=FMath::FInterpConstantTo(PlayerEquip,NativeEquipLowering ? 0.f : 1.f,DeltaSeconds,8.f);
+    if(NativeEquipLowering && PlayerEquip<=.01f) {
+        NativeEquipLowering=false;
+        if(NativePendingVisual) {
+            NativeApplyingVisual=true;
+            ConfigureVisuals(NativePendingMaterial,NativePendingPalette,NativePendingItem,NativePendingBlock,NativePendingColor,NativePendingModel);
+            NativeApplyingVisual=false;NativePendingVisual=false;
+        }
+    }
+    ApplyPlayerVisuals(Perspective,0,PlayerEquip,NativeUsingItem,NativeUseAction,NativeUseProgress,LeftHanded,SkinLayers,SlimArms);
+}
+
+void ABridgeCharacter::SetNativeUse(bool Using,float Progress,const FString& Action) {
+    NativeUsingItem=Using;NativeUseProgress=FMath::Clamp(Progress,0.f,1.f);NativeUseAction=Using ? Action : TEXT("none");
+}
+
 void ABridgeCharacter::GetEyeAim(FVector& EyePosition,FRotator& AimRotation) const {
     const float EyeHeight=UEAuthority ? float(bIsCrouched ? BridgeCharacterMath::CrouchedEyeCm : BridgeCharacterMath::StandingEyeCm) : RemoteEyeHeight;
     EyePosition=GetMinecraftFeetPosition()+FVector(0,0,EyeHeight);
@@ -325,8 +352,13 @@ void ABridgeCharacter::GetEyeAim(FVector& EyePosition,FRotator& AimRotation) con
 void ABridgeCharacter::SetMinecraftFov(float VerticalFov) {
     BridgeCamera->AspectRatio=16.f/9.f;
     MinecraftBaseFov=FMath::IsFinite(VerticalFov) ? FMath::Clamp(VerticalFov,30.f,110.f) : 80.f;
-    BridgeVerticalFov=MinecraftBaseFov*FovSprintMultiplier;
+    BridgeVerticalFov=MinecraftBaseFov*(1.f+(FovSprintMultiplier-1.f)*NativeFovEffectScale);
     BridgeCamera->SetFieldOfView(float(BridgeCharacterMath::HorizontalFov(BridgeVerticalFov,BridgeCamera->AspectRatio)));
+}
+
+void ABridgeCharacter::ConfigureNativeViewOptions(bool BobView,float FovEffectScale) {
+    NativeBobView=BobView;
+    NativeFovEffectScale=FMath::IsFinite(FovEffectScale) ? FMath::Clamp(FovEffectScale,0.f,1.f) : 1.f;
 }
 
 void ABridgeCharacter::UpdatePlayerCamera() {
@@ -504,6 +536,15 @@ void ABridgeCharacter::UpdateAvatar(float Bob) {
     AvatarParts[2]->SetRelativeRotation(FRotator(Gait+(bIsCrouched ? -23.f : 0),0,0));AvatarParts[3]->SetRelativeRotation(FRotator(-Gait+(bIsCrouched ? -23.f : 0),0,0));
     AvatarParts[4]->SetRelativeRotation(FRotator(-Gait*1.4f,0,0));AvatarParts[5]->SetRelativeRotation(FRotator(Gait*1.4f,0,0));
     const float NativeSwing=GetHandSwing();
+    const int32 ActiveArm=PlayerLeftHanded ? 3 : 2;
+    if(!VisualItem.IsEmpty()) {
+        FRotator Carry=AvatarParts[ActiveArm]->GetRelativeRotation();
+        Carry.Pitch=Carry.Pitch*.5f+18.f;
+        AvatarParts[ActiveArm]->SetRelativeRotation(Carry);
+    }
+    // Empty-hand attacks animate in third person too. Previously this was inside
+    // the held-item branch, so punching with an empty hotbar slot never moved.
+    if(NativeSwing>0) AvatarParts[ActiveArm]->AddLocalRotation(FRotator(float(BridgeCharacterMath::AttackPitch(NativeSwing,GetControlRotation().Pitch)),0,0));
     const float Side=PlayerLeftHanded ? -1.f : 1.f;
     const auto ArmPose=BridgeCharacterMath::FirstPersonArm(NativeSwing,PlayerEquip,PlayerLeftHanded,PlayerSlim);
     const auto ItemPose=NativeHeldGeometry ? BridgeCharacterMath::FirstPersonItem(NativeSwing,PlayerEquip,PlayerLeftHanded) : BridgeCharacterMath::FirstPersonBlock(NativeSwing,PlayerEquip,PlayerLeftHanded);
@@ -543,7 +584,6 @@ void ABridgeCharacter::UpdateAvatar(float Bob) {
         HeldModel->AttachToComponent(AvatarParts[ArmIndex],FAttachmentTransformRules::KeepRelativeTransform);
         const auto GripPose=NativeHeldGeometry ? BridgeCharacterMath::ThirdPersonItem(PlayerLeftHanded) : BridgeCharacterMath::ThirdPersonBlock(PlayerLeftHanded);
         PoseHandGeometry(HeldModel,FTransform(PoseRotation(GripPose),PosePosition(GripPose),NativeHeldGeometry ? FVector(1) : FVector(BridgeCharacterMath::ThirdPersonBlockScale)),false);
-        if(NativeSwing>0) AvatarParts[ArmIndex]->AddLocalRotation(FRotator(float(BridgeCharacterMath::AttackPitch(NativeSwing,GetControlRotation().Pitch)),0,0));
     } else if(FirstPerson) {
         HeldModel->AttachToComponent(BridgeCamera,FAttachmentTransformRules::KeepRelativeTransform);
         PoseHandGeometry(HeldModel,FTransform(ItemRotation,ItemPosition,NativeHeldGeometry ? FVector(1) : FVector(BridgeCharacterMath::FirstPersonBlockScale)),true);

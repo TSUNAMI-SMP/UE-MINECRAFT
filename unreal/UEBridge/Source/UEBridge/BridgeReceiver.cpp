@@ -11,6 +11,9 @@
 #include "BridgeItemWorld.h"
 #include "BridgeDroppedItem.h"
 #include "BridgeLightingService.h"
+#include "BridgeNativeWorldStore.h"
+#include "BridgeNativeInventory.h"
+#include "BridgeNativePlayerController.h"
 #include "Sockets.h"
 #include "SocketSubsystem.h"
 #include "IPAddress.h"
@@ -29,6 +32,7 @@
 #include "GeometryCollection/GeometryCollectionComponent.h"
 #include "Field/FieldSystemObjects.h"
 #include "EngineUtils.h"
+#include "Engine/World.h"
 
 ABridgeReceiver::ABridgeReceiver() {
     PrimaryActorTick.bCanEverTick = true;
@@ -37,8 +41,8 @@ ABridgeReceiver::ABridgeReceiver() {
 void ABridgeReceiver::AcquireTarget() {
     if (!IsValid(TargetCharacter)) { TargetCharacter = Cast<ACharacter>(UGameplayStatics::GetPlayerPawn(this, 0)); Anchored = false; }
     if (TargetCharacter && !Anchored) {
-        Anchor = TargetCharacter->GetActorLocation();
-        Anchor.Z -= TargetCharacter->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+        Anchor = NativePlayActive ? FVector::ZeroVector : TargetCharacter->GetActorLocation();
+        if(!NativePlayActive) Anchor.Z -= TargetCharacter->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
         TargetCharacter->GetCharacterMovement()->DisableMovement();
         TargetCharacter->GetCharacterMovement()->AddTickPrerequisiteActor(this);
         Video->AddTickPrerequisiteActor(TargetCharacter);
@@ -49,6 +53,7 @@ void ABridgeReceiver::AcquireTarget() {
 void ABridgeReceiver::BeginPlay() {
     Super::BeginPlay(); AcquireTarget();
     InstanceId=FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
+    if(PreferNativePlay && !NativeWorldFile.IsEmpty()) { BeginNativePlay(); return; }
     ISocketSubsystem* S = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
     if (Port < 1024 || Port > 65535 || !S) { UE_LOG(LogTemp, Error, TEXT("Bridge: invalid port/socket subsystem")); return; }
     Socket = S->CreateSocket(NAME_DGram, TEXT("MinecraftBridge"), false);
@@ -70,12 +75,18 @@ void ABridgeReceiver::BeginPlay() {
             return SyncedWorld->GetLighting()->Sample(FIntVector(FMath::FloorToInt(Source.X),FMath::FloorToInt(Source.Y),FMath::FloorToInt(Source.Z)));
         };
     }
-    UE_LOG(LogTemp, Display, TEXT("Bridge 0.11.0 listening on 127.0.0.1:%d"), Port);
+    UE_LOG(LogTemp, Display, TEXT("Bridge 0.12.0 listening on 127.0.0.1:%d"), Port);
     Video->Start(VideoPort);
     if (!TargetCharacter) UE_LOG(LogTemp, Warning, TEXT("Bridge: waiting for player Character; will retry every tick"));
     if (!ExplosionSystem) UE_LOG(LogTemp, Warning, TEXT("Bridge: ExplosionSystem is unset; Niagara will not play"));
 }
 void ABridgeReceiver::EndPlay(const EEndPlayReason::Type Reason) {
+    if(NativePlayActive && NativeStore.IsValid()) {
+        if(!NativeExitPrepared) PrepareNativeExit(GetWorld());
+        FWorldDelegates::OnWorldBeginTearDown.Remove(NativeTearDownHandle);
+        NativeStore.Reset();
+        Video->RestoreNativeRenderMode();
+    }
     if (IsValid(Preview)) Preview->Destroy();
     if (IsValid(SyncedWorld)) SyncedWorld->Destroy();
     if (IsValid(VanillaEffects)) VanillaEffects->Destroy();
@@ -89,6 +100,7 @@ void ABridgeReceiver::EndPlay(const EEndPlayReason::Type Reason) {
 void ABridgeReceiver::Tick(float DeltaSeconds) {
     Super::Tick(DeltaSeconds); AcquireTarget();
     Arrows.RemoveAll([](const auto& Arrow) { return !IsValid(Arrow); });
+    if(NativePlayActive) { TickNativePlay(DeltaSeconds); return; }
     if (!Socket) return;
     uint8 Bytes[BridgeProtocol::MaxPacketBytes + 1];
     for (int32 I = 0; I < 256; ++I) {
@@ -169,6 +181,7 @@ void ABridgeReceiver::Tick(float DeltaSeconds) {
         LightActor(TargetCharacter);
     }
     PerformanceSeconds+=DeltaSeconds;++PerformanceFrames;
+    LogDiagnostics(Now);
     if(Connected && Peer.IsValid() && (LastPerformance<0 || Now-LastPerformance>=1)) {LastPerformance=Now;SendPerformance();}
     PumpFeedback(Now);
     if(Sealed && Peer.IsValid() && (LastPose<0 || Now-LastPose>=1.0/60)) { LastPose=Now; SendPose(); }
@@ -353,7 +366,7 @@ void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
     Reply->SetBoolField(TEXT("cameraReady"), Camera && Camera->IsActive() && TargetCharacter->GetController());
     Reply->SetBoolField(TEXT("vfxReady"), IsValid(ExplosionSystem)); Reply->SetNumberField(TEXT("walls"), Walls);
     Reply->SetNumberField(TEXT("previewBlocks"), PreviewBlocks);
-    Reply->SetStringField(TEXT("build"),TEXT("0.11.0"));
+    Reply->SetStringField(TEXT("build"),TEXT("0.12.0"));
     Reply->SetBoolField(TEXT("blockModelsV2"),true); Reply->SetBoolField(TEXT("videoV3"),true);
     Reply->SetBoolField(TEXT("blockPaletteReady"),IsValid(TexturePalette) && !TexturePalette->BlockstateDefinitions.IsEmpty()
         && !TexturePalette->StateShapes.IsEmpty() && !TexturePalette->FaceMaterials.IsEmpty());
@@ -497,7 +510,7 @@ void ABridgeReceiver::BlockAction(const FBridgePacket& P) {
     const double Now=FPlatformTime::Seconds();
     if(P.Sequence<=LastActionSequence) return;
     LastActionSequence=P.Sequence;
-    if(!Character || !UEControl || !Connected || Now-LastInput>.25 || !IsValid(SyncedWorld) || P.ImportId!=SyncedWorld->GetImportId()) {LastAction=TEXT("controller not ready");return;}
+    if(!Character || !UEControl || (!NativePlayActive && (!Connected || Now-LastInput>.25)) || !IsValid(SyncedWorld) || P.ImportId!=SyncedWorld->GetImportId()) {LastAction=TEXT("controller not ready");return;}
     if(IsValid(MobWorld) && MobWorld->PlayerHealth<=0) {LastAction=TEXT("player dead; /uebridge respawn");return;}
     if(LastActionAt>=0 && Now-LastActionAt<.08) {LastAction=TEXT("rate limited");return;}
     LastActionAt=Now;Character->SwingHand();
@@ -514,6 +527,7 @@ void ABridgeReceiver::BlockAction(const FBridgePacket& P) {
         const bool Broken=SyncedWorld->BreakBlock(Block);LastAction=Broken ? TEXT("broken") : TEXT("no block");
         if(Broken && Known) {
             QueueFeedback(TEXT("break"),BrokenId,Center);
+            if(NativePlayActive && !NativeCreative) SpawnNativeDrop(BrokenId,1,Center,FVector(0,0,160));
             if(IsValid(VanillaEffects)) {
                 // Process() runs before the frame's character configuration; resolve
                 // the current local palette/material even for the first break event.
@@ -547,6 +561,42 @@ void ABridgeReceiver::BlockAction(const FBridgePacket& P) {
 }
 
 void ABridgeReceiver::QueueFeedback(const FString& Type,const FString& BlockId,const FVector& Position,float FallDistance) {
+    if(NativePlayActive) {
+        FString Event;
+        float Volume=1,Pitch=1;
+        if(NativeStore.IsValid() && NativeStore->GetMetadata().Manifest.IsValid()) {
+            const TSharedPtr<FJsonObject>* Groups=nullptr;
+            if(NativeStore->GetMetadata().Manifest->TryGetObjectField(TEXT("blockSounds"),Groups)) {
+                const TSharedPtr<FJsonObject>* Group=nullptr;
+                if((*Groups)->TryGetObjectField(BlockId,Group)) {
+                    (*Group)->TryGetStringField(Type==TEXT("land") ? TEXT("fall") : Type,Event);
+                    double Number=0;if((*Group)->TryGetNumberField(TEXT("volume"),Number)) Volume=float(Number);
+                    if((*Group)->TryGetNumberField(TEXT("pitch"),Number)) Pitch=float(Number);
+                    if(Type==TEXT("open") || Type==TEXT("close") || Type==TEXT("activate") || Type==TEXT("deactivate")) {
+                        Volume=1;Pitch=1;
+                        if((*Group)->TryGetNumberField(TEXT("interactionVolume"),Number)) Volume=float(Number);
+                        if((*Group)->TryGetNumberField(Type==TEXT("activate") ? TEXT("activatePitch") : TEXT("deactivatePitch"),Number)) Pitch=float(Number);
+                        else {
+                            double Min=.9,Max=1;
+                            (*Group)->TryGetNumberField(TEXT("interactionPitchMin"),Min);(*Group)->TryGetNumberField(TEXT("interactionPitchMax"),Max);
+                            Pitch=FMath::FRandRange(float(Min),float(Max));
+                        }
+                    }
+                }
+            }
+        }
+        if(Type==TEXT("land")) {
+            if(FallDistance>3 && !NativeCreative && EnsureMobWorld()) {
+                MobWorld->HitPlayer(FMath::CeilToFloat(FallDistance-3),Position);
+                PlayNativeSound(FallDistance>4 ? TEXT("minecraft:entity.player.big_fall") : TEXT("minecraft:entity.player.small_fall"),Position,1,1,TEXT("player"));
+            }
+            Volume*=.5f;Pitch*=.75f;
+        }
+        else if(Type==TEXT("step")) Volume*=.15f;
+        else if(Type==TEXT("break") || Type==TEXT("place")) {Volume=(Volume+1)*.5f;Pitch*=.8f;}
+        if(!Event.IsEmpty()) PlayNativeSound(Event,Position,Volume,Pitch,Type==TEXT("step") || Type==TEXT("land") ? TEXT("player") : TEXT("block"));
+        return;
+    }
     if(!Connected || !UEControl || !Peer.IsValid() || PendingFeedback.Num()>=64 || BlockId.IsEmpty()) return;
     const FString Id=FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
     const FVector Relative=(Position-Anchor)/100;
@@ -572,6 +622,17 @@ void ABridgeReceiver::PumpFeedback(double Now) {
     }
 }
 void ABridgeReceiver::QueueMobSound(const FString& Sound,const FVector& Position) {
+    if(NativePlayActive) {
+        FString Category=Sound.Contains(TEXT("entity.player.")) ? TEXT("player") : TEXT("neutral");
+        if(MobPalette) for(const auto& Pair:MobPalette->Templates) {
+            const FString Species=Pair.Key.Replace(TEXT("minecraft:"),TEXT(""));
+            if(Sound.StartsWith(TEXT("minecraft:entity.")+Species+TEXT("."))) {
+                if(const auto* Appearance=MobPalette->Find(Pair.Value)) Category=Appearance->Hostile ? TEXT("hostile") : TEXT("neutral");
+                break;
+            }
+        }
+        PlayNativeSound(Sound,Position,1,1,Category);return;
+    }
     auto* Character=Cast<ABridgeCharacter>(TargetCharacter);
     if(!Character || !Connected || !UEControl || !Peer.IsValid() || PendingFeedback.Num()>=64 || Sound.IsEmpty()) return;
     FMinimalViewInfo View;Character->BridgeCamera->GetCameraView(0,View);
@@ -610,9 +671,23 @@ bool ABridgeReceiver::EnsureItemWorld() {
     }
     ItemWorld->AddTickPrerequisiteActor(this);
     if(IsValid(SyncedWorld)) ItemWorld->AddTickPrerequisiteActor(SyncedWorld);
-    ItemWorld->Palette=TexturePalette;ItemWorld->SetAuthority(UEControl,TargetCharacter);return true;
+    ItemWorld->Palette=TexturePalette;ItemWorld->SetNativeLocal(NativePlayActive);ItemWorld->SetAuthority(UEControl,TargetCharacter);return true;
 }
 void ABridgeReceiver::QueueItemResult(const FString& Tx,int32 Revision,const FString& Action,int32 Count,const FString& Reason) {
+    if(NativePlayActive) {
+        if(!IsValid(ItemWorld)) return;
+        if(Revision==0) {ItemWorld->Resolve(Tx,0,0);return;}
+        if(NativeDropRevisions.FindRef(Tx)>=Revision) return;
+        NativeDropRevisions.Add(Tx,Revision);
+        int32 Accepted=0;
+        if(Action==TEXT("pickup")) {
+            auto* Controller=Cast<ABridgeNativePlayerController>(UGameplayStatics::GetPlayerController(this,0));
+            auto* Inventory=Controller ? Controller->GetNativeInventory() : nullptr;
+            if(const auto* Item=NativeDropItems.Find(Tx)) if(Inventory) Accepted=Count-Inventory->InsertStack(*Item,Count);
+        }
+        ItemWorld->Resolve(Tx,Revision,Accepted);
+        return;
+    }
     if(!Peer.IsValid() || Session.IsEmpty() || LastSequence==0) return;
     auto Reply=MakeShared<FJsonObject>();Reply->SetNumberField(TEXT("v"),1);Reply->SetStringField(TEXT("kind"),TEXT("item_result"));
     Reply->SetStringField(TEXT("session"),Session);Reply->SetStringField(TEXT("receiverId"),InstanceId);Reply->SetNumberField(TEXT("seq"),double(LastSequence));

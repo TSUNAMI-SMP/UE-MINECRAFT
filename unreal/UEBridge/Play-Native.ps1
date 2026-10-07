@@ -1,0 +1,102 @@
+param([string]$Manifest = "", [string]$EngineRoot = "", [switch]$Reimport, [switch]$Rebuild)
+$ErrorActionPreference = "Stop"
+try {
+    $project = Join-Path $PSScriptRoot "UEBridge.uproject"
+    if (!(Test-Path -LiteralPath $project)) { throw "Place Play-Native.cmd and Play-Native.ps1 next to your UEBridge.uproject." }
+    if (Get-Process UnrealEditor,UnrealEditor-Cmd -ErrorAction SilentlyContinue) {
+        throw "Save and close Unreal Editor/the previous native game before starting. Your processes were left running."
+    }
+    $descriptor = Get-Content -LiteralPath $project -Raw | ConvertFrom-Json
+    if (!($descriptor.Modules | Where-Object { $_.Name -eq "UEBridge" })) { throw "This is not the UEBridge project." }
+    $association = [string]$descriptor.EngineAssociation
+    if (!$EngineRoot) {
+        foreach ($key in @("HKLM:\SOFTWARE\EpicGames\Unreal Engine\$association", "HKLM:\SOFTWARE\WOW6432Node\EpicGames\Unreal Engine\$association")) {
+            if (Test-Path $key) {
+                $candidate = (Get-ItemProperty -LiteralPath $key).InstalledDirectory
+                if ($candidate -and (Test-Path (Join-Path $candidate "Engine\Binaries\Win64\UnrealEditor.exe"))) { $EngineRoot = $candidate; break }
+            }
+        }
+        $builds = "HKCU:\SOFTWARE\Epic Games\Unreal Engine\Builds"
+        if (!$EngineRoot -and (Test-Path $builds)) {
+            foreach ($property in (Get-ItemProperty -LiteralPath $builds).PSObject.Properties) {
+                if ($property.Name -eq $association) { $EngineRoot = [string]$property.Value; break }
+            }
+        }
+        if (!$EngineRoot) {
+            $candidate = Join-Path ${env:ProgramFiles} "Epic Games\UE_$association"
+            if (Test-Path (Join-Path $candidate "Engine\Binaries\Win64\UnrealEditor.exe")) { $EngineRoot = $candidate }
+        }
+    }
+    if (!$EngineRoot) { $EngineRoot = (Read-Host "Unreal Engine folder (example C:\Program Files\Epic Games\UE_5.8)").Trim('"') }
+    $editor = Join-Path $EngineRoot "Engine\Binaries\Win64\UnrealEditor.exe"
+    if (!(Test-Path -LiteralPath $editor)) { throw "UnrealEditor.exe was not found in this engine folder." }
+    $saved = Join-Path $PSScriptRoot "Saved"
+    $markerPath = Join-Path $saved "NativeLauncher.json"
+    $marker = $null
+    if (Test-Path -LiteralPath $markerPath) {
+        try { $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json } catch { Write-Host "Previous native setup marker is unreadable; select your export again." }
+    }
+    if (!$Manifest -and $marker -and $marker.completed -and !$Reimport) { $Manifest = [string]$marker.manifest }
+    if (!$Manifest) {
+        Add-Type -AssemblyName System.Windows.Forms
+        $dialog = New-Object System.Windows.Forms.OpenFileDialog
+        $dialog.Title = "Select native_manifest.json created by /uebridge native export"
+        $dialog.Filter = "Native Minecraft export (native_manifest.json)|native_manifest.json|JSON files (*.json)|*.json"
+        if (Test-Path "C:\UEBridgeTest\MC-Test\uebridge-export") { $dialog.InitialDirectory = "C:\UEBridgeTest\MC-Test\uebridge-export" }
+        if ($dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { throw "No export was selected; the project was not changed." }
+        $Manifest = $dialog.FileName
+    }
+    $Manifest = [IO.Path]::GetFullPath($Manifest.Trim('"'))
+    if (!(Test-Path -LiteralPath $Manifest)) { throw "Export not found: $Manifest. Run /uebridge native export in Minecraft and select its native_manifest.json." }
+    $nativeData = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json
+    if ($nativeData.schema -ne "uebridge.native.v1" -or !$nativeData.world.complete) { throw "This is not a completed native export. Select native_manifest.json from a successful export." }
+    $manifestHash = (Get-FileHash -LiteralPath $Manifest -Algorithm SHA256).Hash.ToLowerInvariant()
+    $source = Join-Path $PSScriptRoot "Source"
+    $sourceFiles = @(Get-ChildItem -LiteralPath $source -Recurse -File | Where-Object { $_.Extension -in @(".h", ".cpp", ".cs") } | Sort-Object FullName)
+    if (!$sourceFiles.Count) { throw "Native-play source files are missing. Extract the complete UE update into this project folder." }
+    $hashList = ($sourceFiles | ForEach-Object { $_.FullName.Substring($PSScriptRoot.Length) + ":" + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try { $sourceHash = ([BitConverter]::ToString($algorithm.ComputeHash([Text.Encoding]::UTF8.GetBytes($hashList)))).Replace("-", "").ToLowerInvariant() } finally { $algorithm.Dispose() }
+    $buildMarker = Join-Path $saved "NativeBuild.sha256"
+    $dll = Join-Path $PSScriptRoot "Binaries\Win64\UnrealEditor-UEBridge.dll"
+    $built = if (Test-Path -LiteralPath $buildMarker) { (Get-Content -LiteralPath $buildMarker -Raw).Trim() } else { "" }
+    if ($Rebuild -or $built -ne $sourceHash -or !(Test-Path -LiteralPath $dll)) {
+        Write-Host "First run/update: building the native player. This can take several minutes."
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "Build-UEBridge.ps1") -EngineRoot $EngineRoot
+        if ($LASTEXITCODE -ne 0) { throw "Native player build failed. See the first compiler error above; the old game was not launched." }
+        New-Item -ItemType Directory -Path $saved -Force | Out-Null
+        [IO.File]::WriteAllText($buildMarker, $sourceHash, [Text.UTF8Encoding]::new($false))
+        $Reimport = $true
+    }
+    $ready = $marker -and $marker.completed -and $marker.manifest -eq $Manifest -and $marker.manifestSha256 -eq $manifestHash -and $marker.map -eq "/Game/Bridge/Native/NativePlay"
+    $level = Join-Path $PSScriptRoot "Content\Bridge\Native\NativePlay.umap"
+    if ($Reimport -or !$ready -or !(Test-Path -LiteralPath $level)) {
+        $importScript = Join-Path $PSScriptRoot "import_native_play.py"
+        if (!(Test-Path -LiteralPath $importScript)) { $importScript = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\..\tools\import_native_play.py")) }
+        if (!(Test-Path -LiteralPath $importScript)) { throw "import_native_play.py is missing. Extract all Python helpers from the UE update." }
+        Write-Host "Importing this exact export into a separate native-play level: $Manifest"
+        Write-Host "Your existing levels are preserved. Import progress is recorded in Saved\Logs\UEBridge.log."
+        $previousManifest = $env:UEBRIDGE_NATIVE_MANIFEST
+        $previousAutomation = $env:UEBRIDGE_NATIVE_AUTOMATION
+        try {
+            $env:UEBRIDGE_NATIVE_MANIFEST = $Manifest
+            $env:UEBRIDGE_NATIVE_AUTOMATION = "1"
+            $importArguments = @("`"$project`"", "-ExecutePythonScript=`"$importScript`"", "-unattended", "-nosplash", "-NoSound")
+            $process = Start-Process -FilePath $editor -ArgumentList $importArguments -Wait -PassThru
+        } finally {
+            $env:UEBRIDGE_NATIVE_MANIFEST = $previousManifest
+            $env:UEBRIDGE_NATIVE_AUTOMATION = $previousAutomation
+        }
+        $marker = if (Test-Path -LiteralPath $markerPath) { Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json } else { $null }
+        if ($process.ExitCode -ne 0 -or !$marker -or !$marker.completed -or $marker.manifest -ne $Manifest -or $marker.manifestSha256 -ne $manifestHash -or !(Test-Path -LiteralPath $level)) {
+            throw "Native import did not complete. Read the last 'Native setup FAILED' or 'Native automation failed' error in Saved\Logs\UEBridge.log. Your world saves are preserved."
+        }
+    }
+    Write-Host "Starting UE native play. Minecraft can stay closed. Saved world: Saved\NativeWorlds." -ForegroundColor Green
+    $playArguments = @("`"$project`"", "/Game/Bridge/Native/NativePlay", "-game", "-windowed", "-ResX=1280", "-ResY=720")
+    Start-Process -FilePath $editor -ArgumentList $playArguments | Out-Null
+    exit 0
+} catch {
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    exit 1
+}

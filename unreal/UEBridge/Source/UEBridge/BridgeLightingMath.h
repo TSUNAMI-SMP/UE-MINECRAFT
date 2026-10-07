@@ -42,8 +42,20 @@ inline float FaceShade(float nx,float ny,float nz) {
     return total<.00001f ? 1.f : (std::abs(nx)*.6f+std::abs(nz)*.8f+std::abs(ny)*(ny>=0?1.f:.5f))/total;
 }
 inline float AO(bool sideA,bool sideB,bool corner) {
-    if(sideA && sideB) return .2f;
+    // Vanilla averages the exposed face (1) and three occluder AO samples (.2).
+    // When both sides occlude, the diagonal reuses a side sample: (1+.2+.2+.2)/4.
+    // The old .2 shortcut applied an extra full occluder and made corners too dark.
+    if(sideA && sideB) return .4f;
     return 1.f-.2f*(static_cast<int>(sideA)+static_cast<int>(sideB)+static_cast<int>(corner));
+}
+/** Vanilla substitutes the face light for a completely zero packed neighboring sample. */
+inline std::array<float,2> CornerLight(Light face,Light sideA,Light sideB,Light corner) {
+    float sky=face.sky,block=face.block;
+    for(auto sample:{sideA,sideB,corner}) {
+        if(sample.sky==0 && sample.block==0) sample=face;
+        sky+=sample.sky;block+=sample.block;
+    }
+    return {sky/60.f,block/60.f};
 }
 class Field {
 public:
@@ -57,6 +69,10 @@ public:
     }
     void clear() {sx=sy=sz=0;opacity.clear();faces.clear();emission.clear();sky.clear();block.clear();direct.clear();queued.clear();top.clear();boundaryDefined.clear();queue.clear();changed.clear();initialized=false;initializing=false;columnCursor=0;}
     bool valid() const {return sx>0;}
+    Voxel minimum() const {return min;}
+    Voxel maximum() const {return {min.x+sx-1,min.y+sy-1,min.z+sz-1};}
+    size_t voxelCount() const {return opacity.size();}
+    bool ready() const {return initialized && !initializing;}
     bool inside(Voxel p) const {return p.x>=min.x && p.y>=min.y && p.z>=min.z && p.x<min.x+sx && p.y<min.y+sy && p.z<min.z+sz;}
     void set(Voxel p,uint8_t occlusion,uint8_t luminous,uint8_t solidFaces=0) {
         if(!inside(p)) return;
@@ -126,6 +142,8 @@ public:
         const size_t i=index(p);return {sky[i],block[i]};
     }
     bool opaque(Voxel p) const {return inside(p) && opacity[index(p)]>=15;}
+    uint8_t opacityAt(Voxel p) const {return inside(p)?opacity[index(p)]:0;}
+    uint8_t emissionAt(Voxel p) const {return inside(p)?emission[index(p)]:0;}
     void discardChanged() {changed.clear();}
     std::vector<Voxel> consumeChanged() {std::vector<Voxel> result;result.swap(changed);return result;}
 private:

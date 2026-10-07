@@ -57,6 +57,11 @@ public:
     bool EnsureCollisionForPosition(const FVector& UEPosition);
     bool IsOpaqueVoxel(const FIntVector& Block) const;
     FString GetSurfaceReason() const {return SurfaceReason;}
+    /** Snapshot logical source rows, including UE edits. Rendering/collision proxies are never persisted. */
+    void GetNativeCellKeys(TArray<FIntVector>& Out) const;
+    bool GetNativeCell(const FIntVector& Cell,TArray<FBridgeBlock>& Rows,TArray<uint8>& SkyTop) const;
+    bool GetNativeScope(FIntVector& OutCenter,int32& OutRadius,int32& OutHalfHeight,FVector& OutOrigin) const;
+    uint64 GetMutationSerial() const { return MutationSerial; }
 private:
     UPROPERTY() TMap<FIntVector,TObjectPtr<class ABridgeBlockPreview>> Cells;
     TMap<FIntVector,int32> Counts;
@@ -75,6 +80,7 @@ private:
     UPROPERTY() TArray<TObjectPtr<class UBoxComponent>> Boundary;
     TMap<FIntVector,double> ButtonRelease;
     FString LastModelError;
+    uint64 MutationSerial=0;
     mutable FString SurfaceReason=TEXT("not_sampled");
     TSharedPtr<class FBridgeLightingService> Lighting;
     TSharedPtr<class FBridgeLightingService> PendingLighting;

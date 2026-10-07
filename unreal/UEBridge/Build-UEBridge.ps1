@@ -1,11 +1,37 @@
 param([string]$EngineRoot = "")
 $ErrorActionPreference = "Stop"
+
+function Enable-UEBridgeRequiredPlugins {
+    param([Parameter(Mandatory=$true)]$Descriptor)
+    # Only required plugin Enabled flags are merged. Engine association, project
+    # modules, custom settings and existing plugin metadata remain intact.
+    $requiredPlugins = @('Niagara', 'GeometryCollectionPlugin', 'PythonScriptPlugin', 'EditorScriptingUtilities', 'ProceduralMeshComponent')
+    $plugins = @($Descriptor.Plugins | Where-Object { $null -ne $_ })
+    $changed = $false
+    $enabled = @()
+    foreach ($name in $requiredPlugins) {
+        $existing = @($plugins | Where-Object { $_.Name -eq $name })
+        if ($existing.Count -gt 1) { throw "Duplicate required plugin entries: $name. The project descriptor was not changed." }
+        if ($existing.Count -eq 0) {
+            $plugins += [pscustomobject]@{Name=$name; Enabled=$true}
+            $changed = $true
+            $enabled += $name
+        } elseif ($existing[0].Enabled -ne $true) {
+            $existing[0] | Add-Member -MemberType NoteProperty -Name Enabled -Value $true -Force
+            $changed = $true
+            $enabled += $name
+        }
+    }
+    if ($changed) { $Descriptor | Add-Member -MemberType NoteProperty -Name Plugins -Value $plugins -Force }
+    return [pscustomobject]@{Descriptor=$Descriptor; Changed=$changed; Enabled=$enabled}
+}
+
 try {
     $project = Join-Path $PSScriptRoot "UEBridge.uproject"
     if (!(Test-Path $project) -or !(Test-Path (Join-Path $PSScriptRoot "Source\UEBridge\BridgeProtocol.h"))) {
         throw "Place this script next to UEBridge.uproject in the project you use."
     }
-    if (Get-Process UnrealEditor -ErrorAction SilentlyContinue) {
+    if (Get-Process UnrealEditor,UnrealEditor-Cmd -ErrorAction SilentlyContinue) {
         throw "Save your level and close Unreal Editor before building. No process was stopped."
     }
     $descriptor = Get-Content -LiteralPath $project -Raw | ConvertFrom-Json
@@ -31,19 +57,20 @@ try {
     if (!$EngineRoot) { $EngineRoot = (Read-Host "Enter the Unreal Engine installation folder (example C:\Program Files\Epic Games\UE_5.8)").Trim('"') }
     $buildCommand = Join-Path $EngineRoot "Engine\Build\BatchFiles\Build.bat"
     if (!(Test-Path $buildCommand)) { throw "Build.bat was not found in this Unreal Engine installation." }
-    # Merge this required engine plugin into the user's descriptor. Keep all other settings.
-    $plugin = @($descriptor.Plugins | Where-Object { $_.Name -eq "ProceduralMeshComponent" })
-    if ($plugin.Count -eq 0 -or !$plugin[0].Enabled) {
-        $backup = "$project.before-player-0.7.0"
-        if (!(Test-Path -LiteralPath $backup)) { Copy-Item -LiteralPath $project -Destination $backup }
-        if ($plugin.Count -eq 0) {
-            $plugins = @($descriptor.Plugins) + @([pscustomobject]@{Name="ProceduralMeshComponent"; Enabled=$true})
-            $descriptor | Add-Member -MemberType NoteProperty -Name Plugins -Value $plugins -Force
-        } else { $plugin[0] | Add-Member -MemberType NoteProperty -Name Enabled -Value $true -Force }
-        $temporary = "$project.player-update.tmp"
-        [IO.File]::WriteAllText($temporary, ($descriptor | ConvertTo-Json -Depth 100), [Text.UTF8Encoding]::new($false))
-        Move-Item -LiteralPath $temporary -Destination $project -Force
-        Write-Host "Enabled the engine's ProceduralMeshComponent plugin. Original descriptor backup: $backup"
+    $merged = Enable-UEBridgeRequiredPlugins -Descriptor $descriptor
+    if ($merged.Changed) {
+        $identity = [Guid]::NewGuid().ToString('N')
+        $backup = "$project.before-native-0.12.0-$identity"
+        $temporary = "$project.native-update-$identity.tmp"
+        try {
+            [IO.File]::WriteAllText($temporary, ($merged.Descriptor | ConvertTo-Json -Depth 100), [Text.UTF8Encoding]::new($false))
+            # Same-directory replacement preserves a complete old descriptor as
+            # backup and publishes a complete merged descriptor atomically.
+            [IO.File]::Replace($temporary, $project, $backup)
+        } finally {
+            if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+        }
+        Write-Host "Enabled required engine plugins: $($merged.Enabled -join ', '). Original descriptor backup: $backup"
     }
     Write-Host "Building the project you selected: $project"
     & $buildCommand UEBridgeEditor Win64 Development "-Project=$project" -WaitMutex -NoHotReloadFromIDE

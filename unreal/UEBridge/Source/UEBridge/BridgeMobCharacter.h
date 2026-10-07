@@ -15,6 +15,9 @@ public:
     bool Alive() const { return Health>0; }
     FString ModelDiagnostic() const {return InitializationReason;}
     int32 ModelVertexCount() const {return VertexCount;}
+    FBridgeMobSnapshot NativeSnapshot(const FVector& Anchor,const FVector& SourceOrigin) const;
+    float GetNativeViewPitch() const {return NativeViewPitch;}
+    void SetNativeViewPitch(float Pitch) {NativeViewPitch=FMath::Clamp(Pitch,-90.f,90.f);}
     virtual void Tick(float DeltaSeconds) override;
     UPROPERTY(VisibleAnywhere,BlueprintReadOnly,Category="Bridge|Mob") FString MinecraftId;
     UPROPERTY(VisibleAnywhere,BlueprintReadOnly,Category="Bridge|Mob") FString MinecraftType;
@@ -31,6 +34,8 @@ private:
     FVector Wander=FVector::ZeroVector, LastPosition=FVector::ZeroVector;
     FRandomStream Random;
     FString InitializationReason=TEXT("not_initialized");
+    FBridgeMobSnapshot InitialSnapshot;
     int32 VertexCount=0;
+    float NativeViewPitch=0;
     void Animate(float DeltaSeconds);
 };

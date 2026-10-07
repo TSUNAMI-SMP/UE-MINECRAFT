@@ -56,7 +56,8 @@ class Expression(PropertyObject):
 
 
 class Receiver(PropertyObject):
-    pass
+    def get_editor_property(self, name):
+        return self.properties.get(name)
 
 
 class Editor:
@@ -69,7 +70,8 @@ class Editor:
         api.Paths = types.SimpleNamespace(project_dir=lambda: str(project), convert_relative_path_to_full=lambda path: path)
         api.UnrealEditorSubsystem, api.EditorActorSubsystem, api.LevelEditorSubsystem = object(), object(), object()
         subsystems = {
-            api.UnrealEditorSubsystem: types.SimpleNamespace(get_game_world=lambda: object() if self.playing else None),
+            api.UnrealEditorSubsystem: types.SimpleNamespace(get_game_world=lambda: object() if self.playing else None,
+                get_editor_world=lambda: types.SimpleNamespace(get_path_name=lambda: '/Game/Test.Test')),
             api.EditorActorSubsystem: types.SimpleNamespace(get_all_level_actors=lambda: self.receivers),
             api.LevelEditorSubsystem: types.SimpleNamespace(save_current_level=self.save_level),
         }
@@ -236,10 +238,11 @@ class VanillaEffectsSetupTest(unittest.TestCase):
         self.editor.assets['/Game/Bridge/Minecraft/UserMaterial'] = user_material
         with patch.dict(sys.modules, {'unreal': self.editor.api}):
             runpy.run_path(str(SCRIPT.parent / 'setup_bridge_rendering.py'))['setup_bridge_rendering']()
-        self.assertIs(owned, self.editor.receivers[0].properties['vanilla_particle_material'])
+        self.assertIsNot(owned, self.editor.receivers[0].properties['vanilla_particle_material'])
         self.assertIs(user_material, self.editor.assets['/Game/Bridge/Minecraft/UserMaterial'])
         self.assertEqual([], user_material.nodes)
-        self.assertEqual([0,1,2,3,4], sorted(node.properties['data_index'] for node in owned.nodes if type(node).__name__ == 'PerInstanceCustomData'))
+        current = self.editor.receivers[0].properties['vanilla_particle_material']
+        self.assertEqual([0,1,2,3,4], sorted(node.properties['data_index'] for node in current.nodes if type(node).__name__ == 'PerInstanceCustomData'))
         self.assertEqual(2, self.editor.level_saves)
         self.assertIn('outline_material', self.editor.receivers[0].properties)
 
@@ -250,10 +253,9 @@ class VanillaEffectsSetupTest(unittest.TestCase):
         self.assertEqual({}, self.editor.assets)
         self.assertEqual([], self.editor.saved)
 
-    def test_retry_repairs_owned_asset_and_saves_receiver_assignment(self):
+    def test_retry_reuses_complete_registered_graph_and_saves_receiver_assignment(self):
         material = self.editor.run()
         count = len(material.nodes)
-        material.nodes.append(object())
         self.assertIs(material, self.editor.run())
         self.assertEqual(count, len(material.nodes))
         self.assertEqual(2, len(self.editor.assets))
@@ -276,8 +278,11 @@ class VanillaEffectsSetupTest(unittest.TestCase):
             self.assertEqual({}, self.editor.assets)
 
     def test_occupied_asset_is_preserved(self):
+        import hashlib
         occupied = object()
-        self.editor.assets["/Game/Bridge/Minecraft/M_MinecraftDust_v1"] = occupied
+        helper = pathlib.Path(self.temp.name) / 'bridge_lighting_materials.py'
+        revision = hashlib.sha256(b'dust-import-v2\0' + helper.read_bytes()).hexdigest()[:12]
+        self.editor.assets["/Game/Bridge/Minecraft/M_MinecraftDust_v2_" + revision] = occupied
         with self.assertRaisesRegex(RuntimeError, "another asset type"):
             self.editor.run()
         self.assertEqual([], self.editor.saved)
@@ -293,6 +298,19 @@ class VanillaEffectsSetupTest(unittest.TestCase):
             self.assertEqual({}, self.editor.receivers[0].properties)
             self.assertTrue(all(isinstance(asset, Collection) for asset in self.editor.saved))
             self.assertEqual(0, self.editor.level_saves)
+
+    def test_failed_new_graph_preserves_previously_registered_material(self):
+        import hashlib
+        previous = Material()
+        sentinel = object()
+        previous.nodes.append(sentinel)
+        self.editor.receivers[0].properties['vanilla_particle_material'] = previous
+        self.editor.assets['/Game/Bridge/Minecraft/M_MinecraftDust_v1'] = previous
+        self.editor.fail_connections = True
+        with self.assertRaises(RuntimeError):
+            self.editor.run()
+        self.assertIs(previous, self.editor.receivers[0].properties['vanilla_particle_material'])
+        self.assertEqual([sentinel], previous.nodes)
 
 
 if __name__ == "__main__":

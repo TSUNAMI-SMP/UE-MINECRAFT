@@ -96,7 +96,9 @@ def ground_model_count(manifest):
     return sum('ground' in contexts for contexts in manifest['items'].values())
 
 
-def import_minecraft_items(filename):
+def import_minecraft_items(filename, asset_root="/Game/Bridge/Minecraft/Items"):
+    if not isinstance(asset_root, str) or not re.fullmatch(r"/Game(?:/[A-Za-z0-9_]+)+", asset_root):
+        raise ValueError("Invalid generated item asset root")
     manifest = load_item_manifest(filename)
     import runpy
     import unreal
@@ -114,7 +116,7 @@ def import_minecraft_items(filename):
     palette.get_editor_property('item_models')  # Require the updated C++ before importing anything.
     assets, tools, editing = unreal.EditorAssetLibrary, unreal.AssetToolsHelpers.get_asset_tools(), unreal.MaterialEditingLibrary
     helper = runpy.run_path(str(project / 'import_minecraft_textures.py'))
-    root = '/Game/Bridge/Minecraft/Items'; materials = {}
+    root = asset_root; materials = {}
     with unreal.ScopedSlowTask(len(manifest['textures']), 'Import Minecraft item textures') as progress:
         progress.make_dialog(True)
         for key, entry in manifest['textures'].items():

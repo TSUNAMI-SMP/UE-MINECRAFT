@@ -5,6 +5,7 @@ import pathlib
 import re
 import subprocess
 import zipfile
+from ue_package_files import UE_PYTHON_HELPERS, require_ue_package_files
 
 root = pathlib.Path(__file__).resolve().parents[1]
 if subprocess.run(["git", "diff", "--quiet"], cwd=root).returncode != 0:
@@ -15,6 +16,7 @@ if not match: raise SystemExit("Missing mod version")
 version = match.group(1)
 jar = root / f"minecraft-mod/build/libs/minecraft-ue-bridge-{version}.jar"
 if not jar.is_file(): raise SystemExit("Build the current MOD before packaging")
+require_ue_package_files(root)
 files = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode().split("\0")
 output = root / f"downloads/UE-Minecraft-MVP-{version}.zip"
 output.parent.mkdir(exist_ok=True)
@@ -25,7 +27,7 @@ with zipfile.ZipFile(output, "x", zipfile.ZIP_DEFLATED) as archive:
             archive.write(root / relative, "UE-MINECRAFT/" + relative)
     archive.write(jar, "UE-MINECRAFT/artifacts/" + jar.name)
     # Local UE Python helpers must also sit beside the .uproject in the full download.
-    for helper in ("setup_world_bridge.py", "import_minecraft_textures.py", "import_minecraft_player.py", "import_minecraft_mobs.py", "import_minecraft_items.py", "setup_vanilla_effects.py", "setup_bridge_rendering.py", "bridge_lighting_materials.py", "import_minecraft_atlas.py"):
+    for helper in UE_PYTHON_HELPERS:
         archive.write(root / "tools" / helper, "UE-MINECRAFT/unreal/UEBridge/" + helper)
     digest = hashlib.sha256(jar.read_bytes()).hexdigest()
     archive.writestr("UE-MINECRAFT/artifacts/SHA256SUMS.txt", digest + "  " + jar.name + "\n")

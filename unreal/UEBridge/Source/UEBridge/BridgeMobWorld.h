@@ -36,6 +36,10 @@ public:
     void RespawnPlayer();
     int32 AliveCount() const;
     TArray<FVector> CollisionAnchors() const;
+    /** Canonical file snapshots use absolute Minecraft coordinates, never protocol-relative positions. */
+    TArray<TSharedPtr<class FJsonValue>> ExportNativeSnapshots(const FVector& Anchor,const FVector& SourceOrigin) const;
+    /** A valid empty saved array replaces the source population: killed mobs stay killed. */
+    bool ImportNativeSnapshots(const TArray<TSharedPtr<class FJsonValue>>& Snapshots,const FVector& Anchor,const FVector& SourceOrigin);
     FString BehaviorDescription() const { return TEXT("ground wander/chase/melee; no species-specific AI/flight/swim/breeding/loot"); }
 protected:
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;

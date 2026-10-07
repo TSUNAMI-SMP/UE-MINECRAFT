@@ -19,6 +19,7 @@ public final class VideoOverlay {
     private BridgeTransport transport;
     private double inputToUpload=-1,readbackMs,encodeMs,decodeMs,uploadMs;
     private VideoProtocol.Frame uploaded;
+    private VideoProtocol.Frame discarded;
     private final GpuVideoBridge gpu=new GpuVideoBridge();
     public void setTransport(BridgeTransport transport) { this.transport=transport; }
     public String timing() {
@@ -31,7 +32,7 @@ public final class VideoOverlay {
     }
     public void setClient(VideoClient next, int mode) {
         this.mode = mode;
-        if (client != next) { client = next; uploaded=null; inputToUpload=-1; release(); }
+        if (client != next) { client = next; uploaded=discarded=null; inputToUpload=-1; release(); }
     }
     private void release() {
         gpu.close();
@@ -42,7 +43,10 @@ public final class VideoOverlay {
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mode == 0 || client == null || mc.world == null) return;
         VideoProtocol.Frame frame = VanillaSkyComposite.displayed(client);
-        if (frame != null && frame!=uploaded) {
+        if(frame!=null && frame!=uploaded && frame!=discarded && System.nanoTime()-frame.decodedAt()>250_000_000L) {
+            client.discardedStale(frame);discarded=frame;
+        }
+        if (frame != null && frame!=uploaded && frame!=discarded) {
             if (texture == null || width != frame.width() || height != frame.height()) {
                 release(); width = frame.width(); height = frame.height();
                 texture = new NativeImageBackedTexture("UE Bridge video", width,height,false);
@@ -57,7 +61,9 @@ public final class VideoOverlay {
                     MemoryUtil.memIntBuffer(image.imageId(),width*height).put(frame.abgr());texture.upload();
                 }
             } catch(RuntimeException | UnsatisfiedLinkError e) {
-                client.disableGpu(e.getMessage());gpu.close();client.release(frame);return;
+                client.uploadFailed(frame);discarded=frame;
+                if(frame.gpu()!=null) {client.disableGpu(e.getMessage());gpu.close();}
+                return;
             }
             client.release(frame);
             uploadMs=(System.nanoTime()-uploadStart)/1_000_000.0;

@@ -3,6 +3,7 @@
 #include "Components/ActorComponent.h"
 #include "Async/Future.h"
 #include "BridgeVideoCadence.h"
+#include "ShowFlags.h"
 #include "BridgeVideo.generated.h"
 
 /** Loopback video; optional leased D3D11 GPU sharing, with JPEG compatibility fallback. */
@@ -14,6 +15,13 @@ public:
     void Start(int32 Port);
     void SetSource(class UCameraComponent* Camera,const FString& Session,uint64 InputSequence);
     void SetRenderMode(bool Lighting,bool VanillaSky);
+    /** Native play bypasses SceneCapture; apply the mode to the actual game viewport. */
+    void SetNativeRenderMode(bool Lighting);
+    void RestoreNativeRenderMode();
+    void SetNativeSkyPalette(class UBridgeNativeUiPalette* Palette);
+    void SetNativeSkyEnvironment(const TSharedPtr<class FJsonObject>& Values);
+    bool IsNativeRenderModeActive() const {return SavedNativeFlags.IsValid();}
+    FString GetDiagnosticSummary() const;
     void SetMinecraftOrigin(const FVector& MinecraftOrigin,const FVector& UEAnchor) {MCOrigin=MinecraftOrigin;Anchor=UEAnchor;}
     bool IsLightingEnabled() const {return LightingEnabled;}
     bool IsVanillaSkyEnabled() const {return VanillaSkyEnabled && ClientV3;}
@@ -49,6 +57,22 @@ private:
     TArray<uint8> Acknowledgements;
     float LastCaptureMs=0;
     int32 DroppedFrames=0;
+    uint64 CapturedFrames=0,TransmittedFrames=0,ReplacedFrames=0,StaleFrames=0,BackpressureTicks=0,Connections=0;
+    double LastDiagnosticLog=-1;
+    TUniquePtr<FEngineShowFlags> SavedNativeFlags;
+    TWeakObjectPtr<class UGameViewportClient> NativeViewport;
+    UPROPERTY() TObjectPtr<class AActor> NativeSky;
+    UPROPERTY() TObjectPtr<class UStaticMeshComponent> NativeSkySphere;
+    UPROPERTY() TObjectPtr<class UStaticMeshComponent> NativeSun;
+    UPROPERTY() TObjectPtr<class UStaticMeshComponent> NativeMoon;
+    UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> NativeSunMaterial;
+    UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> NativeMoonMaterial;
+    UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> NativeSkyMaterial;
+    UPROPERTY() TObjectPtr<class UBridgeNativeUiPalette> NativeSkyPalette;
+    TMap<TWeakObjectPtr<class UPrimitiveComponent>,bool> NativeHiddenSky;
+    double NativeTimeOfDay=6000,NativeSkyEpoch=0;
+    float NativeRain=0;
+    FLinearColor NativeBackgroundColor=FLinearColor(.47,.65,1,1);
     TWeakObjectPtr<class UGameViewportClient> StandaloneViewport;
     bool SavedViewportDisabled=false;
     uint32 ModeRevision=0,EncodeRevision=0;
@@ -68,4 +92,6 @@ private:
     void ResetSharedGpu();
     void ReadGpuAcknowledgements();
     void UpdateStandaloneViewport(bool CaptureOnly);
+    void UpdateNativeSky();
+    void CreateNativeSky();
 };

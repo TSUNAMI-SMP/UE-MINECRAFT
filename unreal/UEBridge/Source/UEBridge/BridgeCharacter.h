@@ -15,12 +15,16 @@ public:
     void ConfigureVisuals(class UMaterialInterface* Material,class UBridgeBlockPalette* Palette,const FString& Item,const FString& Block,int32 Color,const FString& ModelKey=FString());
     void ConfigureAppearance(class UBridgePlayerAppearance* Appearance);
     void ApplyPlayerVisuals(int32 Perspective,float SwingProgress,float EquipProgress,bool UsingItem,const FString& UseAction,float UseProgress,bool LeftHanded,int32 SkinLayers,bool SlimArms);
+    /** Local equip progress and imported appearance settings, without a 20 Hz MC pose lease. */
+    void ApplyNativePresentation(int32 Perspective,bool LeftHanded,int32 SkinLayers,bool SlimArms,float DeltaSeconds);
+    void SetNativeUse(bool Using,float Progress,const FString& Action=TEXT("bow"));
     /** Gameplay always aims from the eyes, also when the display camera is in third person. */
     void GetEyeAim(FVector& EyePosition,FRotator& AimRotation) const;
     /** Minecraft feet are on the floor; UE keeps the physical capsule slightly above it. */
     FVector GetMinecraftFeetPosition() const;
     bool IsAuthoritySprinting() const;
     void SetMinecraftFov(float VerticalFov);
+    void ConfigureNativeViewOptions(bool BobView,float FovEffectScale);
     void SetInteractionWorld(class ABridgeWorld* Imported);
     void SwingHand() { if(SwingRemaining<=.15f) SwingRemaining=.30f; }
     void ApplyFlight(bool Creative,bool Flying);
@@ -75,9 +79,20 @@ private:
     bool VisualsConfigured=false;
     float BobPhase=0, SwingRemaining=0, LimbAmplitude=0, HandBob=0;
     float MinecraftBaseFov=80, FovSprintMultiplier=1;
+    bool NativeBobView=true;
+    float NativeFovEffectScale=1;
     bool SprintRequested=false,BodyYawInitialized=false;
     int32 CameraPerspective=0,PlayerSkinLayers=127;
     float PlayerSwing=0,PlayerEquip=1,PlayerUseProgress=0,RemoteEyeHeight=162;
+    bool NativePresentation=false,NativeEquipLowering=false;
+    bool NativeUsingItem=false;
+    float NativeUseProgress=0;
+    FString NativeUseAction=TEXT("none");
+    bool NativePendingVisual=false,NativeApplyingVisual=false;
+    UPROPERTY() TObjectPtr<class UMaterialInterface> NativePendingMaterial;
+    UPROPERTY() TObjectPtr<class UBridgeBlockPalette> NativePendingPalette;
+    FString NativePendingItem,NativePendingBlock,NativePendingModel;
+    int32 NativePendingColor=-1;
     bool PlayerUsingItem=false,PlayerLeftHanded=false,PlayerSlim=false,HasPlayerVisuals=false,AvatarGeometryReady=false;
     FString PlayerUseAction;
     void BuildAvatarGeometry();

@@ -22,11 +22,13 @@ public:
     void DiscardChanged();
     FLinearColor Vertex(const FIntVector& Voxel,const FVector& LocalMinecraft,const FVector& NormalMinecraft) const;
     FLinearColor Sample(const FIntVector& Voxel) const;
+    /** Numerical field state at one voxel; no GPU readback or full-field scan. */
+    FString Describe(const FIntVector& Voxel) const;
     /** Read exported per-state lighting; never guess lamp state from its name. */
     static bool StateProperties(const UBridgeBlockPalette* Palette,const FString& BlockId,const FString& State,uint8& Opacity,uint8& Emission);
     static uint8 StateFaceMask(const UBridgeBlockPalette* Palette,const FString& BlockId,const FString& State);
     /** Shared shader environment, affecting only Bridge generated materials in this world. */
-    static bool SetEnvironment(UWorld* World,const TSharedPtr<FJsonObject>& Values,bool Vanilla);
+    static bool SetEnvironment(UWorld* World,const TSharedPtr<FJsonObject>& Values,bool Vanilla,FString* FailureReason=nullptr);
     /** Apply sampled light to arms/items/mobs/drops without rebuilding their geometry. */
     void ApplyActor(AActor* Actor,const FIntVector& Voxel) const;
 private:

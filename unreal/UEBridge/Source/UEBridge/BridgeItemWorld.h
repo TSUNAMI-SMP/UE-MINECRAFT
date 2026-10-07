@@ -18,10 +18,17 @@ public:
     bool Resolve(const FString& Tx,int32 Revision,int32 Accepted);
     /** Pause physics/pickup without releasing escrow. Full control/session exit calls Clear. */
     void SetAuthority(bool Active,class ACharacter* Player);
+    /** Offline transactions do not require legacy UDP replay tombstones. */
+    void SetNativeLocal(bool Value) {NativeLocal=Value;}
+    TSet<FString> GetTransactionIds() const;
     void Clear();
     int32 AliveCount() const;
     TArray<FVector> CollisionAnchors() const;
     FString GetReason() const {return LastReason;}
+    /** One canonical stack per actor, including stacks merged during native play. */
+    TArray<TSharedPtr<class FJsonValue>> ExportNativeDrops(const FVector& Anchor,const FVector& SourceOrigin) const;
+    /** Invalid data or a spawn failure preserves the previous local population. */
+    bool ImportNativeDrops(const TArray<TSharedPtr<class FJsonValue>>& Drops,const FVector& Anchor,const FVector& SourceOrigin,TMap<FString,FString>& OutTransactionItems);
     virtual void Tick(float DeltaSeconds) override;
 protected:
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
@@ -36,7 +43,7 @@ private:
     UPROPERTY() TArray<TObjectPtr<class ABridgeDroppedItem>> Actors;
     TMap<FString,FEntry> Entries;
     TWeakObjectPtr<class ACharacter> Player;
-    bool Authority=false;
+    bool Authority=false,NativeLocal=false;
     double MergeTime=0;
     FString LastReason=TEXT("not_dropped");
     void Refresh(class ABridgeDroppedItem* Actor);

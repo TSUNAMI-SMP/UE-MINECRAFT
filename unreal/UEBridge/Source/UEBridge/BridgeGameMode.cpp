@@ -1,3 +1,9 @@
 #include "BridgeGameMode.h"
 #include "BridgeCharacter.h"
-ABridgeGameMode::ABridgeGameMode() { DefaultPawnClass = ABridgeCharacter::StaticClass(); }
+#include "BridgeNativePlayerController.h"
+#include "BridgeNativeHUD.h"
+ABridgeGameMode::ABridgeGameMode() {
+    DefaultPawnClass=ABridgeCharacter::StaticClass();
+    PlayerControllerClass=ABridgeNativePlayerController::StaticClass();
+    HUDClass=ABridgeNativeHUD::StaticClass();
+}

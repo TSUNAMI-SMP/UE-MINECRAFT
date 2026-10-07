@@ -5,6 +5,7 @@ material is deleted. Parameter collection values are per UE world at runtime.
 """
 
 COLLECTION_PATH = '/Game/Bridge/Minecraft/MPC_BridgeLighting_v1'
+LIGHTING_REVISION_PARAMETER = 'BridgeLightingRevision_v2'
 SCALARS = {'BridgeVanillaMode': 0.0, 'BridgeSkyFactor': 1.0, 'BridgeBlockFactor': 1.5,
            'BridgeAmbient': 0.0, 'BridgeGamma': 0.5, 'BridgeNightVision': 0.0,
            'BridgeDarkness': 0.0, 'BridgeDarkenWorld': 0.0}
@@ -60,8 +61,10 @@ c = saturate(c);
 maximum = max(max(c.r,c.g),max(c.b,.00001));
 float3 bright = c * (1 - pow(1 - maximum,4)) / maximum;
 c = lerp(c,bright,Gamma) * .96 + .03;
-float3 lightLinearRGB = lerp(c / 12.92, pow((c + .055) / 1.055, 2.4), step(.04045,c));
-return lightLinearRGB * pow(saturate(Light.b),2.2);
+// Native AO/cardinal shade is applied in display space BEFORE the one transfer.
+// A separate pow(shade,2.2) is especially inaccurate near dark lightmap entries.
+c *= saturate(Light.b);
+return lerp(c / 12.92, pow((c + .055) / 1.055, 2.4), step(.04045,c));
 '''
 
 
@@ -100,7 +103,10 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
     # override the shared mode and leave a previous OFF setting stuck on return.
     legacy = parameter('BridgeUnlit', 0.0)
     ignored = node(unreal.MaterialExpressionMultiply); ignored.set_editor_property('const_b', 0.0); wire(legacy, ignored, 'A')
-    mode_sum = node(unreal.MaterialExpressionAdd); wire(mode, mode_sum, 'A'); wire(ignored, mode_sum, 'B')
+    revision = parameter(LIGHTING_REVISION_PARAMETER, 2.0)
+    revision_ignored = node(unreal.MaterialExpressionMultiply); revision_ignored.set_editor_property('const_b', 0.0); wire(revision, revision_ignored, 'A')
+    zero_compat = node(unreal.MaterialExpressionAdd); wire(ignored, zero_compat, 'A'); wire(revision_ignored, zero_compat, 'B')
+    mode_sum = node(unreal.MaterialExpressionAdd); wire(mode, mode_sum, 'A'); wire(zero_compat, mode_sum, 'B')
     actor = node(unreal.MaterialExpressionVectorParameter)
     actor.set_editor_property('parameter_name', 'BridgeLight'); actor.set_editor_property('default_value', unreal.LinearColor(1, 0, 1, 1))
     # Entity meshes use the same ambient light plus cardinal diffuse shade. Terrain
@@ -152,6 +158,67 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
             raise RuntimeError('Cannot connect generated lighting output')
     material.set_editor_property('shading_model', unreal.MaterialShadingModel.MSM_DEFAULT_LIT)
     return lightmap
+
+
+def ensure_native_sky_materials(unreal, editing=None):
+    """Only generated NativeSky assets; vanilla mode needs no lit atmosphere."""
+    assets = unreal.EditorAssetLibrary
+    editing = editing or unreal.MaterialEditingLibrary
+    tools = unreal.AssetToolsHelpers.get_asset_tools()
+    collection = ensure_lighting_collection(unreal)
+    result = {}
+    for name, celestial in (('M_NativeSky_v1', False), ('M_NativeCelestial_v1', True)):
+        path = '/Game/Bridge/Minecraft/' + name
+        material = unreal.load_asset(path) if assets.does_asset_exist(path) else None
+        if material is None:
+            material = tools.create_asset(name, '/Game/Bridge/Minecraft', unreal.Material, unreal.MaterialFactoryNew())
+        if not isinstance(material, unreal.Material):
+            raise RuntimeError('Generated native sky path is occupied by another asset: ' + path)
+        editing.delete_all_material_expressions(material)
+        material.set_editor_property('shading_model', unreal.MaterialShadingModel.MSM_UNLIT)
+        material.set_editor_property('two_sided', True)
+        material.set_editor_property('blend_mode', unreal.BlendMode.BLEND_MASKED if celestial else unreal.BlendMode.BLEND_OPAQUE)
+        if celestial:
+            sample = editing.create_material_expression(material, unreal.MaterialExpressionTextureSampleParameter2D, -300, 0)
+            sample.set_editor_property('parameter_name', 'CelestialTexture')
+            # A default texture is necessary to compile a texture parameter. The
+            # active resource-pack sun/moon replaces it at runtime via the UI palette.
+            sample.set_editor_property('texture', unreal.load_asset('/Engine/EngineResources/DefaultTexture'))
+            uv = editing.create_material_expression(material, unreal.MaterialExpressionTextureCoordinate, -600, 0)
+            scale = editing.create_material_expression(material, unreal.MaterialExpressionVectorParameter, -600, 100)
+            scale.set_editor_property('parameter_name', 'CelestialUVScale'); scale.set_editor_property('default_value', unreal.LinearColor(1, 1, 0, 0))
+            multiply = editing.create_material_expression(material, unreal.MaterialExpressionMultiply, -450, 0)
+            offset = editing.create_material_expression(material, unreal.MaterialExpressionVectorParameter, -600, 200)
+            offset.set_editor_property('parameter_name', 'CelestialUVOffset'); offset.set_editor_property('default_value', unreal.LinearColor(0, 0, 0, 0))
+            add = editing.create_material_expression(material, unreal.MaterialExpressionAdd, -350, 0)
+            for source, output, target, pin in ((uv, '', multiply, 'A'), (scale, 'RG', multiply, 'B'), (multiply, '', add, 'A'), (offset, 'RG', add, 'B'), (add, '', sample, 'UVs')):
+                if not editing.connect_material_expressions(source, output, target, pin):
+                    if target != sample or not editing.connect_material_expressions(source, output, target, 'Coordinates'):
+                        raise RuntimeError('Cannot wire generated celestial UV: ' + pin)
+            if not editing.connect_material_property(sample, 'A', unreal.MaterialProperty.MP_OPACITY_MASK):
+                raise RuntimeError('Cannot connect native celestial opacity')
+            source, output = sample, 'RGB'
+        else:
+            # Lightmap SKY_LIGHT_COLOR_VISUAL is white at noon; the background
+            # must use the distinct SKY_COLOR_VISUAL exported with the world.
+            color = editing.create_material_expression(material, unreal.MaterialExpressionVectorParameter, -300, 0)
+            color.set_editor_property('parameter_name', 'NativeSkyColor')
+            color.set_editor_property('default_value', unreal.LinearColor(.47, .65, 1, 1))
+            conversion = editing.create_material_expression(material, unreal.MaterialExpressionCustom, -150, 0)
+            conversion.set_editor_property('output_type', unreal.CustomMaterialOutputType.CMOT_FLOAT3)
+            entry = unreal.CustomInput(); entry.set_editor_property('input_name', 'Color')
+            conversion.set_editor_property('inputs', [entry])
+            conversion.set_editor_property('code', 'float3 c=saturate(Color.rgb); return lerp(c/12.92,pow((c+.055)/1.055,2.4),step(.04045,c));')
+            if not editing.connect_material_expressions(color, '', conversion, 'Color'):
+                raise RuntimeError('Cannot wire native sky colour')
+            source, output = conversion, ''
+        if not editing.connect_material_property(source, output, unreal.MaterialProperty.MP_EMISSIVE_COLOR):
+            raise RuntimeError('Cannot connect native sky emissive')
+        editing.recompile_material(material)
+        if not assets.save_loaded_asset(material, False):
+            raise RuntimeError('Cannot save native sky material: ' + path)
+        result[name] = material
+    return result
 
 
 def load_material_helpers(unreal, namespace=None):

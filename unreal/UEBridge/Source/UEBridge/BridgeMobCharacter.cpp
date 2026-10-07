@@ -38,6 +38,7 @@ bool ABridgeMobCharacter::Initialize(const FBridgeMobSnapshot& Snapshot,const FB
     }
     if(VertexCount==0) return Invalid(TEXT("no_visible_model_cuboids"));
     MinecraftId=Snapshot.Id;MinecraftType=Snapshot.Type;Health=Snapshot.Health;MaxHealth=Snapshot.MaxHealth;
+    InitialSnapshot=Snapshot;
     Hostile=Snapshot.Hostile;Damage=Snapshot.Damage;WorldOwner=OwnerWorld;
     float HalfHeight=FMath::Clamp(Snapshot.Height*50.f,10.f,1000.f);
     float Radius=FMath::Clamp(Snapshot.Width*50.f,5.f,HalfHeight);
@@ -139,7 +140,8 @@ void ABridgeMobCharacter::Animate(float DeltaSeconds) {
         if(Part.Name.Contains(TEXT("head"),ESearchCase::IgnoreCase) && Target.IsValid()) {
             FVector Direction=Target->GetActorLocation()-GetActorLocation();
             FRotator Look=Direction.Rotation();float Yaw=FMath::Clamp(FMath::FindDeltaAngleDegrees(GetActorRotation().Yaw,Look.Yaw),-55.f,55.f);
-            Pose.SetRotation(FQuat(FVector::UpVector,FMath::DegreesToRadians(Yaw))*Pose.GetRotation());
+            NativeViewPitch=FMath::Clamp(-Look.Pitch,-45.f,45.f);
+            Pose.SetRotation(FRotator(-NativeViewPitch,Yaw,0).Quaternion()*Pose.GetRotation());
         }
         Parts[Index]->SetRelativeTransform(Pose);
     }
@@ -152,4 +154,15 @@ bool ABridgeMobCharacter::Hit(float Amount,const FVector& Direction) {
     if(Alive()) LaunchCharacter(Direction.GetSafeNormal2D()*220.f+FVector(0,0,180),true,true);
     else { GetCharacterMovement()->StopMovementImmediately();GetCharacterMovement()->SetMovementMode(MOVE_None);GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision); }
     return true;
+}
+
+FBridgeMobSnapshot ABridgeMobCharacter::NativeSnapshot(const FVector& Anchor,const FVector& SourceOrigin) const {
+    FBridgeMobSnapshot Snapshot=InitialSnapshot;
+    const FVector Feet=GetActorLocation()-FVector(0,0,GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+    const FVector Relative=(Feet-Anchor)/100.0;
+    Snapshot.Position=SourceOrigin+FVector(-Relative.Y,Relative.Z,Relative.X);
+    Snapshot.Id=MinecraftId;Snapshot.Type=MinecraftType;
+    Snapshot.Yaw=GetActorRotation().Yaw;
+    Snapshot.Health=Health;Snapshot.MaxHealth=MaxHealth;
+    return Snapshot;
 }

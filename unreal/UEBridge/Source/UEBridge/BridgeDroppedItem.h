@@ -16,6 +16,9 @@ public:
     const FString& GetModelKey() const {return ModelKey;}
     int32 GetQuantity() const {return Count;}
     float GetAge() const {return Age;}
+    const FVector& GetNativeVelocity() const {return Velocity;}
+    /** File importer validates values before restoring a local simulation. */
+    void RestoreNativeMotion(const FVector& SavedVelocity,float SavedAge) {Velocity=SavedVelocity;Age=SavedAge;}
     void MergeAge(float OtherAge) {Age=FMath::Min(Age,OtherAge);}
     TFunction<bool(const FVector& Position)> Contains;
     virtual void Tick(float DeltaSeconds) override;

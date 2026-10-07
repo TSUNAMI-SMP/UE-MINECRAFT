@@ -4,9 +4,12 @@ import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Dedicated daemon: socket read/JPEG decoding stay away from Minecraft's game/render thread. */
 public final class VideoClient implements AutoCloseable {
+    private static final Logger LOGGER=LoggerFactory.getLogger("minecraft_ue_bridge.video");
     private final AtomicReference<VideoProtocol.Frame> latest = new AtomicReference<>();
     private final Thread worker;
     private volatile boolean stopped;
@@ -19,6 +22,7 @@ public final class VideoClient implements AutoCloseable {
     private volatile String backend="JPEG";
     private volatile boolean gpuAllowed;
     private volatile String gpuDiagnostic="";
+    private long lastDiagnosticLog;
     public VideoClient(int port, String session) {
         this(port,session,false);
     }
@@ -42,12 +46,18 @@ public final class VideoClient implements AutoCloseable {
                 connection.setReceiveBufferSize(256*1024);connection.setSoTimeout(2000); connection.setTcpNoDelay(true);
                 acknowledgements=new DataOutputStream(connection.getOutputStream());
                 acknowledgements.write(((gpuAllowed ? "UEB5" : maskCapable ? "UEB3" : "UEBH")+session).getBytes(StandardCharsets.US_ASCII));
+                timing.connected();
                 DataInputStream input = new DataInputStream(new BufferedInputStream(connection.getInputStream()));
                 while (!stopped) {
                     VideoProtocol.Frame frame = VideoProtocol.read(input);
-                    release(latest.getAndSet(frame));lastFrame = System.nanoTime();message="UE映像受信中";
+                    VideoProtocol.Frame previous=latest.getAndSet(frame);
+                    if(previous!=null) {timing.replaced();release(previous);}
+                    lastFrame = System.nanoTime();message="UE映像受信中";
                     backend=frame.gpu()==null ? "JPEG" : "GPU共有";
                     width=frame.width();height=frame.height();timing.received(lastFrame);
+                    if(lastDiagnosticLog==0 || lastFrame-lastDiagnosticLog>=10_000_000_000L) {
+                        lastDiagnosticLog=lastFrame;LOGGER.info("Bridge video diagnostics: {} / {}",status(),diagnostics());
+                    }
                 }
             } catch (EOFException e) {
                 // UE can close the GPU-share stream while the editor is still running
@@ -64,7 +74,7 @@ public final class VideoClient implements AutoCloseable {
                 }
             } catch (IOException | RuntimeException e) {
                 message = "UE映像待ち: " + e.getClass().getSimpleName();
-            } finally { socket = null;acknowledgements=null;latest.set(null); }
+            } finally { release(latest.getAndSet(null));socket = null;acknowledgements=null; }
             if (!stopped) try { Thread.sleep(1000); } catch (InterruptedException ignored) { break; }
         }
         latest.set(null);
@@ -84,6 +94,9 @@ public final class VideoClient implements AutoCloseable {
         sendAcknowledgement(0x55454246,0,0,0); // UEBF: return to JPEG without replacing the input session.
     }
     public void displayed(VideoProtocol.Frame frame,double inputAge) {timing.displayed(frame.sequence(),System.nanoTime(),inputAge);}
+    public void discardedStale(VideoProtocol.Frame frame){timing.stale();release(frame);}
+    public void uploadFailed(VideoProtocol.Frame frame){timing.uploadFailed();release(frame);}
+    public String diagnostics(){return timing.counts()+" / GPU="+gpuDiagnostic+" / モニター表示までの遅延は未計測";}
     public String latency() {
         double p50=timing.percentile(.5),p95=timing.percentile(.95);
         return p50<0 ? "入力→描画投入 計測待ち" : String.format(java.util.Locale.ROOT,"入力→描画投入 p50=%.1f p95=%.1fms",p50,p95);

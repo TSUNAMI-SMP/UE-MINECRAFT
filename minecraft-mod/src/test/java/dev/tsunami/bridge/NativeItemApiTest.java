@@ -39,4 +39,28 @@ public class NativeItemApiTest {
         for(var method:OrderedRenderCommandQueue.class.getMethods()) if(!method.isDefault()) kinds.add(ItemModelExport.commandKind(method));
         assertTrue(kinds.containsAll(java.util.Set.of("batch","item","model","part","custom")));
     }
+    @Test public void compressedExportAcceptsPayloadLargerThanOld64MiBLimit() throws Exception {
+        var directory=java.nio.file.Files.createTempDirectory("bridge-large-item-");
+        try {
+            var manifest=new com.google.gson.JsonObject();manifest.addProperty("kind","items");manifest.addProperty("version",1);
+            var padding=new com.google.gson.JsonArray();var chunk=new com.google.gson.JsonPrimitive("a".repeat(1024*1024));
+            for(int i=0;i<65;i++) padding.add(chunk);manifest.add("padding",padding);
+            var path=ItemModelExport.writeManifest(directory,manifest,256L*1024*1024);
+            var envelope=JsonParser.parseString(java.nio.file.Files.readString(path)).getAsJsonObject();
+            assertEquals(2,envelope.get("version").getAsInt());assertTrue(envelope.get("uncompressedBytes").getAsLong()>64L*1024*1024);
+            assertTrue(java.nio.file.Files.size(directory.resolve("items.json.gz"))<1024*1024);
+            long count=0;try(var stream=new java.util.zip.GZIPInputStream(java.nio.file.Files.newInputStream(directory.resolve("items.json.gz")))) {
+                byte[] buffer=new byte[8192];int n;while((n=stream.read(buffer))>=0) count+=n;
+            }
+            assertEquals(envelope.get("uncompressedBytes").getAsLong(),count);
+        } finally {try(var paths=java.nio.file.Files.list(directory)) {for(var path:paths.toList()) java.nio.file.Files.delete(path);}java.nio.file.Files.delete(directory);}
+    }
+    @Test public void oversizedExportNeverPublishesCompletedManifest() throws Exception {
+        var directory=java.nio.file.Files.createTempDirectory("bridge-item-limit-");
+        try {
+            var manifest=new com.google.gson.JsonObject();manifest.addProperty("padding","a".repeat(200));
+            assertThrows(java.io.IOException.class,()->ItemModelExport.writeManifest(directory,manifest,32));
+            assertFalse(java.nio.file.Files.exists(directory.resolve("manifest.json")));
+        } finally {try(var paths=java.nio.file.Files.list(directory)) {for(var path:paths.toList()) java.nio.file.Files.delete(path);}java.nio.file.Files.delete(directory);}
+    }
 }

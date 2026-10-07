@@ -1,5 +1,13 @@
 # ダウンロード
 
+## アイテム書き出し容量修正0.10.1
+
+- [MOD 0.10.1](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.10.0/downloads/minecraft-ue-bridge-0.10.1.jar)
+- [Python取り込み修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.10.0/downloads/UEBridge-item-export-fix-0.10.1.zip)
+- [更新・再書き出し手順](../docs/ITEM_EXPORT_FIX_0.10.1.md)
+
+`Item manifest exceeds 64 MiB` の修正。MODとimport_minecraft_items.pyを更新し、アイテムを再書き出しします。UEのC++ソースは0.10.0のまま、再ビルド不要です。旧配布物は保持します。
+
 ## 更新版0.10.0
 
 - [MOD 0.10.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.10.0/downloads/minecraft-ue-bridge-0.10.0.jar)

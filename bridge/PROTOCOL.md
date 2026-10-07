@@ -592,3 +592,16 @@ Status adds `itemsV1`, `creativeFlightV1`, `itemModelCount`, `heldModel`, `flyin
 fields remain unchanged. Status strings are bounded; UDP responses use condensed
 JSON and respect the2048-byte budget. Tests do not establish UE5.8 compilation
 or rendered color correctness on Windows.
+
+## Compressed item exports (MOD/importer0.10.1, UE0.10.0)
+
+Completed `manifest.json` now contains `kind:"items",version:2,payload:"items.json.gz"`,
+SHA256 of the gzip file and integer `uncompressedBytes`. The gzip payload is the
+previous version1 items JSON. Export streams UTF-8 JSON into gzip instead of
+creating the complete uncompressed JSON string and byte array. Limits are256MiB
+uncompressed and64MiB compressed; existing texture/geometry budgets still apply.
+Only a completed payload publishes the manifest, so interrupted directories are
+ignored by latest-export selection. Importer checks containment, checksum, gzip
+CRC, exact bounded decompressed length and all previous geometry/PNG validations.
+Legacy uncompressed version1 exports remain supported. UE palette data and the
+network/rendering protocol are unchanged; no UE module rebuild is required.

@@ -3,6 +3,8 @@
 Fabric **Minecraft Java 1.21.11 / Java 21** と **Unreal Engine 5.8** を同じPCで
 接続する実験用プロジェクト。Minecraftが入力・HUD・既存の音を担当し、UE主体モードではUEが移動・衝突・設置・破壊の判定と描画を担当します。既存サーバーへのインストールは不要です。
 
+**MOD・アイテム取り込み修正0.10.1：** `Item manifest exceeds 64 MiB` を修正。全モデルJSONを圧縮保存し、新しい取り込みスクリプトで検証・展開します。[MODとPython1ファイルの更新手順](docs/ITEM_EXPORT_FIX_0.10.1.md)。UEは0.10.0のまま、C++再ビルド不要です。
+
 **更新版0.10.0：** 映像の色変換・照明OFF時の白浮き対策、黒いネイティブ形状のアウトライン、腕の振り時間・ボブ・残像対策、持ち物のネイティブモデル取得、地上モブのスポーンエッグ、開閉／スイッチ音、クリエイティブ限定の飛行を実装。
 **MODとUEを両方更新・UE再ビルド・素材再書き出し／取り込みが必要です。**
 [ダウンロード](downloads/README.md) / [使用中プロジェクトへの具体的な更新手順](docs/UPGRADE_0.10.0.md)。0.9.4までの修正を含みます。UE5.8ビルド・描画はクラウドでは未確認です。
@@ -88,7 +90,7 @@ cd minecraft-mod
 ./gradlew build
 ```
 
-`build/libs/minecraft-ue-bridge-0.10.0.jar` がMOD本体です（`-sources.jar`ではありません）。
+`build/libs/minecraft-ue-bridge-0.10.1.jar` がMOD本体です（`-sources.jar`ではありません）。
 Minecraft Launcherに **1.21.11 / Fabric Loader 0.19.5** の専用インストールを作り、
 ゲームディレクトリを新しい `MC-UE-Test` フォルダに設定してください。その `mods/` に
 本MODと **Fabric API 0.141.6+1.21.11** を配置します。新しいシングルプレイ・クリエイティブ

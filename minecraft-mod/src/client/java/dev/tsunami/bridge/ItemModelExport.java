@@ -3,6 +3,10 @@ package dev.tsunami.bridge;
 import com.google.gson.*;
 import dev.tsunami.bridge.mixin.*;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.io.FilterOutputStream;
+import java.io.OutputStreamWriter;
+import java.util.zip.GZIPOutputStream;
 import java.lang.reflect.*;
 import java.nio.file.*;
 import java.util.*;
@@ -59,9 +63,29 @@ public final class ItemModelExport {
         captureStack(client,client.player.getOffHandStack(),dir,textures,written,cache,models,excluded);
         manifest.add("items",models);manifest.add("textures",textures);manifest.add("excluded",excluded);
         manifest.addProperty("snapshot","Resolved default stacks and current hotbar/offhand; changing components, animated textures, glint and use-state animation require a fresh export or future live model transfer.");
-        Path path=dir.resolve("manifest.json");byte[] data=new Gson().toJson(manifest).getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        if(data.length>64*1024*1024) throw new IOException("Item manifest exceeds 64 MiB");
-        Files.write(path,data,StandardOpenOption.CREATE_NEW);return path;
+        return writeManifest(dir,manifest,256L*1024*1024);
+    }
+    static Path writeManifest(Path directory,JsonObject manifest,long limit) throws IOException {
+        Path payload=directory.resolve("items.json.gz");LimitedOutputStream counted;
+        try(var gzip=new GZIPOutputStream(Files.newOutputStream(payload,StandardOpenOption.CREATE_NEW))) {
+            counted=new LimitedOutputStream(gzip,limit);
+            try(var writer=new OutputStreamWriter(counted,java.nio.charset.StandardCharsets.UTF_8)) {
+                new Gson().toJson(manifest,writer);
+            } catch(com.google.gson.JsonIOException error) {throw new IOException("Cannot write item payload",error);}
+        }
+        if(Files.size(payload)>64L*1024*1024) throw new IOException("Compressed item payload exceeds 64 MiB");
+        JsonObject envelope=new JsonObject();envelope.addProperty("kind","items");envelope.addProperty("version",2);
+        envelope.addProperty("payload","items.json.gz");envelope.addProperty("uncompressedBytes",counted.count);
+        envelope.addProperty("sha256",MobModelExport.sha256(Files.readAllBytes(payload)));
+        Path path=directory.resolve("manifest.json");
+        Files.writeString(path,new Gson().toJson(envelope),StandardOpenOption.CREATE_NEW);return path;
+    }
+    private static final class LimitedOutputStream extends FilterOutputStream {
+        final long limit;long count;
+        LimitedOutputStream(OutputStream output,long maximum) {super(output);limit=maximum;}
+        @Override public void write(int value) throws IOException {reserve(1);out.write(value);}
+        @Override public void write(byte[] data,int offset,int length) throws IOException {reserve(length);out.write(data,offset,length);}
+        private void reserve(int length) throws IOException {if(count+length>limit) throw new IOException("Item payload exceeds uncompressed size limit");count+=length;}
     }
     private static void captureStack(MinecraftClient client,ItemStack stack,Path dir,JsonObject textures,long[] written,Map<String,String> cache,JsonObject models,JsonObject excluded) throws IOException {
         if(stack.isEmpty()) return;String id=modelKey(client,stack);

@@ -1,5 +1,6 @@
 """Import native item geometry and local textures; retain the current level/block palette."""
 import hashlib
+import gzip
 import json
 import math
 import pathlib
@@ -8,12 +9,29 @@ import struct
 import zlib
 
 CONTEXTS = ('firstperson_righthand', 'firstperson_lefthand', 'thirdperson_righthand', 'thirdperson_lefthand')
+MAX_PAYLOAD_BYTES = 256 * 1024 * 1024
 
 def load_item_manifest(filename):
     path = pathlib.Path(filename).expanduser().resolve()
     if not path.is_file() or path.stat().st_size > 64 * 1024 * 1024:
         raise ValueError('Missing/oversized item manifest')
     manifest = json.loads(path.read_bytes())
+    if isinstance(manifest, dict) and manifest.get('kind') == 'items' and type(manifest.get('version')) is int and manifest['version'] == 2:
+        if manifest.get('payload') != 'items.json.gz' or type(manifest.get('uncompressedBytes')) is not int or not 1 <= manifest['uncompressedBytes'] <= MAX_PAYLOAD_BYTES:
+            raise ValueError('Invalid compressed item payload metadata')
+        source = (path.parent / manifest['payload']).resolve()
+        if not source.is_relative_to(path.parent) or not source.is_file() or source.stat().st_size > 64 * 1024 * 1024:
+            raise ValueError('Missing/oversized or escaping compressed item payload')
+        if not isinstance(manifest.get('sha256'), str) or hashlib.sha256(source.read_bytes()).hexdigest() != manifest['sha256']:
+            raise ValueError('Compressed item payload checksum mismatch')
+        try:
+            with gzip.open(source, 'rb') as stream:
+                data = stream.read(manifest['uncompressedBytes'] + 1)
+            if len(data) != manifest['uncompressedBytes']:
+                raise ValueError('Compressed item payload size mismatch')
+            manifest = json.loads(data)
+        except (OSError, EOFError) as error:
+            raise ValueError('Invalid compressed item payload') from error
     if not isinstance(manifest, dict) or manifest.get('kind') != 'items' or type(manifest.get('version')) is not int or manifest['version'] != 1:
         raise ValueError('Unsupported item manifest')
     textures, items = manifest.get('textures'), manifest.get('items')

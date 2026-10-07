@@ -110,8 +110,8 @@ bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterial
     }
     for(auto& Block:Blocks) if(Block.NativeCompact && Palette) Block.Position+=Palette->GetModelOffset(Block.BlockId,Block.SourceBlock);
     // Minecraft remains a source snapshot. UE edits, including deleted voxels, survive streaming away/back.
-    Blocks.RemoveAll([&](const FBridgeBlock& Block){const FIntVector Owner=OwnerOf(Block);return RemovedBlocks.Contains(Owner) || EditedBlocks.Contains(Owner);});
-    if(const auto* Owners=EditedCellOwners.Find(P.Cell)) for(const auto& Owner:*Owners) if(const auto* Edited=EditedBlocks.Find(Owner)) Blocks.Append(*Edited);
+    Blocks.RemoveAll([&](const FBridgeBlock& Block){const FIntVector BlockOwner=OwnerOf(Block);return RemovedBlocks.Contains(BlockOwner) || EditedBlocks.Contains(BlockOwner);});
+    if(const auto* Owners=EditedCellOwners.Find(P.Cell)) for(const auto& BlockOwner:*Owners) if(const auto* Edited=EditedBlocks.Find(BlockOwner)) Blocks.Append(*Edited);
     for (const auto& Block:Blocks) { Colors.Add(Block.Color); Groups.Add(FString::Printf(TEXT("%s#%d#%d"),*Block.BlockId,Block.Color,Block.Collision)); }
     TSet<FString> ValidatedModels;
     for(const auto& Block:Blocks) if(Block.Role==1) {
@@ -287,7 +287,7 @@ bool ABridgeWorld::SupportingLogical(const FVector& Feet,FIntVector& Voxel,FStri
         const FIntVector Candidate=At+FIntVector(X,Y,Z);if(!NearCollision(CellOf(Candidate)) || !Stored.Contains(CellOf(Candidate))) continue;
         const auto* Visual=FindVisual(Candidate);if(!Visual) continue;TArray<FBox> Collision,Outline;FVector Offset=FVector::ZeroVector;
         if(Visual->Role==1) {if(!SavedPalette || !SavedPalette->GetStateBoxes(Visual->BlockId,Visual->StateKey,Collision,Outline)) continue;Offset=SavedPalette->GetModelOffset(Visual->BlockId,Candidate);}
-        else if(Visual->Collision) {const FVector Center=Visual->Position+ImportOrigin-FVector(Candidate);Collision.Add(FBox(Center-Visual->Size*.5,Center+Visual->Size*.5));}
+        else if(Visual->Collision) {const FVector ShapeCenter=Visual->Position+ImportOrigin-FVector(Candidate);Collision.Add(FBox(ShapeCenter-Visual->Size*.5,ShapeCenter+Visual->Size*.5));}
         for(const auto& Box:Collision) {
             const FVector Low=FVector(Candidate)+Offset+Box.Min,High=FVector(Candidate)+Offset+Box.Max;
             const double Gap=FMath::Abs(Absolute.Y-High.Y);
@@ -380,9 +380,9 @@ void ABridgeWorld::RefreshLogicalCell(const FIntVector& Cell) {
     const auto* Rows=Stored.Find(Cell);if(!Rows) return;
     auto& Mask=OpaqueCells.FindOrAdd(Cell);FMemory::Memzero(Mask.Words,sizeof(Mask.Words));
     for(const auto& Block:*Rows) if(Block.Role==1 || Block.Role==0) {
-        const FIntVector Owner=OwnerOf(Block);
+        const FIntVector BlockOwner=OwnerOf(Block);
         if(SavedPalette && SavedPalette->IsOpaqueFullCube(Block.BlockId,Block.StateKey)) {
-            const FIntVector Local=Owner-Cell*8;const int32 Index=Local.X+(Local.Z<<3)+(Local.Y<<6);Mask.Words[Index>>6]|=uint64(1)<<(Index&63);
+            const FIntVector Local=BlockOwner-Cell*8;const int32 Index=Local.X+(Local.Z<<3)+(Local.Y<<6);Mask.Words[Index>>6]|=uint64(1)<<(Index&63);
         }
     }
     SeedLightingCell(Cell,Lighting.Get());if(PendingLighting) SeedLightingCell(Cell,PendingLighting.Get());

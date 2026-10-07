@@ -34,7 +34,7 @@ FString ABridgeItemWorld::Drop(const FString& Tx,const FString& Item,const FStri
     if(Lighting) Lighting(Actor);return LastReason=TEXT("item_spawned");
 }
 void ABridgeItemWorld::SetAuthority(bool Active,ACharacter* NewPlayer) {
-    Authority=Active;Player=NewPlayer;for(auto* Actor:Actors) if(IsValid(Actor)) Actor->SetActive(Active);
+    Authority=Active;Player=NewPlayer;for(ABridgeDroppedItem* Actor:Actors) if(IsValid(Actor)) Actor->SetActive(Active);
 }
 bool ABridgeItemWorld::Resolve(const FString& Tx,int32 Revision,int32 Accepted) {
     FEntry* Entry=Entries.Find(Tx);if(!Entry || !Entry->Pending || Entry->Revision!=Revision || Accepted<0 || Accepted>99) return false;
@@ -73,7 +73,7 @@ void ABridgeItemWorld::Merge() {
 }
 void ABridgeItemWorld::Tick(float DeltaSeconds) {
     Super::Tick(DeltaSeconds);if(!GetWorld()) return;const double Now=GetWorld()->GetTimeSeconds();
-    if(Authority && Lighting) for(auto* Actor:Actors) if(IsValid(Actor)) Lighting(Actor);
+    if(Authority && Lighting) for(ABridgeDroppedItem* Actor:Actors) if(IsValid(Actor)) Lighting(Actor);
     const FVector PlayerCenter=Player.IsValid() ? Player->GetActorLocation() : FVector::ZeroVector;
     for(auto& Pair:Entries) {
         auto& Entry=Pair.Value;auto* Actor=Entry.Actor.Get();
@@ -94,7 +94,7 @@ void ABridgeItemWorld::Tick(float DeltaSeconds) {
     }
     if(Authority && Now>=MergeTime) {MergeTime=Now+.5;Merge();}
 }
-int32 ABridgeItemWorld::AliveCount() const {int32 Count=0;for(auto* Actor:Actors) if(IsValid(Actor)) Count++;return Count;}
-TArray<FVector> ABridgeItemWorld::CollisionAnchors() const {TArray<FVector> Points;for(auto* Actor:Actors) if(IsValid(Actor)) Points.Add(Actor->GetActorLocation()-FVector(0,0,12.5f));return Points;}
-void ABridgeItemWorld::Clear() {for(auto* Actor:Actors) if(IsValid(Actor)) Actor->Destroy();Actors.Empty();Entries.Empty();Authority=false;Player.Reset();LastReason=TEXT("item_escrow_released");}
+int32 ABridgeItemWorld::AliveCount() const {int32 Count=0;for(ABridgeDroppedItem* Actor:Actors) if(IsValid(Actor)) Count++;return Count;}
+TArray<FVector> ABridgeItemWorld::CollisionAnchors() const {TArray<FVector> Points;for(ABridgeDroppedItem* Actor:Actors) if(IsValid(Actor)) Points.Add(Actor->GetActorLocation()-FVector(0,0,12.5f));return Points;}
+void ABridgeItemWorld::Clear() {for(ABridgeDroppedItem* Actor:Actors) if(IsValid(Actor)) Actor->Destroy();Actors.Empty();Entries.Empty();Authority=false;Player.Reset();LastReason=TEXT("item_escrow_released");}
 void ABridgeItemWorld::EndPlay(const EEndPlayReason::Type Reason) {Clear();Super::EndPlay(Reason);}

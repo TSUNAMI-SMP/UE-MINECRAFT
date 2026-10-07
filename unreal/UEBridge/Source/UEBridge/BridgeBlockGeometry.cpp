@@ -73,7 +73,7 @@ bool Bake(const Object& Model,const Object& Application,TArray<FBridgeModelFace>
     const FQuat Rotation=FQuat(FVector(0,1,0),FMath::DegreesToRadians(-Y))*FQuat(FVector(1,0,0),FMath::DegreesToRadians(-X));
     bool UVLock=false;Application->TryGetBoolField(TEXT("uvlock"),UVLock);
     for(const auto& ElementValue:*Elements) {
-        const Object Element=ElementValue->AsObject();FVector From,To;
+        const Object Element=ElementValue->AsObject();FVector From=FVector::ZeroVector,To=FVector::ZeroVector;
         if(!Vector(Element,TEXT("from"),From) || !Vector(Element,TEXT("to"),To)) return false;
         const Object Faces=Child(Element,TEXT("faces"));if(!Faces.IsValid()) return false;
         const Object ElementRotation=Child(Element,TEXT("rotation"));

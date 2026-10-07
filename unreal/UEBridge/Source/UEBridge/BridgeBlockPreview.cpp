@@ -45,9 +45,9 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
             const FIntVector Local=Block.SourceBlock-GridOrigin;
             if(Local.X>=0 && Local.X<8 && Local.Y>=0 && Local.Y<8 && Local.Z>=0 && Local.Z<8) {FullCubes[BridgeMeshingMath::Index(Local.X,Local.Y,Local.Z)]=true;continue;}
         }
-        for(uint8 Role:{uint8(2),uint8(3)}) {
-            if(Role==3 && Collision==Outline) continue;
-            for(const FBox& Box:Role==2 ? Collision : Outline) {FBridgeBlock Hull=Block;Hull.Role=Role;Hull.Collision=Role==2;Hull.Size=Box.GetSize();
+        for(uint8 ShapeRole:{uint8(2),uint8(3)}) {
+            if(ShapeRole==3 && Collision==Outline) continue;
+            for(const FBox& Box:ShapeRole==2 ? Collision : Outline) {FBridgeBlock Hull=Block;Hull.Role=ShapeRole;Hull.Collision=ShapeRole==2;Hull.Size=Box.GetSize();
                 Hull.Position=Block.Position-FVector(.5)+Box.GetCenter();Blocks.Add(MoveTemp(Hull));}
         }
     }

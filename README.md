@@ -3,6 +3,8 @@
 Fabric **Minecraft Java 1.21.11 / Java 21** と **Unreal Engine 5.8** を同じPCで
 接続する実験用プロジェクト。Minecraftが入力・HUD・既存の音を担当し、UE主体モードではUEが移動・衝突・設置・破壊の判定と描画を担当します。既存サーバーへのインストールは不要です。
 
+**UEビルド修正0.11.1：** 0.11.0を使う場合は[5ファイルの修正パッチと再ビルド手順](docs/BUILD_FIX_0.11.1.md)も適用してください。MODは0.11.0のままです。
+
 **更新版0.11.0：** モブ召喚・初期取り込み後の追加転送、UE照明とバニラ風の光の分離、昼夜・光源・AO、アイテム投下と拾得、アトラス／隠れた面の削減、UE位置に追従する地形取得、WindowsのGPU共有経路と性能計測を追加。
 **MODとUEを両方更新・UE再ビルド・素材再書き出し／取り込みが必要です。**
 [MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/minecraft-ue-bridge-0.11.0.jar) / [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/UEBridge-update-0.11.0.zip) / [具体的な更新・計測手順](docs/UPGRADE_0.11.0.md)。

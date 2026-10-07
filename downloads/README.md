@@ -2,6 +2,8 @@
 
 ## 更新版0.11.0
 
+**UEビルドには[修正パッチ0.11.1](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/UEBridge-build-fix-0.11.1.zip)も適用してください。** MODは0.11.0のまま、UEの5ファイルを上書きして再ビルドします。[操作手順](../docs/BUILD_FIX_0.11.1.md)。旧ZIPは保持しています。
+
 - [MOD 0.11.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/minecraft-ue-bridge-0.11.0.jar)
 - [既存UE用更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/UEBridge-update-0.11.0.zip)
 - [ソース＋MOD一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/UE-Minecraft-MVP-0.11.0.zip)

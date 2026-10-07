@@ -200,9 +200,11 @@ void UBridgeVideo::ReadGpuAcknowledgements() {
             ClientGpu=false;ResetSharedGpu();++ModeRevision;CaptureSchedule.Reset();
             UE_LOG(LogTemp,Warning,TEXT("Bridge video: client requested JPEG fallback"));
         } else if(Magic==0x55454241 && Slot<3 && Generation!=0) {
-            if(SharedGpu) ENQUEUE_RENDER_COMMAND(BridgeSharedFrameReleased)([Pool=SharedGpu,FrameSequence,Slot,Generation](FRHICommandListImmediate&) {
-                if(Pool->Producer) Pool->Producer->Release(FrameSequence,Slot,Generation);
-            });
+            if(SharedGpu) {
+                ENQUEUE_RENDER_COMMAND(BridgeSharedFrameReleased)([Pool=SharedGpu,FrameSequence,Slot,Generation](FRHICommandListImmediate&) {
+                    if(Pool->Producer) Pool->Producer->Release(FrameSequence,Slot,Generation);
+                });
+            }
         } else {DropClient();return;}
         Offset+=16;
     }
@@ -325,9 +327,11 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,ui
         for(const auto& State:Readbacks) if(State->Done.load() && (!Ready || State->Sequence>Ready->Sequence)) Ready=State;
         for(const auto& State:Readbacks) if(State->Done.load() && State!=Ready) {
             ++DroppedFrames;
-            if(State->GPU && State->Shared.Handle && State->Transport) ENQUEUE_RENDER_COMMAND(BridgeDiscardSharedFrame)([State](FRHICommandListImmediate&) {
-                if(State->Transport->Producer) State->Transport->Producer->Release(State->Shared.Sequence,State->Shared.Slot,State->Shared.Generation);
-            });
+            if(State->GPU && State->Shared.Handle && State->Transport) {
+                ENQUEUE_RENDER_COMMAND(BridgeDiscardSharedFrame)([State](FRHICommandListImmediate&) {
+                    if(State->Transport->Producer) State->Transport->Producer->Release(State->Shared.Sequence,State->Shared.Slot,State->Shared.Generation);
+                });
+            }
         }
         Readbacks.RemoveAll([&](const auto& State){return State->Done.load() && (!Ready || State->Sequence<=Ready->Sequence);});
         if(Ready && Ready->GPU) {
@@ -346,9 +350,11 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,ui
                 Flush();
             } else {
                 ++DroppedFrames;
-                if(Ready->Shared.Handle && Ready->Transport) ENQUEUE_RENDER_COMMAND(BridgeDiscardStaleSharedFrame)([Ready](FRHICommandListImmediate&) {
-                    if(Ready->Transport->Producer) Ready->Transport->Producer->Release(Ready->Shared.Sequence,Ready->Shared.Slot,Ready->Shared.Generation);
-                });
+                if(Ready->Shared.Handle && Ready->Transport) {
+                    ENQUEUE_RENDER_COMMAND(BridgeDiscardStaleSharedFrame)([Ready](FRHICommandListImmediate&) {
+                        if(Ready->Transport->Producer) Ready->Transport->Producer->Release(Ready->Shared.Sequence,Ready->Shared.Slot,Ready->Shared.Generation);
+                    });
+                }
             }
         } else if(Ready && Streaming && Ready->Revision==ModeRevision && Ready->Session==ClientSession && Ready->LinearPixels.Num()==Ready->Width*Ready->Height
             && (!Ready->HasMask || Ready->Opacity.Num()==Ready->LinearPixels.Num()) && Now-Ready->CapturedAt<.25) {

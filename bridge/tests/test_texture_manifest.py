@@ -204,6 +204,9 @@ class MaterialGraphTest(unittest.TestCase):
                 self.properties = {'id': uuid.uuid4().hex, **kwargs}
             def set_editor_property(self, name, value): self.properties[name] = value
             def get_editor_property(self, name): return self.properties.get(name, [])
+        class CustomInput(Property):
+            # Match the zero-argument UE5.8 struct constructor observed in the log.
+            def __init__(self): super().__init__()
         class Collection(Property): pass
         self.assets_by_path, self.saved = {}, []
         self.unreal = types.SimpleNamespace(Material=Material, MaterialFactoryNew=lambda: None, LinearColor=lambda *args: args,
@@ -214,7 +217,7 @@ class MaterialGraphTest(unittest.TestCase):
             MaterialShadingModel=types.SimpleNamespace(MSM_DEFAULT_LIT='lit'),
             MaterialParameterCollection=Collection, MaterialParameterCollectionFactoryNew=lambda: None,
             CollectionScalarParameter=Property, CollectionVectorParameter=Property, Guid=lambda *args: args,
-            CustomMaterialOutputType=types.SimpleNamespace(CMOT_FLOAT3='float3'), CustomInput=lambda **kwargs: kwargs)
+            CustomMaterialOutputType=types.SimpleNamespace(CMOT_FLOAT3='float3'), CustomInput=CustomInput)
         for name in ("TextureSampleParameter2D", "VectorParameter", "ScalarParameter", "Constant3Vector", "LinearInterpolate", "Multiply", "Constant", 'CollectionParameter', 'Add', 'VertexColor', 'Custom', 'PixelNormalWS'):
             setattr(self.unreal, "MaterialExpression" + name, type(name, (), {}))
         self.assets = types.SimpleNamespace(does_asset_exist=lambda path: path in self.assets_by_path,
@@ -295,10 +298,12 @@ class MaterialGraphTest(unittest.TestCase):
         lightmap = next(node for node in material.nodes if node.kind == 'Custom' and node.properties.get('description') == 'Bridge native lightmap v1')
         self.assertEqual({'Light', 'SkyFactor', 'BlockFactor', 'Ambient', 'Gamma', 'NightVision', 'Darkness', 'DarkenWorld', 'SkyColor', 'AmbientColor'}, set(lightmap.inputs))
         self.assertEqual('float3', lightmap.properties['output_type'])
+        self.assertEqual(set(lightmap.inputs), {entry.get_editor_property('input_name') for entry in lightmap.properties['inputs']})
         blend = lightmap.inputs['Light'][0]
         self.assertEqual('BridgeLight', blend.inputs['A'][0].inputs['A'][0].properties['parameter_name'])
         actor_shade = blend.inputs['A'][0].inputs['B'][0]
         self.assertEqual('PixelNormalWS', actor_shade.inputs['WorldNormal'][0].kind)
+        self.assertEqual(['WorldNormal'], [entry.get_editor_property('input_name') for entry in actor_shade.properties['inputs']])
         self.assertEqual('VertexColor', blend.inputs['B'][0].kind)
         self.assertEqual('RGB', blend.inputs['B'][1])
         self.assertEqual(1.0, blend.inputs['Alpha'][0].properties['default_value'])

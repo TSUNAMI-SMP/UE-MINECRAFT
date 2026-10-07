@@ -90,6 +90,11 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
         result = node(unreal.MaterialExpressionCollectionParameter)
         result.set_editor_property('collection', collection); result.set_editor_property('parameter_name', name)
         return result
+    def custom_input(name):
+        # UE5.8 exposes this struct with a zero-argument constructor.
+        result = unreal.CustomInput()
+        result.set_editor_property('input_name', name)
+        return result
     mode = global_parameter('BridgeVanillaMode')
     # Keep the old public scalar in the generated graph without allowing it to
     # override the shared mode and leave a previous OFF setting stuck on return.
@@ -104,7 +109,7 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
     normal = node(unreal.MaterialExpressionPixelNormalWS)
     actor_shade = node(unreal.MaterialExpressionCustom)
     actor_shade.set_editor_property('output_type', unreal.CustomMaterialOutputType.CMOT_FLOAT3)
-    actor_shade.set_editor_property('inputs', [unreal.CustomInput(input_name='WorldNormal')])
+    actor_shade.set_editor_property('inputs', [custom_input('WorldNormal')])
     actor_shade.set_editor_property('code',
         'float3 n = normalize(WorldNormal); float3 a = abs(n); '
         'float shade = (a.y*.6 + a.x*.8 + a.z*(n.z >= 0 ? 1.0 : .5)) / max(a.x+a.y+a.z,.00001); '
@@ -123,7 +128,7 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
               ('NightVision', global_parameter('BridgeNightVision')), ('Darkness', global_parameter('BridgeDarkness')),
               ('DarkenWorld', global_parameter('BridgeDarkenWorld')), ('SkyColor', global_parameter('BridgeSkyColor')),
               ('AmbientColor', global_parameter('BridgeAmbientColor'))]
-    lightmap.set_editor_property('inputs', [unreal.CustomInput(input_name=name) for name, _ in inputs])
+    lightmap.set_editor_property('inputs', [custom_input(name) for name, _ in inputs])
     for name, source in inputs:
         wire(source, lightmap, name)
     vanilla = node(unreal.MaterialExpressionMultiply); wire(pixel_rgb, vanilla, 'A'); wire(lightmap, vanilla, 'B')

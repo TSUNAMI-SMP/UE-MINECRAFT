@@ -80,7 +80,7 @@ class Editor:
         api.MaterialParameterCollection = Collection
         api.MaterialParameterCollectionFactoryNew = object
         api.CollectionScalarParameter = api.CollectionVectorParameter = PropertyObject
-        api.CustomInput = lambda **fields: types.SimpleNamespace(**fields)
+        api.CustomInput = PropertyObject
         api.CustomMaterialOutputType = types.SimpleNamespace(CMOT_FLOAT3='float3')
         api.MaterialShadingModel = types.SimpleNamespace(MSM_DEFAULT_LIT='lit', MSM_UNLIT='unlit')
         api.load_asset = lambda path: self.assets.get(path, object() if path.startswith("/Engine/") else None)

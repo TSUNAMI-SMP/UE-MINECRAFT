@@ -33,16 +33,18 @@ public final class BridgeTransport implements AutoCloseable {
     private boolean lightingEnabled=true, vanillaSkyEnabled;
     private int mobCount, mobMissing;
     private int maskPixels,maskForeground,maskTranslucent;
-    private String blockModelError="";
+    private String blockModelError="",heldModel="",videoColor="";
+    private boolean flying;
+    private int itemModelCount,mobTemplateCount;
     private double playerHealth=20;
     public double playerHealth() {return diagnostics().connected() ? playerHealth : 20;}
     public boolean videoV3Supported() { return diagnostics().connected() && videoV3; }
     public boolean blockModelsSupported() { return diagnostics().connected() && blockModelsSupported; }
     public boolean mobsSupported() { return diagnostics().connected() && mobsSupported; }
     public boolean skySupported() { return diagnostics().connected() && skySupported; }
-    public String renderStatus() { return "照明="+lightingEnabled+" MC空="+vanillaSkyEnabled+" マスク="+maskForeground+"/"+maskPixels+" 半透明="+maskTranslucent; }
+    public String renderStatus() { return "照明="+lightingEnabled+" MC空="+vanillaSkyEnabled+" マスク="+maskForeground+"/"+maskPixels+" 半透明="+maskTranslucent+" / "+videoColor+" / 持ち物="+heldModel+" モデル="+itemModelCount+" 飛行="+flying; }
     public String blockModelError() {return blockModelError;}
-    public String mobStatus() { return "モブ="+mobCount+" 素材不足="+mobMissing; }
+    public String mobStatus() { return "モブ="+mobCount+" 素材不足="+mobMissing+" 卵用素材="+mobTemplateCount; }
     private ParticleDiagnostics particles = ParticleDiagnostics.unavailable("unsupported");
     public ParticleDiagnostics particleDiagnostics() {
         return diagnostics().connected() ? particles : ParticleDiagnostics.unavailable("disconnected");
@@ -126,6 +128,12 @@ public final class BridgeTransport implements AutoCloseable {
                 build, connected && worldSupported, connected && videoSupported, receiverId,
                 connected && texturesSupported,connected && videoControlsSupported,connected ? textureMaterials : 0, connected && authoritySupported, connected && worldSealed, connected && ueControl, importId, importedCells);
     }
+    private static String diagnosticText(JsonObject p,String key) {
+        var value=p.get(key);return value!=null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isString() && value.getAsString().length()<=256 ? value.getAsString() : "";
+    }
+    private static int diagnosticCount(JsonObject p,String key,int limit) {
+        double value=number(p,key) ? p.get(key).getAsDouble() : 0;return Double.isFinite(value) && value==Math.rint(value) && value>=0 && value<=limit ? (int)value : 0;
+    }
     private static boolean number(JsonObject p, String name) {
         return p.has(name) && p.get(name).isJsonPrimitive() && p.getAsJsonPrimitive(name).isNumber();
     }
@@ -195,6 +203,9 @@ public final class BridgeTransport implements AutoCloseable {
             playerHealth=Double.isFinite(hp) && hp>=0 && hp<=20 ? hp : 20;
             maskPixels=statusCount(p,"maskPixels",1920*1080);maskForeground=statusCount(p,"maskForeground",maskPixels);
             maskTranslucent=statusCount(p,"maskTranslucent",maskForeground);
+            heldModel=diagnosticText(p,"heldModel");videoColor=diagnosticText(p,"videoColor");
+            flying=bool(p,"flying") && p.get("flying").getAsBoolean();
+            itemModelCount=diagnosticCount(p,"itemModelCount",4096);mobTemplateCount=diagnosticCount(p,"mobTemplateCount",128);
             blockModelError=p.has("blockModelError") && p.get("blockModelError").isJsonPrimitive() && p.getAsJsonPrimitive("blockModelError").isString()
                 ? p.get("blockModelError").getAsString() : "";
             if(blockModelError.length()>160) blockModelError="invalid-diagnostic";

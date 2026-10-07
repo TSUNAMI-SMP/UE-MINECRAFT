@@ -36,11 +36,12 @@ public:
     bool GetBlockInfo(const FIntVector& SourceVoxel,FString& BlockId,FColor& Tint) const;
     bool GetBlockState(const FIntVector& SourceVoxel,FString& BlockId,FString& StateKey) const;
     FString GetModelError() const { return LastModelError; }
+    TFunction<void(const FString& Type,const FString& Block,const FVector& Position)> InteractionSound;
     bool GetBlockOutline(const FIntVector& SourceVoxel,TArray<FBox>& MinecraftBoxes) const;
     bool GetSupportingBlock(const FVector& Feet,FIntVector& SourceVoxel,FString& BlockId,FColor& Tint,FVector& ImpactPoint,const AActor* Ignored=nullptr) const;
     bool BreakBlock(const FIntVector& Block);
     FString PlaceBlock(const FIntVector& Block,const FString& BlockId,int32 Color,double Yaw=0,const FVector& Normal=FVector::UpVector,const FVector& HitPoint=FVector::ZeroVector);
-    bool UseBlock(const FIntVector& Block);
+    bool UseBlock(const FIntVector& Block,bool TimedRelease=false);
     int32 CellCount() const { return Cells.Num(); }
     int32 ShapeCount() const { return Shapes; }
 private:

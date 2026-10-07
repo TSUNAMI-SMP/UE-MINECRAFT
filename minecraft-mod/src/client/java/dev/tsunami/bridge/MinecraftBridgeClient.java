@@ -70,6 +70,9 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
     private String lastVideoConfig = "";
     private TextureExportJob textureJob;
     private final InitialImport initialImport=new InitialImport();
+    private net.minecraft.item.ItemStack cachedModelStack=net.minecraft.item.ItemStack.EMPTY;
+    private String cachedModelKey="";
+    private final ControllerFlight flight=new ControllerFlight();
     private boolean controllerFrozen, controllerRequested;
     public static boolean controllerMode() {
         return instance!=null && instance.controllerFrozen && MinecraftClient.getInstance().player!=null;
@@ -131,6 +134,11 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
             p.addProperty("forward", active ? axis(mc.options.forwardKey.isPressed(), mc.options.backKey.isPressed()) : 0);
             p.addProperty("right", active ? axis(mc.options.rightKey.isPressed(), mc.options.leftKey.isPressed()) : 0);
             p.addProperty("jump", active && mc.options.jumpKey.isPressed());
+            boolean creative=mc.player.isCreative();
+            var uePose=transport.authorityPose();
+            p.addProperty("creative",creative);
+            p.addProperty("flying",flight.sample(active && controllerInputReady(),creative,mc.options.jumpKey.isPressed(),
+                uePose!=null && uePose.grounded(),now));
             p.addProperty("controller",controllerRequested && initialImport.phase()==InitialImport.Phase.READY && !mc.isPaused());
             p.addProperty("sneak", active && (controllerMode() ? mc.options.sneakKey.isPressed() : mc.player.isSneaking()));
             p.addProperty("eyeHeight", mc.player.getEyeHeight(mc.player.getPose()));
@@ -161,6 +169,9 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
             }
         }
         p.addProperty("heldItem",item.length()<=128 ? item : "");
+        if(!net.minecraft.item.ItemStack.areItemsAndComponentsEqual(cachedModelStack,stack)) {cachedModelStack=stack.copy();cachedModelKey=ItemModelExport.modelKey(mc,stack);}
+        p.addProperty("heldModelKey",cachedModelKey);
+        if(stack.getItem() instanceof net.minecraft.item.SpawnEggItem egg) p.addProperty("spawnType",Registries.ENTITY_TYPE.getId(egg.getEntityType(stack)).toString());
         p.addProperty("heldBlock",block.length()<=128 ? block : ""); p.addProperty("heldColor",color);
     }
     private void blockAction(MinecraftClient mc,String action) throws IOException {
@@ -306,7 +317,7 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         if(transport==null || !transport.diagnostics().authoritySupported()) return feedback("UE 0.5.0へ接続してから実行してください");
         if(!transport.blockModelsSupported()) return feedback("このMODの初期転送にはUE0.9.0が必要です。UE更新ZIPを統合コピーして再ビルドしてください");
         if(!transport.blockPaletteReady()) return feedback("ブロックモデル素材が未準備です。/uebridge textures export 後、UEで最新素材を取り込んでレベルを保存し、Playを開始してください");
-        if(!mc.isInSingleplayer() || mc.getServer()==null || mc.getServer().isRemote() || mc.player==null || !mc.player.isCreative()) return feedback("LAN公開していない専用シングルプレイ・クリエイティブで実行してください");
+        if(!mc.isInSingleplayer() || mc.getServer()==null || mc.getServer().isRemote() || mc.player==null || mc.player.isSpectator()) return feedback("LAN公開していない専用シングルプレイで実行してください（観戦モードは対象外）");
         if(!mc.player.isOnGround() || mc.player.isSneaking()) return feedback("飛行を止め、地面に立ってしゃがまずに実行してください");
         if(transport.diagnostics().pending()!=0) return feedback("未ACKイベントが完了してから再実行してください");
         mobBridge.release();
@@ -319,11 +330,11 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         if(enabled && (mc.getServer()==null || mc.getServer().isRemote())) return feedback("UE主体の操作はLAN公開していない専用シングルプレイで使用してください");
         if(enabled && (transport==null || initialImport.phase()!=InitialImport.Phase.READY || !transport.diagnostics().worldSealed()))
             return feedback("先に /uebridge import start を実行し、READYまで待ってください");
-        controllerRequested=enabled; controllerFrozen=enabled; sprint.reset();
+        controllerRequested=enabled; controllerFrozen=enabled; sprint.reset();flight.reset();
         if(!enabled) mobBridge.release();
         if(!enabled) change(v->v.videoMode=0,false);
         else change(v->v.videoMode=2,false);
-        return feedback(enabled ? "UE移動・衝突モード：設定済みの移動／ジャンプ／しゃがみキー。ダッシュは前進キー2度押し、またはダッシュキー＋前進。通常のアイテム操作は無効です" : "UE入力を停止し、Minecraft操作へ戻しました。UE地形は保持します");
+        return feedback(enabled ? "UE操作：設定済みの移動・ジャンプ・しゃがみキー。クリエイティブはジャンプ2度押しで飛行切替、ジャンプで上昇・しゃがみで下降。サバイバルは飛行不可。卵は取り込み済みの地上モブ素材を使用" : "UE入力を停止し、Minecraft操作へ戻しました。UE地形は保持します");
     }
     private int worldEnabled(boolean enabled) {
         if(initialImport.ownsWorld() || (transport!=null && transport.diagnostics().worldSealed())) return feedback("UE初期地形を保持中。置換する場合のみ /uebridge import start を使用してください");
@@ -361,6 +372,12 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         BridgeConfig next = config.copy(); update.accept(next);
         try { next.save(configPath); config = next; if (reconnect) disconnect(); return feedback(status()); }
         catch (IOException | IllegalArgumentException e) { return feedback("設定を保存できません: " + e.getMessage()); }
+    }
+    private int exportItems() {
+        MinecraftClient mc=MinecraftClient.getInstance();
+        if(mc.world==null || mc.player==null) return feedback("ワールドへ入ってから /uebridge items export を実行してください");
+        try {var path=ItemModelExport.export(mc,FabricLoader.getInstance().getGameDir().resolve("uebridge-export"));return feedback("アイテムモデル書き出し完了: "+path+"（未対応は manifest.json の excluded）");}
+        catch(IOException | RuntimeException error) {return feedback("アイテム書き出し失敗: "+error.getMessage());}
     }
     private int exportPlayer() {
         MinecraftClient mc=MinecraftClient.getInstance();
@@ -402,6 +419,7 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
                 .then(literal("start").executes(c -> startImport())))
             .then(literal("control").then(literal("ue").executes(c -> control(true)))
                 .then(literal("off").executes(c -> control(false))))
+            .then(literal("items").then(literal("export").executes(c -> exportItems())))
             .then(literal("respawn").executes(c -> respawn()))
             .then(literal("lighting").executes(c -> feedback(transport==null ? "接続待ち" : transport.renderStatus()))
                 .then(literal("on").executes(c -> change(v -> {v.lighting=true;v.vanillaSky=false;},false)))
@@ -490,7 +508,7 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         PlayerVisualState.reset();
         if (video != null) video.close(); video = null; videoOverlay.setClient(null, 0); worldSync.reset();
         if (transport != null) try { transport.close(); } catch (IOException e) { report(e); }
-        initialImport.reset(); controllerFrozen=controllerRequested=false;
+        initialImport.reset(); controllerFrozen=controllerRequested=false;flight.reset();
         transport = null; origin = null; ignition.clear(); snapshotQueue.clear(); snapshotSequence = 0; lastConnected = false;
         lastReceiverId = ""; lastVideoConfig="";
         lastRetry = 0;

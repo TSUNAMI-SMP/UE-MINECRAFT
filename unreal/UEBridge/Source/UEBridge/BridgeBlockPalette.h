@@ -17,6 +17,9 @@ public:
     UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Bridge|Models") TMap<FString,FString> BlockstateDefinitions;
     UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Bridge|Models") TMap<FString,FString> Models;
     UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Bridge|Models") TMap<FString,FString> StateShapes;
+    UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Bridge|Items") TMap<FString,FString> ItemModels;
+    UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Bridge|Items") TMap<FString,TObjectPtr<UMaterialInterface>> ItemMaterials;
+    bool BuildItem(const FString& ItemId,const FString& Context,TArray<FBridgeModelFace>& Out) const;
     bool BuildModel(const FString& BlockId,const FString& StateKey,TArray<FBridgeModelFace>& Out) const;
     bool GetStateBoxes(const FString& BlockId,const FString& StateKey,TArray<FBox>& Collision,TArray<FBox>& Outline) const;
     FString DefaultState(const FString& BlockId) const;

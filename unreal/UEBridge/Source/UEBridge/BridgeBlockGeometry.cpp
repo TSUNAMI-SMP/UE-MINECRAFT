@@ -212,3 +212,26 @@ bool UBridgeBlockPalette::BuildModel(const FString& BlockId,const FString& State
     }
     if(ModelCache.Num()<65536) ModelCache.Add(CacheKey,Out);return true;
 }
+
+// Item vertices already include vanilla's context-specific model display transform.
+bool UBridgeBlockPalette::BuildItem(const FString& ItemId,const FString& Context,TArray<FBridgeModelFace>& Out) const {
+    Out.Reset();const Object Model=Read(ItemModels.Find(ItemId));
+    const TArray<TSharedPtr<FJsonValue>>* Faces=nullptr;
+    if(!Model.IsValid() || !Model->TryGetArrayField(Context,Faces) || Faces->IsEmpty() || Faces->Num()>8192) return false;
+    for(const auto& Value:*Faces) {
+        const Object Data=Value->AsObject();if(!Data) return false;
+        const TArray<TSharedPtr<FJsonValue>> *Vertices=nullptr,*UV=nullptr;FBridgeModelFace Face;
+        if(!Data->TryGetStringField(TEXT("texture"),Face.TextureId) || !ItemMaterials.Contains(Face.TextureId)
+            || !Data->TryGetArrayField(TEXT("vertices"),Vertices) || Vertices->Num()!=4 || !Data->TryGetArrayField(TEXT("uv"),UV) || UV->Num()!=4) return false;
+        double Color=0xffffff;if(!Data->TryGetNumberField(TEXT("color"),Color) || Color<0 || Color>0xffffff || Color!=double(FMath::FloorToInt(Color))) return false;
+        Face.Color=FColor((int32(Color)>>16)&255,(int32(Color)>>8)&255,int32(Color)&255);
+        for(int32 I=0;I<4;++I) {
+            const TArray<TSharedPtr<FJsonValue>> *P=nullptr,*T=nullptr;
+            if(!(*Vertices)[I]->TryGetArray(P) || P->Num()!=3 || !(*UV)[I]->TryGetArray(T) || T->Num()!=2) return false;
+            double C[5];for(int32 J=0;J<5;++J) if(!(J<3 ? (*P)[J] : (*T)[J-3])->TryGetNumber(C[J]) || !FMath::IsFinite(C[J]) || FMath::Abs(C[J])>4096) return false;
+            Face.Vertices[I]=FVector(C[0],C[1],C[2]);Face.UV[I]=FVector2D(C[3],C[4]);
+        }
+        Out.Add(MoveTemp(Face));
+    }
+    return !Out.IsEmpty();
+}

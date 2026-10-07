@@ -23,9 +23,9 @@ struct FBridgePacket {
     double Yaw = 0, Pitch = 0, Forward = 0, Right = 0, Pull = 0;
     bool Jump = false;
     bool Sneak = false, Controller=false;
-    FString ImportId, Action, HeldItem, HeldBlock;
+    FString ImportId, Action, HeldItem, HeldBlock, SpawnType, HeldModelKey;
     int32 HeldColor=0xffffff;
-    bool Sprint=false;
+    bool Sprint=false,Creative=false,Flying=false;
     int32 Perspective=0, SkinLayers=127;
     double SwingProgress=0, EquipProgress=1, UseProgress=0, CameraFov=80;
     bool UsingItem=false, LeftHanded=false, SlimArms=false;

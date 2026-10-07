@@ -26,7 +26,7 @@ void ABridgeWorld::Tick(float DeltaSeconds) {
     TArray<FIntVector> Released;
     for(const auto& Pair:ButtonRelease) if(Now>=Pair.Value) Released.Add(Pair.Key);
     for(const auto& Block:Released) {ButtonRelease.Remove(Block);const auto* Visual=FindVisual(Block);
-        if(Visual && StateProperties(Visual->StateKey).FindRef(TEXT("powered"))==TEXT("true")) UseBlock(Block);}
+        if(Visual && StateProperties(Visual->StateKey).FindRef(TEXT("powered"))==TEXT("true")) UseBlock(Block,true);}
 }
 bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterialInterface* Material,UBridgeBlockPalette* Palette) {
     if(Sealed) return true; // ACK stale source updates without overwriting UE-owned geometry.
@@ -416,7 +416,7 @@ void ABridgeWorld::UpdateConnections(const FIntVector& Block) {
     }
     for(const auto& Cell:Rebuild) RebuildCell(Cell);
 }
-bool ABridgeWorld::UseBlock(const FIntVector& Block) {
+bool ABridgeWorld::UseBlock(const FIntVector& Block,bool TimedRelease) {
     if(!Sealed || !SavedPalette) return false;
     const auto* Visual=FindVisual(Block);if(!Visual) return false;const FBridgeBlock Original=*Visual;
     auto Props=StateProperties(Original.StateKey);FString Property;
@@ -425,6 +425,7 @@ bool ABridgeWorld::UseBlock(const FIntVector& Block) {
         Property=TEXT("open");
     } else if((Original.BlockId.EndsWith(TEXT("_button")) || Original.BlockId==TEXT("minecraft:lever")) && Props.Contains(TEXT("powered"))) Property=TEXT("powered");
     else return false;
+    if(Original.BlockId.EndsWith(TEXT("_button")) && Props.FindRef(Property)==TEXT("true") && !TimedRelease) return true;
     Props.Add(Property,Props.FindRef(Property)==TEXT("true") ? TEXT("false") : TEXT("true"));
     TArray<FIntVector> Positions{Block};const FString Half=Props.FindRef(TEXT("half"));
     if(Original.BlockId.EndsWith(TEXT("_door")) && (Half==TEXT("lower") || Half==TEXT("upper"))) Positions.Add(Block+FIntVector(0,Half==TEXT("lower") ? 1 : -1,0));
@@ -449,5 +450,8 @@ bool ABridgeWorld::UseBlock(const FIntVector& Block) {
         if(Props.FindRef(TEXT("powered"))==TEXT("true")) ButtonRelease.Add(Block,FPlatformTime::Seconds()+(Original.BlockId==TEXT("minecraft:stone_button") || Original.BlockId==TEXT("minecraft:polished_blackstone_button") ? 1.0 : 1.5));
         else ButtonRelease.Remove(Block);
     }
-    for(const auto& Cell:Rebuild) RebuildCell(Cell);UpdateConnections(Block);return true;
+    for(const auto& Cell:Rebuild) RebuildCell(Cell);UpdateConnections(Block);
+    if(InteractionSound) InteractionSound(Property==TEXT("open") ? (Props.FindRef(Property)==TEXT("true") ? TEXT("open") : TEXT("close"))
+        : (Props.FindRef(Property)==TEXT("true") ? TEXT("activate") : TEXT("deactivate")),Original.BlockId,BlockCenter(Block));
+    return true;
 }

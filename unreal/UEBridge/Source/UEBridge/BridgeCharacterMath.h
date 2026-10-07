@@ -131,6 +131,21 @@ inline Pose FirstPersonBlock(double Swing,double Equipped,bool LeftHanded) {
     P.Rotate(0,1,0,LeftHanded ? -225.0 : 45.0);
     return ToCamera(P,Quaternion{0,0,1,0}); // imported cube has world-block axes
 }
+inline Pose FirstPersonItem(double Swing,double Equipped,bool LeftHanded) {
+    Swing=Clamp(Swing,0.0,1.0);Equipped=Clamp(Equipped,0.0,1.0);
+    const double Side=LeftHanded ? -1.0 : 1.0,Root=std::sqrt(Swing),Lift=std::sin(Root*Pi),Across=std::sin(Swing*Swing*Pi);
+    Pose P;P.Translate(Side*0.56,-0.52-0.6*(1.0-Equipped),-0.72);
+    P.Translate(-Side*0.4*Lift,0.2*std::sin(Root*2.0*Pi),-0.2*std::sin(Swing*Pi));
+    P.Rotate(0,1,0,Side*(45.0-20.0*Across));P.Rotate(0,0,1,-Side*20.0*Lift);
+    P.Rotate(1,0,0,-80.0*Lift);P.Rotate(0,1,0,-Side*45.0);
+    return ToCamera(P,Quaternion{});
+}
+inline Pose ThirdPersonItem(bool LeftHanded) {
+    const double Side=LeftHanded ? -1.0 : 1.0;
+    Pose P;P.Rotate(1,0,0,-90.0);P.Rotate(0,1,0,180.0);P.Translate(Side/16.0,0.125,-0.625);
+    return {{-P.Position.Z*100.0,-P.Position.X*100.0,-P.Position.Y*100.0},
+        Quaternion{P.Rotation.Z,P.Rotation.X,P.Rotation.Y,P.Rotation.W}*Quaternion{1,0,0,0}};
+}
 inline Pose ThirdPersonBlock(bool LeftHanded) {
     const double Side=LeftHanded ? -1.0 : 1.0;
     Pose P;

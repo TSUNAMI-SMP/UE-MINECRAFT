@@ -532,3 +532,63 @@ active control and HP0; UE finds an unblocked original spawn position and resets
 `mobCount/mobMissing/mobReason` and `/uebridge mobs` expose import outcomes.
 CloudJava/Python/portableC++ tests validate protocols/assets/math. They do not
 validate UE module compilation, shader output or full game integration.
+
+## Native held items, spawn eggs, creative flight and color correction (0.10.0)
+
+Input optionally appends typed `creative:boolean` and `flying:boolean`, both
+default false. UE enables MOVE_Flying only while the current controller lease
+is active and both flags are true; losing permission restores gravity. The MC
+client derives creative from the real player game mode and toggles flying with
+configured jump-key rising edges within350ms. Jump/sneak are ascent/descent.
+Takeoff ignores the still-grounded first frame; landing clears flight after an
+airborne frame. This does not implement complete survival inventory/hunger rules.
+
+Input and block actions may include `heldModelKey` (item identifier + `@` +64
+lowercase hex, maximum256 characters), and `spawnType` (entity identifier).
+Held keys hash canonical, recursively key-sorted ItemStack codec JSON with count1;
+components affect the key, stack count does not. Empty hand uses an empty key.
+Block-action spawn eggs use UE hit position, the imported entity-type template
+and event UUID; retries do not duplicate entities. MC terrain/entities are not
+modified. Grounded templates only;128 UUIDs per world import. Missing templates
+or occupied spawn positions produce an action diagnostic.
+
+Local items export `kind:"items",version:1` contains `items` keyed by heldModelKey,
+each with firstperson_righthand/lefthand and thirdperson_righthand/lefthand arrays.
+Native display transforms are already applied to centered item-space vertices.
+Each face has4 vertices (3 finite numbers),4 UVs (2 finite numbers), texture SHA256
+and RGB tint integer. Textures are checksummed local PNGs. The MOD captures native
+default registry stacks and current hotbar/offhand components; UE displays only
+the main hand. Unsupported native draw commands are in `excluded`; no stick
+substitution is used. Static snapshots do not reproduce live conditional/use
+models, glint or animated texture playback. Re-export changed components.
+
+Mob export additionally includes `templates:{entityType:appearanceHash}`. Each
+referenced appearance includes validated width/height/maxHealth/speed/damage,
+hostile/baby template stats. Templates are captured from detached native entities,
+never added to the Minecraft world. Old exports may import individuals but have
+no egg templates. Imported visuals and AI retain the0.9 ground-mob limitations.
+
+Vanilla feedback types extend to `open`, `close`, `activate`, `deactivate`.
+Minecraft selects the native BlockSetType/WoodType sounds (including button
+release), uses active-resource-pack audio and the existing relative listener
+position. Reliable effect IDs/ACK deduplication are unchanged. Doors emit one
+sound for the two-half state change; timed button release emits a separate event.
+
+A paired0.10 client still sends `UEB3`; its UE receives version4 frames, with the
+same84-byte header/mask RLE as v3. RGB is now **straight sRGB**, rather than v3's
+premultiplied display RGB. The client attaches mask alpha without re-unpremultiplying
+or applying a gamma correction. Legacy v3 decoding remains for old UE streams.
+Do not mix old UEB3 clients with the0.10 sender. Legacy UEBH remains version2.
+
+Lighting ON uses FinalToneCurveHDR in linear sRGB; OFF uses SceneColorHDR with
+inverse opacity. FloatRGBA readback is converted to sRGB once on the worker.
+OFF's RGB/mask come from one capture and RGB is unpremultiplied before encoding.
+Temporal AA and motion blur are disabled on streamed captures. Generated diffuse
+materials use Specular0; selection edges use a black unlit material and the union
+boundary of native outline boxes. JPEG/TCP remains; GPU sharing is not implemented.
+
+Status adds `itemsV1`, `creativeFlightV1`, `itemModelCount`, `heldModel`, `flying`,
+`mobTemplateCount`, `videoColor`. Pose optionally adds `flying`; old grounded pose
+fields remain unchanged. Status strings are bounded; UDP responses use condensed
+JSON and respect the2048-byte budget. Tests do not establish UE5.8 compilation
+or rendered color correctness on Windows.

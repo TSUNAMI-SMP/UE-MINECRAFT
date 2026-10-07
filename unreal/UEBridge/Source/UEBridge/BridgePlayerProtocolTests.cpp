@@ -23,6 +23,13 @@ bool FBridgePlayerVisualProtocolTest::RunTest(const FString& Parameters) {
     TestEqual(TEXT("Legacy equipped hand"),Packet.EquipProgress,1.0);
     TestEqual(TEXT("Missing camera field uses the bridge's 80 degree base"),Packet.CameraFov,80.0);
     TestFalse(TEXT("Legacy classic arms"),Packet.SlimArms);
+    TestFalse(TEXT("Legacy cannot acquire flight permission"),Packet.Creative || Packet.Flying);
+    Json->SetBoolField(TEXT("creative"),true);Json->SetBoolField(TEXT("flying"),true);
+    TestTrue(TEXT("Creative flight parses"),BridgeProtocol::Parse(Json,Packet) && Packet.Flying);
+    Json->SetBoolField(TEXT("creative"),false);
+    TestTrue(TEXT("Survival input parses but flight is revoked"),BridgeProtocol::Parse(Json,Packet) && !Packet.Flying);
+    Json->SetStringField(TEXT("creative"),TEXT("true"));TestFalse(TEXT("String permissions rejected"),BridgeProtocol::Parse(Json,Packet));
+    Json->SetBoolField(TEXT("creative"),false);Json->SetBoolField(TEXT("flying"),false);
 
     Json->SetNumberField(TEXT("perspective"),2);
     Json->SetNumberField(TEXT("skinLayers"),64|4);

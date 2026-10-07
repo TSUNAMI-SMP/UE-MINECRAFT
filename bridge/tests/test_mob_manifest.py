@@ -45,6 +45,23 @@ class MobManifestTest(unittest.TestCase):
         file.write_text(json.dumps(data or self.manifest), encoding="utf-8")
         return MOBS.load_mob_manifest(file)
 
+    def test_spawn_templates_require_matching_valid_native_stats(self):
+        data = copy.deepcopy(self.manifest)
+        stats = dict(width=.6, height=1.8, maxHealth=20, speed=.25, damage=4, hostile=True, baby=False)
+        data["appearances"][self.key]["stats"] = stats
+        data["templates"] = {"minecraft:zombie": self.key}
+        self.assertEqual(self.key, self.load(data)["templates"]["minecraft:zombie"])
+        for field, value in (("width", True), ("height", float("nan")), ("maxHealth", 0), ("speed", 3), ("hostile", "true")):
+            invalid = copy.deepcopy(data); invalid["appearances"][self.key]["stats"][field] = value
+            with self.assertRaises(ValueError):
+                self.load(invalid)
+        data["templates"] = {"minecraft:cow": self.key}
+        with self.assertRaises(ValueError):
+            self.load(data)
+        data["templates"] = {"minecraft:zombie": []}
+        with self.assertRaises(ValueError):
+            self.load(data)
+
     def test_complete_local_export_with_source_and_hash(self):
         result = self.load()
         self.assertEqual(str(self.root / "texture.png"), result["appearances"][self.key]["source"])

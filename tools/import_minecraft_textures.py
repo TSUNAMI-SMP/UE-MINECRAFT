@@ -304,6 +304,14 @@ def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mo
     if not required.issubset({str(name) for name in editing.get_texture_parameter_names(parent)}):
         raise RuntimeError("Model-face master has an incomplete texture graph")
     scalars = {str(name) for name in editing.get_scalar_parameter_names(parent)}
+    if "BridgeSpecular" not in scalars:
+        specular = editing.create_material_expression(parent, unreal.MaterialExpressionScalarParameter, -200, 300)
+        specular.set_editor_property("parameter_name", "BridgeSpecular"); specular.set_editor_property("default_value", 0.0)
+        if not editing.connect_material_property(specular, "", unreal.MaterialProperty.MP_SPECULAR):
+            raise RuntimeError("Cannot connect diffuse-only specular")
+        editing.recompile_material(parent)
+        if not assets.save_loaded_asset(parent, False):
+            raise RuntimeError("Cannot save diffuse-only master")
     if not {"FaceTint", "BridgeUnlit"}.issubset(scalars):
         raise RuntimeError("Model-face master has an incomplete tint/lighting graph")
     return parent

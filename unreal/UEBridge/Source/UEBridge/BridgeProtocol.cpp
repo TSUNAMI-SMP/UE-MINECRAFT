@@ -36,6 +36,14 @@ bool Selection(const TSharedPtr<FJsonObject>& P,FBridgePacket& R) {
         if(P->HasField(Name) && (!P->TryGetStringField(Name,Value) || (!Value.IsEmpty()&&!Identifier(Value)))) return false;
         if(FString(Name)==TEXT("heldItem")) R.HeldItem=Value; else R.HeldBlock=Value;
     }
+    if(P->HasField(TEXT("spawnType")) && (!P->TryGetStringField(TEXT("spawnType"),R.SpawnType) || !Identifier(R.SpawnType))) return false;
+    if(P->HasField(TEXT("heldModelKey"))) {
+        if(!P->TryGetStringField(TEXT("heldModelKey"),R.HeldModelKey) || R.HeldModelKey.Len()>256) return false;
+        if(!R.HeldModelKey.IsEmpty()) {
+            FString Item,Hash;if(!R.HeldModelKey.Split(TEXT("@"),&Item,&Hash) || Item!=R.HeldItem || !Identifier(Item) || Hash.Len()!=64) return false;
+            for(TCHAR C:Hash) if(!((C>='0' && C<='9') || (C>='a' && C<='f'))) return false;
+        }
+    }
     uint64 Color=0xffffff;
     if(P->HasField(TEXT("heldColor"))&&!Integer(P,TEXT("heldColor"),0,0xffffff,Color)) return false;
     R.HeldColor=int32(Color); return true;
@@ -54,6 +62,8 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
     if(!Vector(P, TEXT("x"), TEXT("y"), TEXT("z"), R.Position, 100000)) return false;
     if (Kind == TEXT("input")) {
         R.Kind = EBridgeKind::Input;
+        for(const auto* Name:{TEXT("creative"),TEXT("flying")}) if(P->HasField(Name) && !P->HasTypedField<EJson::Boolean>(Name)) return false;
+        P->TryGetBoolField(TEXT("creative"),R.Creative);P->TryGetBoolField(TEXT("flying"),R.Flying);R.Flying=R.Flying && R.Creative;
         if(!Selection(P,R)) return false;
         if(P->HasField(TEXT("sprint")) && (!P->HasTypedField<EJson::Boolean>(TEXT("sprint")) || !P->TryGetBoolField(TEXT("sprint"),R.Sprint))) return false;
         if (!Number(P, TEXT("yaw"), -1e9, 1e9, R.Yaw) || !Number(P, TEXT("pitch"), -90, 90, R.Pitch)

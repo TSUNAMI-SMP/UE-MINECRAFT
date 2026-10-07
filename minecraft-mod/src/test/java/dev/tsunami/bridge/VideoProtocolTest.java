@@ -137,4 +137,24 @@ public class VideoProtocolTest {
             }
         } finally {VanillaSkyComposite.prepare(null,false);}
     }
+    @Test public void versionFourStraightAlphaDoesNotBrightenDecodedJpegAgain() throws Exception {
+        var image=new BufferedImage(32,16,BufferedImage.TYPE_INT_RGB);
+        for(int y=0;y<16;y++) for(int x=0;x<32;x++) image.setRGB(x,y,0x406080);
+        var jpeg=new ByteArrayOutputStream();assertTrue(ImageIO.write(image,"jpeg",jpeg));
+        int expected=ImageIO.read(new ByteArrayInputStream(jpeg.toByteArray())).getRGB(0,0)&0xffffff;
+        var bytes=new ByteArrayOutputStream();var out=new DataOutputStream(bytes);
+        out.writeInt(VideoProtocol.MAGIC);out.writeInt(4);out.writeInt(32);out.writeInt(16);out.writeInt(1);out.writeInt(jpeg.size());
+        out.writeLong(7);out.writeInt(0);out.writeInt(0);out.writeInt(1);out.writeInt(3);
+        out.writeDouble(0);out.writeDouble(65.62);out.writeDouble(0);out.writeFloat(0);out.writeFloat(0);out.writeFloat(80);
+        out.write(jpeg.toByteArray());out.write(new byte[]{2,0,(byte)128});
+        var frame=VideoProtocol.read(new DataInputStream(new ByteArrayInputStream(bytes.toByteArray())));
+        assertTrue(frame.skyMask());assertEquals(128,frame.argb()[0]>>>24);assertEquals(expected,frame.argb()[0]&0xffffff);
+        assertEquals(expected,frame.argb()[511]&0xffffff);
+    }
+    @Test public void straightAlphaPreservesColorWhileLegacyStillUnpremultiplies() throws Exception {
+        int[] nativeColor={0xff406080},legacy={0xff406080};byte[] mask={0,1,(byte)128};
+        VideoProtocol.applyMask(nativeColor,mask,false);VideoProtocol.applyMask(legacy,mask,true);
+        assertEquals(0x80406080,nativeColor[0]);assertTrue((legacy[0]&255)>(nativeColor[0]&255));
+    }
+
 }

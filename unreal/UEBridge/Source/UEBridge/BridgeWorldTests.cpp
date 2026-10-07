@@ -18,6 +18,8 @@ bool FBridgeWorldSealTest::RunTest(const FString& Parameters) {
         TestTrue(TEXT("Landing retains walking authority"),Movement->DefaultLandMovementMode==MOVE_Walking);
         TestEqual(TEXT("Jump launch speed"),Movement->JumpZVelocity,900.f);
         TestTrue(TEXT("Gravity is approximately 3200cm/s2"),FMath::IsNearlyEqual(FMath::Abs(Movement->GetGravityZ()),3200.f,1.f));
+        Character->ApplyFlight(true,true);TestTrue(TEXT("Creative can fly"),Character->BridgeFlying && Movement->MovementMode==MOVE_Flying);
+        Character->ApplyFlight(false,true);TestTrue(TEXT("Survival revokes creative flight"),!Character->BridgeFlying && Movement->MovementMode==MOVE_Falling);
         Character->SetAuthorityEnabled(false);
         TestTrue(TEXT("Controller off freezes movement"),Movement->MovementMode==MOVE_None);
         Character->SetAuthorityEnabled(true);

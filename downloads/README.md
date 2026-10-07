@@ -1,5 +1,19 @@
 # ダウンロード
 
+## 更新版0.10.0
+
+- [MOD 0.10.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.10.0/downloads/minecraft-ue-bridge-0.10.0.jar)
+- [既存UE用更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.10.0/downloads/UEBridge-update-0.10.0.zip)
+- [ソース＋MOD一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.10.0/downloads/UE-Minecraft-MVP-0.10.0.zip)
+- [上書き対象・再書き出し・取り込み・操作順](../docs/UPGRADE_0.10.0.md)
+
+色・アウトライン・腕の残像対策、主手のネイティブ持ち物モデル、地上モブのスポーンエッグ、開閉／スイッチ音、クリエイティブ限定の飛行。0.9.4までの修正を含み、旧パッチは不要です。
+**MODとUE両方の更新・UE再ビルド・素材の再書き出し／取り込みが必要です。**
+Sourceを削除せず統合コピーし、既存Content/Config/Saved/レベルを保持します。
+Java108件・Python49件と独立C++計算が成功。UE5.8のビルド・描画・Windows統合動作は未確認です。
+全アイテムの全状態や全モブ固有AIの完成ではありません。対応範囲は操作手順に記載しています。
+新しい配布ブランチは `ue-bridge-0.10.0`。以前のZIPとmainは保持します。
+
 ## UE腕・持ち物マテリアル修正0.9.4
 
 - [UE修正パッチZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.9.0/downloads/UEBridge-material-fix-0.9.4.zip)

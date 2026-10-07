@@ -9,7 +9,7 @@ import java.util.UUID;
 public record VanillaFeedbackData(String session, String receiverId, String effectId, long sequence,
                                   Type type, String block, Point position, Point listener,
                                   double listenerYaw, double listenerPitch, double fallDistance) {
-    public enum Type { BREAK, PLACE, STEP, LAND }
+    public enum Type { BREAK, PLACE, STEP, LAND, OPEN, CLOSE, ACTIVATE, DEACTIVATE }
     public record Point(double x, double y, double z) {
         Point subtract(Point other) { return new Point(x-other.x, y-other.y, z-other.z); }
         double dot(Point other) { return x*other.x + y*other.y + z*other.z; }
@@ -29,7 +29,9 @@ public record VanillaFeedbackData(String session, String receiverId, String effe
             String name=string(packet,"type");
             Type type=switch (name==null ? "" : name) {
                 case "break" -> Type.BREAK; case "place" -> Type.PLACE;
-                case "step" -> Type.STEP; case "land" -> Type.LAND; default -> null;
+                case "step" -> Type.STEP; case "land" -> Type.LAND;
+                case "open" -> Type.OPEN; case "close" -> Type.CLOSE;
+                case "activate" -> Type.ACTIVATE; case "deactivate" -> Type.DEACTIVATE; default -> null;
             };
             if (type==null) return null;
             Point source=new Point(coordinate(packet,"x"),coordinate(packet,"y"),coordinate(packet,"z"));
@@ -78,9 +80,10 @@ public record VanillaFeedbackData(String session, String receiverId, String effe
             case BREAK, PLACE -> (groupVolume+1)/2;
             case STEP -> groupVolume*.15f;
             case LAND -> groupVolume*.5f;
+            case OPEN, CLOSE, ACTIVATE, DEACTIVATE -> 1f;
         };
     }
     public float pitch(float groupPitch) {
-        return groupPitch * switch(type) { case BREAK, PLACE -> .8f; case STEP -> 1f; case LAND -> .75f; };
+        return groupPitch * switch(type) { case BREAK, PLACE -> .8f; case STEP -> 1f; case LAND -> .75f; case OPEN, CLOSE, ACTIVATE, DEACTIVATE -> 1f; };
     }
 }

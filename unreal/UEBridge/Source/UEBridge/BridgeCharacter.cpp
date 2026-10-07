@@ -1,5 +1,6 @@
 #include "BridgeCharacter.h"
 #include "BridgeCharacterMath.h"
+#include "BridgeOutlineMath.h"
 #include "Camera/CameraComponent.h"
 #include "Camera/CameraTypes.h"
 #include "Components/CapsuleComponent.h"
@@ -67,7 +68,9 @@ ABridgeCharacter::ABridgeCharacter() {
     BridgeCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("BridgeCamera"));
     BridgeCamera->SetupAttachment(GetCapsuleComponent());
     BridgeCamera->SetRelativeLocation(FVector(0, 0, 72)); // MC eye = 162 cm above feet.
-    BridgeCamera->bUsePawnControlRotation = true;
+    BridgeCamera->bUsePawnControlRotation = true;BridgeCamera->bConstrainAspectRatio=true;
+    BridgeCamera->PostProcessSettings.bOverride_MotionBlurAmount=true;BridgeCamera->PostProcessSettings.MotionBlurAmount=0;
+    BridgeCamera->PostProcessBlendWeight=1;
     SetMinecraftFov(80.f);
     bUseControllerRotationYaw = true;
     GetCharacterMovement()->GravityScale = 0;
@@ -118,10 +121,7 @@ ABridgeCharacter::ABridgeCharacter() {
     HeldModel=CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("MinecraftHeldModel"));PrepareSkin(HeldModel,BridgeCamera);HeldModel->SetCastShadow(false);
     AvatarRoot->SetVisibility(false,true);SkinArm->SetVisibility(false,true);
     AimRoot=CreateDefaultSubobject<USceneComponent>(TEXT("AimOutline"));AimRoot->SetupAttachment(GetCapsuleComponent());
-    for(int32 I=0;I<12;++I) {
-        auto* Edge=CreateDefaultSubobject<UStaticMeshComponent>(*FString::Printf(TEXT("AimEdge%d"),I));
-        Prepare(Edge,AimRoot);AimEdges.Add(Edge);
-    }
+    AimOutline=CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("NativeBlockOutline"));PrepareSkin(AimOutline,AimRoot);AimOutline->SetCastShadow(false);
     AimRoot->SetVisibility(false,true);HeldMesh->SetVisibility(false);
     ProjectedSleeve->SetVisibility(false);ProjectedHand->SetVisibility(false);HeldModel->SetVisibility(false);
 }
@@ -135,7 +135,7 @@ void ABridgeCharacter::ApplyMinecraftPose(double BodyHeight, double EyeHeight, b
 
 void ABridgeCharacter::SetAuthorityEnabled(bool Enabled) {
     if(UEAuthority==Enabled) return;
-    UEAuthority=Enabled; PreviousJump=false; SprintRequested=false;BodyYawInitialized=false;StopJumping();
+    UEAuthority=Enabled; BridgeFlying=false; FlightWasAirborne=FlightLandingLatch=false; PreviousJump=false; SprintRequested=false;BodyYawInitialized=false;StopJumping();
     auto* Movement=GetCharacterMovement(); Movement->StopMovementImmediately();
     // Landing uses DefaultLandMovementMode, not just the current movement mode.
     Movement->DefaultLandMovementMode=Enabled ? MOVE_Walking : MOVE_None;
@@ -146,14 +146,18 @@ void ABridgeCharacter::SetAuthorityEnabled(bool Enabled) {
 }
 void ABridgeCharacter::ApplyUEInput(float Forward,float Right,bool JumpHeld,bool Sneak,bool Sprint) {
     if(!UEAuthority) return;
-    if(Sneak) Crouch(); else UnCrouch();
+    if(Sneak && !BridgeFlying) Crouch(); else UnCrouch();
     SprintRequested=Sprint && !Sneak && Forward>0;
     GetCharacterMovement()->MaxWalkSpeed=SprintRequested ? 561.2f : 431.7f;
+    GetCharacterMovement()->MaxFlySpeed=SprintRequested ? 2160.f : 1080.f;
     const FRotator Heading(0,GetControlRotation().Yaw,0);
     FVector Direction=Heading.Vector()*Forward + FRotationMatrix(Heading).GetUnitAxis(EAxis::Y)*Right;
     const float Magnitude=FMath::Min(1.f,Direction.Size());
     if(Magnitude>0) AddMovementInput(Direction.GetSafeNormal(),Magnitude);
-    if(JumpHeld && (!PreviousJump || GetCharacterMovement()->IsMovingOnGround())) Jump();
+    if(BridgeFlying) {
+        AddMovementInput(FVector::UpVector,(JumpHeld ? 1.f : 0.f)-(Sneak ? 1.f : 0.f));
+        StopJumping();
+    } else if(JumpHeld && (!PreviousJump || GetCharacterMovement()->IsMovingOnGround())) Jump();
     if(!JumpHeld) StopJumping(); PreviousJump=JumpHeld;
 }
 bool ABridgeCharacter::CanJumpInternal_Implementation() const {
@@ -180,8 +184,21 @@ float ABridgeCharacter::GetFloorGapCm() const {
 FVector ABridgeCharacter::GetMinecraftFeetPosition() const {
     return GetActorLocation()-FVector(0,0,GetCapsuleComponent()->GetScaledCapsuleHalfHeight()+GetFloorGapCm());
 }
+void ABridgeCharacter::ApplyFlight(bool Creative,bool Flying) {
+    if(!Flying || !Creative || !UEAuthority) FlightLandingLatch=false;
+    const bool Enabled=UEAuthority && Creative && Flying && !FlightLandingLatch;
+    if(BridgeFlying==Enabled) return;
+    BridgeFlying=Enabled;FlightWasAirborne=false;StopJumping();PreviousJump=false;
+    auto* Movement=GetCharacterMovement();Movement->StopMovementImmediately();
+    Movement->MaxFlySpeed=1080.f;Movement->BrakingDecelerationFlying=6500.f;
+    Movement->SetMovementMode(Enabled ? MOVE_Flying : (UEAuthority ? MOVE_Falling : MOVE_None));
+}
+void ABridgeCharacter::ConfigureOutline(UMaterialInterface* Material) {
+    if(Material && AimOutline->GetMaterial(0)!=Material) AimOutline->SetMaterial(0,Material);
+}
 float ABridgeCharacter::GetHandSwing() const {
-    return PlayerSwing>0.f ? PlayerSwing : (SwingRemaining>0.f ? 1.f-SwingRemaining/float(BridgeCharacterMath::SwingSeconds) : 0.f);
+    if(UEAuthority) return SwingRemaining>0.f ? 1.f-SwingRemaining/float(BridgeCharacterMath::SwingSeconds) : 0.f;
+    return HasPlayerVisuals ? PlayerSwing : (SwingRemaining>0.f ? 1.f-SwingRemaining/float(BridgeCharacterMath::SwingSeconds) : 0.f);
 }
 void ABridgeCharacter::Tick(float DeltaSeconds) {
     Super::Tick(DeltaSeconds);
@@ -203,23 +220,56 @@ void ABridgeCharacter::Tick(float DeltaSeconds) {
     const bool Backwards=FVector::DotProduct(GetVelocity(),FRotator(0,BridgeBodyYaw,0).Vector())<0.f;
     BobPhase+=DeltaSeconds*20.f*.6662f*LimbAmplitude*(Backwards ? -1.f : 1.f);
     const float Bob=UEAuthority && GetCharacterMovement()->IsMovingOnGround() ? FMath::Sin(BobPhase)*FMath::Min(1.f,GetVelocity().Size2D()/432.f) : 0;
-    UpdatePlayerCamera();UpdateAvatar(Bob);
+    HandBob=float(BridgeCharacterMath::Smooth(HandBob,Bob,14.f,DeltaSeconds));
+    if(BridgeFlying) {
+        FFindFloorResult Floor;GetCharacterMovement()->FindFloor(GetActorLocation(),Floor,false);
+        const bool OnFloor=Floor.IsWalkableFloor() && Floor.GetDistanceToFloor()<=2.5f;
+        if(!OnFloor) FlightWasAirborne=true;
+        // The first takeoff frame still touches the floor before movement consumes
+        // the jump-key input. Do not mistake it for a landing.
+        if(OnFloor && FlightWasAirborne && GetVelocity().Z<=0) {
+            ApplyFlight(true,false);
+            // Input remains flying until the ground pose reaches Minecraft. Keep
+            // falling/walking long enough for that ACK, rather than re-enabling.
+            FlightLandingLatch=true;
+        }
+    }
+    UpdatePlayerCamera();UpdateAvatar(HandBob);
     FIntVector Block;FVector Normal;
     FVector EyePosition;FRotator AimRotation;GetEyeAim(EyePosition,AimRotation);
     const bool Aimed=UEAuthority && IsValid(InteractionWorld) && InteractionWorld->Aim(EyePosition,AimRotation,500.f,Block,Normal,this);
     AimRoot->SetVisibility(Aimed,true);
     if(Aimed) {
         AimRoot->SetWorldLocationAndRotation(InteractionWorld->BlockCenter(Block),FRotator::ZeroRotator);
-        int32 Index=0;
-        for(int32 Axis=0;Axis<3;++Axis) for(int32 A:{-1,1}) for(int32 B:{-1,1}) {
-            FVector Offset=FVector::ZeroVector;Offset[(Axis+1)%3]=A*50.3;Offset[(Axis+2)%3]=B*50.3;
-            FVector Scale(.006);Scale[Axis]=1.012;
-            AimEdges[Index]->SetRelativeLocation(Offset);AimEdges[Index]->SetRelativeScale3D(Scale);++Index;
+        FString Id,State;InteractionWorld->GetBlockState(Block,Id,State);
+        if(!AimShapeReady || AimVoxel!=Block || AimState!=Id+TEXT("[")+State+TEXT("]")) {
+            AimVoxel=Block;AimState=Id+TEXT("[")+State+TEXT("]");AimShapeReady=true;
+            TArray<FBox> Boxes;InteractionWorld->GetBlockOutline(Block,Boxes);
+            std::vector<BridgeOutlineMath::Box> Hulls;
+            for(const auto& Box:Boxes) Hulls.push_back({{Box.Min.X,Box.Min.Y,Box.Min.Z},{Box.Max.X,Box.Max.Y,Box.Max.Z}});
+            const auto Lines=BridgeOutlineMath::Edges(Hulls);
+            TArray<FVector> Vertices,Normals;TArray<int32> Indices;TArray<FVector2D> UV;TArray<FLinearColor> Colors;TArray<FProcMeshTangent> Tangents;
+            auto Convert=[](const BridgeOutlineMath::Point& P){return FVector(P[2]-.5,-P[0]+.5,P[1]-.5)*100;};
+            for(const auto& Line:Lines) {
+                const FVector A=Convert(Line.A),B=Convert(Line.B),D=(B-A).GetSafeNormal();
+                const FVector U=(FMath::Abs(D.Z)<.9 ? FVector::CrossProduct(D,FVector::UpVector) : FVector::CrossProduct(D,FVector::ForwardVector)).GetSafeNormal()*.25;
+                const FVector V=FVector::CrossProduct(D,U);
+                const FVector Corners[]={U+V,-U+V,-U-V,U-V};
+                for(int32 I=0;I<4;++I) {
+                    const int32 Base=Vertices.Num();
+                    Vertices.Append({A+Corners[I],B+Corners[I],B+Corners[(I+1)%4],A+Corners[(I+1)%4]});
+                    Indices.Append({Base,Base+1,Base+2,Base,Base+2,Base+3});
+                    for(int32 J=0;J<4;++J) {Normals.Add(Corners[I].GetSafeNormal());UV.Add(FVector2D::ZeroVector);Colors.Add(FLinearColor::Black);}
+                }
+            }
+            AimOutline->ClearAllMeshSections();
+            if(!Vertices.IsEmpty()) AimOutline->CreateMeshSection_LinearColor(0,Vertices,Indices,Normals,UV,Colors,Tangents,false);
         }
+
     }
 }
 
-void ABridgeCharacter::ConfigureVisuals(UMaterialInterface* Material,UBridgeBlockPalette* Palette,const FString& Item,const FString& Block,int32 Color) {
+void ABridgeCharacter::ConfigureVisuals(UMaterialInterface* Material,UBridgeBlockPalette* Palette,const FString& Item,const FString& Block,int32 Color,const FString& ModelKey) {
     if(!VisualsConfigured || VisualMaterial!=Material) {
         auto Tint=[&](UStaticMeshComponent* VisualMesh,const FColor& ColorValue) {
             UMaterialInterface* Base=Material ? Material : VisualMesh->GetMaterial(0);if(!Base) return;
@@ -228,9 +278,11 @@ void ABridgeCharacter::ConfigureVisuals(UMaterialInterface* Material,UBridgeBloc
             VisualMesh->SetMaterial(0,Dynamic);
         };
         Tint(Sleeve,FColor(45,100,165));Tint(Hand,FColor(199,150,113));
-        for(auto& Edge:AimEdges) Tint(Edge,FColor(12,12,12));
+        if(!AimOutline->GetMaterial(0) || AimOutline->GetMaterial(0)==VisualMaterial) {
+            auto* Outline=CreateVisualInstance(Material,this);if(Outline) {Outline->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::Black);AimOutline->SetMaterial(0,Outline);}
+        }
     }
-    if(!VisualsConfigured || VisualMaterial!=Material || VisualPalette!=Palette || VisualItem!=Item || VisualBlock!=Block || VisualColor!=Color) {
+    if(!VisualsConfigured || VisualMaterial!=Material || VisualPalette!=Palette || VisualItem!=Item || VisualBlock!=Block || VisualColor!=Color || VisualModelKey!=ModelKey) {
         HeldGeometryReady=false;
         UMaterialInterface* ItemMaterial=Palette && !Block.IsEmpty() ? Palette->Find(Block) : nullptr;
         if(!ItemMaterial) ItemMaterial=Material ? Material : Hand->GetMaterial(0);
@@ -240,7 +292,7 @@ void ABridgeCharacter::ConfigureVisuals(UMaterialInterface* Material,UBridgeBloc
             if(Dynamic) {Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(ItemColor));HeldMesh->SetMaterial(0,Dynamic);}
         }
     }
-    VisualsConfigured=true;VisualMaterial=Material;VisualPalette=Palette;VisualItem=Item;VisualBlock=Block;VisualColor=Color;
+    VisualsConfigured=true;VisualMaterial=Material;VisualPalette=Palette;VisualItem=Item;VisualBlock=Block;VisualColor=Color;VisualModelKey=ModelKey;
 }
 
 void ABridgeCharacter::SetInteractionWorld(ABridgeWorld* Imported) { InteractionWorld=Imported; }
@@ -253,6 +305,7 @@ void ABridgeCharacter::ConfigureAppearance(UBridgePlayerAppearance* Appearance) 
 }
 
 void ABridgeCharacter::ApplyPlayerVisuals(int32 Perspective,float SwingProgress,float EquipProgress,bool UsingItem,const FString& UseAction,float UseProgress,bool LeftHanded,int32 SkinLayers,bool SlimArms) {
+    if((CameraPerspective==0)!=(Perspective==0) || PlayerLeftHanded!=LeftHanded) HeldGeometryReady=false;
     CameraPerspective=FMath::Clamp(Perspective,0,2);
     PlayerSwing=FMath::Clamp(SwingProgress,0.f,1.f);PlayerEquip=FMath::Clamp(EquipProgress,0.f,1.f);
     PlayerUsingItem=UsingItem;PlayerUseAction=UseAction;PlayerUseProgress=FMath::Clamp(UseProgress,0.f,1.f);
@@ -363,11 +416,16 @@ void ABridgeCharacter::PoseHandGeometry(UProceduralMeshComponent* Part,const FTr
 void ABridgeCharacter::BuildHeldGeometry() {
     HeldModel->ClearAllMeshSections();
     TArray<FBridgeModelFace> Faces;
-    const bool Imported=IsValid(VisualPalette) && !VisualBlock.IsEmpty()
-        && VisualPalette->BuildModel(VisualBlock,VisualPalette->DefaultState(VisualBlock),Faces) && !Faces.IsEmpty();
+    const FString Context=CameraPerspective==0 ? (PlayerLeftHanded ? TEXT("firstperson_lefthand") : TEXT("firstperson_righthand"))
+        : (PlayerLeftHanded ? TEXT("thirdperson_lefthand") : TEXT("thirdperson_righthand"));
+    NativeHeldGeometry=IsValid(VisualPalette) && VisualPalette->BuildItem(VisualModelKey.IsEmpty() ? VisualItem : VisualModelKey,Context,Faces);
+    const bool Imported=NativeHeldGeometry || (VisualModelKey.IsEmpty() && IsValid(VisualPalette) && !VisualBlock.IsEmpty()
+        && VisualPalette->BuildModel(VisualBlock,VisualPalette->DefaultState(VisualBlock),Faces) && !Faces.IsEmpty());
+    if(!Imported && !VisualItem.IsEmpty()) {HeldModelStatus=TEXT("item model missing: ")+VisualItem+TEXT("; /uebridge items export then import");HeldGeometryReady=true;return;}
+    HeldModelStatus=VisualItem.IsEmpty() ? TEXT("empty") : (NativeHeldGeometry ? TEXT("native item: ")+VisualItem : TEXT("block model: ")+VisualItem);
     if(!Imported) {
-        // Preserve the existing neutral model for items outside this release's
-        // block scope. A full block still works with a legacy face-only palette.
+        // Empty-hand placeholder; it is hidden by UpdateAvatar. Missing selected
+        // item models returned above with an explicit diagnostic.
         const FVector N[]={FVector(1,0,0),FVector(-1,0,0),FVector(0,1,0),FVector(0,-1,0),FVector(0,0,1),FVector(0,0,-1)};
         for(const FVector& Normal:N) {
             const FVector U=FMath::Abs(Normal.Z)>.5f ? FVector(1,0,0) : FVector::CrossProduct(FVector(0,0,1),Normal);
@@ -385,21 +443,23 @@ void ABridgeCharacter::BuildHeldGeometry() {
         TArray<int32> Triangles;
         TArray<FLinearColor> Colors;
         TArray<FProcMeshTangent> Tangents;
-        UMaterialInterface* Material=nullptr;
+        UMaterialInterface* Material=nullptr;FColor Tint=FColor::White;
     };
     TArray<FModelSection> Sections;TMap<FString,int32> MaterialSections;
     for(const auto& Face:Faces) {
-        const FString Key=Imported ? Face.TextureId+(Face.bTint ? TEXT("#1") : TEXT("#0")) : TEXT("legacy");
+        const FString Key=Imported ? Face.TextureId+(Face.bTint ? TEXT("#1") : TEXT("#0"))+FString::Printf(TEXT("#%u"),Face.Color.ToPackedARGB()) : TEXT("legacy");
         int32* Existing=MaterialSections.Find(Key);int32 Index;
         if(Existing) Index=*Existing;
         else {
             Index=Sections.Num();MaterialSections.Add(Key,Index);auto& New=Sections.AddDefaulted_GetRef();
-            New.Material=Imported ? VisualPalette->FindFaceMaterial(Face.TextureId,Face.bTint) : HeldMesh->GetMaterial(0);
+            New.Tint=NativeHeldGeometry ? Face.Color : FColor((VisualColor>>16)&255,(VisualColor>>8)&255,VisualColor&255);
+            if(NativeHeldGeometry) {const auto* ItemMaterial=VisualPalette->ItemMaterials.Find(Face.TextureId);New.Material=ItemMaterial ? ItemMaterial->Get() : nullptr;}
+            else New.Material=Imported ? VisualPalette->FindFaceMaterial(Face.TextureId,Face.bTint) : HeldMesh->GetMaterial(0);
         }
         auto& Section=Sections[Index];const int32 First=Section.Vertices.Num();
         for(int32 I=0;I<4;++I) {
-            const FVector MC=Face.Vertices[I]-FVector(.5);
-            Section.Vertices.Add(FVector(MC.Z,-MC.X,MC.Y)*100);Section.UV.Add(Face.UV[I]);Section.Colors.Add(FLinearColor::White);
+            const FVector MC=NativeHeldGeometry ? Face.Vertices[I] : Face.Vertices[I]-FVector(.5);
+            Section.Vertices.Add((NativeHeldGeometry ? FVector(-MC.Z,MC.X,MC.Y) : FVector(MC.Z,-MC.X,MC.Y))*100);Section.UV.Add(Face.UV[I]);Section.Colors.Add(FLinearColor::White);
         }
         const FVector Normal=FVector::CrossProduct(Section.Vertices[First+2]-Section.Vertices[First],Section.Vertices[First+1]-Section.Vertices[First]).GetSafeNormal();
         const FVector Tangent=(Section.Vertices[First+1]-Section.Vertices[First]).GetSafeNormal();
@@ -411,7 +471,7 @@ void ABridgeCharacter::BuildHeldGeometry() {
         HeldModel->CreateMeshSection_LinearColor(Index,Section.Vertices,Section.Triangles,Section.Normals,Section.UV,Section.Colors,Section.Tangents,false);
         if(Section.Material) {
             auto* Dynamic=CreateVisualInstance(Section.Material,this);
-            const FColor Color=VisualBlock.IsEmpty() ? FColor(200,180,110) : FColor((VisualColor>>16)&255,(VisualColor>>8)&255,VisualColor&255);
+            const FColor Color=Section.Tint;
             if(Dynamic) {Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(Color));HeldModel->SetMaterial(Index,Dynamic);}
         }
     }
@@ -446,7 +506,7 @@ void ABridgeCharacter::UpdateAvatar(float Bob) {
     const float NativeSwing=GetHandSwing();
     const float Side=PlayerLeftHanded ? -1.f : 1.f;
     const auto ArmPose=BridgeCharacterMath::FirstPersonArm(NativeSwing,PlayerEquip,PlayerLeftHanded,PlayerSlim);
-    const auto ItemPose=BridgeCharacterMath::FirstPersonBlock(NativeSwing,PlayerEquip,PlayerLeftHanded);
+    const auto ItemPose=NativeHeldGeometry ? BridgeCharacterMath::FirstPersonItem(NativeSwing,PlayerEquip,PlayerLeftHanded) : BridgeCharacterMath::FirstPersonBlock(NativeSwing,PlayerEquip,PlayerLeftHanded);
     FVector ArmPosition=PosePosition(ArmPose)+FVector(0,0,Bob);
     FQuat ArmRotation=PoseRotation(ArmPose);
     FVector ItemPosition=PosePosition(ItemPose)+FVector(0,0,Bob);
@@ -481,11 +541,11 @@ void ABridgeCharacter::UpdateAvatar(float Bob) {
     if(ThirdPerson) {
         const int32 ArmIndex=PlayerLeftHanded ? 3 : 2;
         HeldModel->AttachToComponent(AvatarParts[ArmIndex],FAttachmentTransformRules::KeepRelativeTransform);
-        const auto GripPose=BridgeCharacterMath::ThirdPersonBlock(PlayerLeftHanded);
-        PoseHandGeometry(HeldModel,FTransform(PoseRotation(GripPose),PosePosition(GripPose),VisualBlock.IsEmpty() ? FVector(.025,.035,.20) : FVector(BridgeCharacterMath::ThirdPersonBlockScale)),false);
+        const auto GripPose=NativeHeldGeometry ? BridgeCharacterMath::ThirdPersonItem(PlayerLeftHanded) : BridgeCharacterMath::ThirdPersonBlock(PlayerLeftHanded);
+        PoseHandGeometry(HeldModel,FTransform(PoseRotation(GripPose),PosePosition(GripPose),NativeHeldGeometry ? FVector(1) : FVector(BridgeCharacterMath::ThirdPersonBlockScale)),false);
         if(NativeSwing>0) AvatarParts[ArmIndex]->AddLocalRotation(FRotator(float(BridgeCharacterMath::AttackPitch(NativeSwing,GetControlRotation().Pitch)),0,0));
     } else if(FirstPerson) {
         HeldModel->AttachToComponent(BridgeCamera,FAttachmentTransformRules::KeepRelativeTransform);
-        PoseHandGeometry(HeldModel,FTransform(ItemRotation,ItemPosition,VisualBlock.IsEmpty() ? FVector(.025,.035,.20) : FVector(BridgeCharacterMath::FirstPersonBlockScale)),true);
+        PoseHandGeometry(HeldModel,FTransform(ItemRotation,ItemPosition,NativeHeldGeometry ? FVector(1) : FVector(BridgeCharacterMath::FirstPersonBlockScale)),true);
     }
 }

@@ -28,6 +28,13 @@ struct FBridgeMobAppearance {
     GENERATED_BODY()
     UPROPERTY(EditAnywhere,BlueprintReadOnly) FString Key;
     UPROPERTY(EditAnywhere,BlueprintReadOnly) FString Type;
+    UPROPERTY(EditAnywhere,BlueprintReadOnly) float Width=.6f;
+    UPROPERTY(EditAnywhere,BlueprintReadOnly) float Height=1.8f;
+    UPROPERTY(EditAnywhere,BlueprintReadOnly) float MaxHealth=20;
+    UPROPERTY(EditAnywhere,BlueprintReadOnly) float Speed=.25f;
+    UPROPERTY(EditAnywhere,BlueprintReadOnly) float Damage=0;
+    UPROPERTY(EditAnywhere,BlueprintReadOnly) bool Hostile=false;
+    UPROPERTY(EditAnywhere,BlueprintReadOnly) bool Baby=false;
     UPROPERTY(EditAnywhere,BlueprintReadOnly) TObjectPtr<class UMaterialInterface> Material;
     UPROPERTY(EditAnywhere,BlueprintReadOnly) FVector RenderScale=FVector::OneVector;
     UPROPERTY(EditAnywhere,BlueprintReadOnly) FVector RenderOffset=FVector::ZeroVector;
@@ -38,6 +45,7 @@ class UEBRIDGE_API UBridgeMobPalette : public UDataAsset {
     GENERATED_BODY()
 public:
     UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Bridge|Mobs") TArray<FBridgeMobAppearance> Appearances;
+    UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Bridge|Mobs") TMap<FString,FString> Templates;
     const FBridgeMobAppearance* Find(const FString& Key) const {
         for(const FBridgeMobAppearance& Appearance:Appearances) if(Appearance.Key==Key) return &Appearance;
         return nullptr;

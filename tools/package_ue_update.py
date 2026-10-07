@@ -20,7 +20,7 @@ with zipfile.ZipFile(output, "x", zipfile.ZIP_DEFLATED) as archive:
     archive.write(root / "tools/setup_world_bridge.py", "setup_world_bridge.py")
     if (root / "tools/import_minecraft_textures.py").is_file():
         archive.write(root / "tools/import_minecraft_textures.py", "import_minecraft_textures.py")
-    for helper in ("import_minecraft_player.py", "import_minecraft_mobs.py", "setup_vanilla_effects.py"):
+    for helper in ("import_minecraft_player.py", "import_minecraft_mobs.py", "import_minecraft_items.py", "setup_vanilla_effects.py", "setup_bridge_rendering.py"):
         if (root / "tools" / helper).is_file():
             archive.write(root / "tools" / helper, helper)
     archive.write(root / f"docs/UPGRADE_{version}.md", "UPDATE_INSTRUCTIONS.md")

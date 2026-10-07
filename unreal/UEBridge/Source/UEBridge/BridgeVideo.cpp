@@ -25,8 +25,8 @@
 // Render-thread-owned RHI readback. Shared captures keep it alive through queued commands.
 struct FBridgeGpuFrame {
     TUniquePtr<FRHIGPUTextureReadback> Readback;
-    TUniquePtr<FRHIGPUTextureReadback> MaskReadback;
     std::atomic<bool> Polling{false}, Done{false};
+    TArray<FFloat16Color> LinearPixels;
     TArray<FColor> Pixels;
     TArray<uint8> Opacity;
     FString Session;
@@ -59,6 +59,7 @@ void UBridgeVideo::SetRenderMode(bool Lighting,bool VanillaSky) {
     VanillaSky=VanillaSky && !Lighting;
     if(LightingEnabled==Lighting && VanillaSkyEnabled==VanillaSky) return;
     LightingEnabled=Lighting;VanillaSkyEnabled=VanillaSky;++ModeRevision;LastSkyScan=-1;
+    if(Capture) Capture->bCameraCutThisFrame=true;
     LastMaskPixels=LastMaskForeground=LastMaskTranslucent=0;
 }
 void UBridgeVideo::ConfigureCapture(USceneCaptureComponent2D* Component,bool Mask) {
@@ -69,12 +70,15 @@ void UBridgeVideo::ConfigureCapture(USceneCaptureComponent2D* Component,bool Mas
     Component->ShowFlags.SetLighting(LightingEnabled);
     Component->ShowFlags.SetDynamicShadows(LightingEnabled);
     Component->ShowFlags.SetPostProcessing(!Mask && LightingEnabled);
+    Component->ShowFlags.SetSpecular(LightingEnabled);
+    Component->ShowFlags.SetEyeAdaptation(LightingEnabled);
+    Component->ShowFlags.SetMotionBlur(false);
     const bool Sky=!VanillaSkyEnabled || !ClientV3;
     Component->ShowFlags.SetAtmosphere(Sky);Component->ShowFlags.SetFog(Sky);
     Component->ShowFlags.SetVolumetricFog(Sky);Component->ShowFlags.SetCloud(Sky);
     Component->ShowFlags.SetSkyLighting(LightingEnabled);
     // Independent temporal histories would give color/mask different edges. Sky mode uses matched non-temporal captures.
-    Component->ShowFlags.SetAntiAliasing(!(VanillaSkyEnabled && ClientV3));
+    Component->ShowFlags.SetAntiAliasing(false);
     // The HDR capture's alpha is inverse opacity, including opaque and translucent geometry.
     Component->bConsiderUnrenderedOpaquePixelAsFullyTranslucent=Mask;
 }
@@ -109,7 +113,7 @@ void UBridgeVideo::Start(int32 Port) {
         if (Listener) { Listener->Close(); S->DestroySocket(Listener); Listener=nullptr; } return;
     }
     FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-    UE_LOG(LogTemp,Display,TEXT("Bridge 0.6.0 video listening on 127.0.0.1:%d (TCP)"),Port);
+    UE_LOG(LogTemp,Display,TEXT("Bridge 0.10.0 video listening on 127.0.0.1:%d (TCP)"),Port);
 }
 void UBridgeVideo::DropClient() {
     if (Client) { Client->Close(); ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Client); Client=nullptr; }
@@ -174,16 +178,16 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,ui
     // Poll fences on the render thread; never wait for the GPU on the game thread.
     for(const auto& State:Readbacks) if(!State->Done.load() && !State->Polling.exchange(true)) {
         ENQUEUE_RENDER_COMMAND(BridgePollPixels)([State](FRHICommandListImmediate& RHICmdList) {
-            if(State->Readback && State->Readback->IsReady() && (!State->HasMask || (State->MaskReadback && State->MaskReadback->IsReady()))) {
+            if(State->Readback && State->Readback->IsReady()) {
                 int32 RowPitch=0,BufferHeight=0;
-                const auto* Data=static_cast<const FColor*>(State->Readback->Lock(RowPitch,&BufferHeight));
+                const auto* Data=static_cast<const FFloat16Color*>(State->Readback->Lock(RowPitch,&BufferHeight));
                 if(Data && RowPitch>=State->Width && BufferHeight>=State->Height) {
-                    State->Pixels.SetNumUninitialized(State->Width*State->Height);
-                    for(int32 Y=0;Y<State->Height;++Y) FMemory::Memcpy(State->Pixels.GetData()+Y*State->Width,Data+Y*RowPitch,State->Width*sizeof(FColor));
+                    State->LinearPixels.SetNumUninitialized(State->Width*State->Height);
+                    for(int32 Y=0;Y<State->Height;++Y) FMemory::Memcpy(State->LinearPixels.GetData()+Y*State->Width,Data+Y*RowPitch,State->Width*sizeof(FFloat16Color));
                 }
                 if(Data) State->Readback->Unlock();
                 if(State->HasMask) {
-                    const auto* Mask=static_cast<const FFloat16Color*>(State->MaskReadback->Lock(RowPitch,&BufferHeight));
+                    const auto* Mask=State->LinearPixels.GetData();RowPitch=State->Width;BufferHeight=State->Height;
                     if(Mask && RowPitch>=State->Width && BufferHeight>=State->Height) {
                         State->Opacity.SetNumUninitialized(State->Width*State->Height);
                         for(int32 Y=0;Y<State->Height;++Y) for(int32 X=0;X<State->Width;++X) {
@@ -194,7 +198,7 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,ui
                             if(Alpha>0) ++State->Foreground;if(Alpha>0 && Alpha<255) ++State->Translucent;
                         }
                     }
-                    if(Mask) State->MaskReadback->Unlock();
+
                 }
                 State->ReadbackMs=(FPlatformTime::Seconds()-State->CapturedAt)*1000;
                 State->Done.store(true);
@@ -206,8 +210,8 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,ui
         TSharedPtr<FBridgeGpuFrame,ESPMode::ThreadSafe> Ready;
         for(const auto& State:Readbacks) if(State->Done.load() && (!Ready || State->Sequence>Ready->Sequence)) Ready=State;
         Readbacks.RemoveAll([&](const auto& State){return State->Done.load() && (!Ready || State->Sequence<=Ready->Sequence);});
-        if(Ready && Streaming && Ready->Revision==ModeRevision && Ready->Session==ClientSession && Ready->Pixels.Num()==Ready->Width*Ready->Height
-            && (!Ready->HasMask || Ready->Opacity.Num()==Ready->Pixels.Num()) && Now-Ready->CapturedAt<.25) {
+        if(Ready && Streaming && Ready->Revision==ModeRevision && Ready->Session==ClientSession && Ready->LinearPixels.Num()==Ready->Width*Ready->Height
+            && (!Ready->HasMask || Ready->Opacity.Num()==Ready->LinearPixels.Num()) && Now-Ready->CapturedAt<.25) {
             EncodeSession=Ready->Session;
             EncodeRevision=Ready->Revision;
             LastMaskPixels=Ready->HasMask ? Ready->Opacity.Num() : 0;
@@ -215,12 +219,22 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,ui
             IImageWrapperModule* Images=&FModuleManager::GetModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
             Encoding=Async(EAsyncExecution::ThreadPool,[Ready,Images]() {
                 TArray<uint8> Frame;const double EncodeAt=FPlatformTime::Seconds();
+                // FinalToneCurveHDR is already tone mapped but still linear sRGB. Encode exactly once.
+                // Unlit SceneColorHDR carries inverse opacity in the SAME capture, avoiding mismatched edges/history.
+                Ready->Pixels.SetNumUninitialized(Ready->LinearPixels.Num());
+                for(int32 I=0;I<Ready->LinearPixels.Num();++I) {
+                    const auto& Pixel=Ready->LinearPixels[I];
+                    const float Alpha=Ready->HasMask ? Ready->Opacity[I]/255.f : 1.f;
+                    const float Weight=Alpha>0 ? 1.f/Alpha : 0.f;
+                    const FLinearColor Color(FMath::Max(0.f,Pixel.R.GetFloat()*Weight),FMath::Max(0.f,Pixel.G.GetFloat()*Weight),FMath::Max(0.f,Pixel.B.GetFloat()*Weight),1);
+                    Ready->Pixels[I]=Color.ToFColor(true);
+                }
                 auto Jpeg=Images->CreateImageWrapper(EImageFormat::JPEG);
                 if(!Jpeg || !Jpeg->SetRaw(Ready->Pixels.GetData(),int64(Ready->Pixels.Num())*sizeof(FColor),Ready->Width,Ready->Height,ERGBFormat::BGRA,8)) return Frame;
                 const auto& Bytes=Jpeg->GetCompressed(Ready->Quality);if(Bytes.Num()<4 || Bytes.Num()>2*1024*1024) return Frame;
                 TArray<uint8> Mask=Ready->HasMask ? MaskRuns(Ready->Opacity) : TArray<uint8>();
                 const double EncodeMs=(FPlatformTime::Seconds()-EncodeAt)*1000;
-                Word(Frame,0x55454256);Word(Frame,Ready->V3 ? 3 : 2);Word(Frame,Ready->Width);Word(Frame,Ready->Height);Word(Frame,Ready->Sequence);Word(Frame,uint32(Bytes.Num()));
+                Word(Frame,0x55454256);Word(Frame,Ready->V3 ? 4 : 2);Word(Frame,Ready->Width);Word(Frame,Ready->Height);Word(Frame,Ready->Sequence);Word(Frame,uint32(Bytes.Num()));
                 Word(Frame,uint32(Ready->Input>>32));Word(Frame,uint32(Ready->Input));
                 Word(Frame,uint32(FMath::Clamp(Ready->ReadbackMs*1000,0.0,10000000.0)));
                 Word(Frame,uint32(FMath::Clamp(EncodeMs*1000,0.0,10000000.0)));
@@ -240,37 +254,28 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,ui
         Capture=NewObject<USceneCaptureComponent2D>(GetOwner());
         Capture->bCaptureEveryFrame=false;Capture->bCaptureOnMovement=false;
         Capture->bAlwaysPersistRenderingState=true;
-        Capture->CaptureSource=ESceneCaptureSource::SCS_FinalColorLDR;Capture->RegisterComponent();
+        Capture->CaptureSource=ESceneCaptureSource::SCS_FinalToneCurveHDR;Capture->RegisterComponent();
     }
     if(!Target || Target->SizeX!=W || Target->SizeY!=H) {
-        Target=NewObject<UTextureRenderTarget2D>(this);Target->ClearColor=FLinearColor::Black;Target->TargetGamma=2.2f;
-        Target->InitCustomFormat(W,H,PF_B8G8R8A8,false);Capture->TextureTarget=Target;
+        Target=NewObject<UTextureRenderTarget2D>(this);Target->ClearColor=FLinearColor::Black;Target->TargetGamma=1.f;
+        Target->InitCustomFormat(W,H,PF_FloatRGBA,true);Capture->TextureTarget=Target;
     }
     const bool Mask=VanillaSkyEnabled && ClientV3;
-    if(Mask && !MaskCapture) {
-        MaskCapture=NewObject<USceneCaptureComponent2D>(GetOwner());
-        MaskCapture->bCaptureEveryFrame=false;MaskCapture->bCaptureOnMovement=false;MaskCapture->bAlwaysPersistRenderingState=true;
-        MaskCapture->CaptureSource=ESceneCaptureSource::SCS_SceneColorHDR;MaskCapture->RegisterComponent();LastSkyScan=-1;
-    }
-    if(Mask && (!MaskTarget || MaskTarget->SizeX!=W || MaskTarget->SizeY!=H)) {
-        MaskTarget=NewObject<UTextureRenderTarget2D>(this);MaskTarget->ClearColor=FLinearColor(0,0,0,1);
-        MaskTarget->InitCustomFormat(W,H,PF_FloatRGBA,true);MaskCapture->TextureTarget=MaskTarget;
-    }
-    ConfigureCapture(Capture,false);ConfigureCapture(MaskCapture,true);
+    ConfigureCapture(Capture,false);
+    Capture->CaptureSource=LightingEnabled ? ESceneCaptureSource::SCS_FinalToneCurveHDR : ESceneCaptureSource::SCS_SceneColorHDR;
+    Capture->bConsiderUnrenderedOpaquePixelAsFullyTranslucent=Mask;
     if(LastSkyScan<0 || Now-LastSkyScan>1) {RefreshHiddenSky();LastSkyScan=Now;}
     FMinimalViewInfo View;Camera->GetCameraView(0,View);
     Capture->SetWorldLocationAndRotation(View.Location,View.Rotation);Capture->FOVAngle=View.FOV;
     Capture->PostProcessSettings=View.PostProcessSettings;Capture->PostProcessBlendWeight=View.PostProcessBlendWeight;
+    Capture->PostProcessSettings.bOverride_MotionBlurAmount=true;Capture->PostProcessSettings.MotionBlurAmount=0;
+    Capture->PostProcessSettings.bOverride_MotionBlurMax=true;Capture->PostProcessSettings.MotionBlurMax=0;
     if(!FMath::IsNearlyZero(ExposureCompensation)) {
         Capture->PostProcessSettings.bOverride_AutoExposureBias=true;
         Capture->PostProcessSettings.AutoExposureBias=View.PostProcessSettings.AutoExposureBias+FMath::Clamp(ExposureCompensation,-6.f,6.f);
         Capture->PostProcessBlendWeight=1;
     }
-    if(Mask) {
-        MaskCapture->SetWorldLocationAndRotation(View.Location,View.Rotation);MaskCapture->FOVAngle=View.FOV;
-        MaskCapture->PostProcessSettings=View.PostProcessSettings;MaskCapture->PostProcessBlendWeight=0;
-    }
-    Capture->CaptureScene();if(Mask) MaskCapture->CaptureScene();LastCapture=Now;
+    Capture->CaptureScene();LastCapture=Now;
     auto State=MakeShared<FBridgeGpuFrame,ESPMode::ThreadSafe>();
     State->Width=W;State->Height=H;State->Quality=FMath::Clamp(Quality,30,95);State->Sequence=++Sequence;
     State->Session=Session;State->Input=InputSequence;State->CapturedAt=Now;Readbacks.Add(State);
@@ -281,14 +286,9 @@ void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,ui
     State->VerticalFov=FMath::RadiansToDegrees(2.f*FMath::Atan(FMath::Tan(FMath::DegreesToRadians(View.FOV)*.5f)*float(H)/float(W)));
     // Hold the RHI texture across a resolution change. CaptureScene and copy use render queue order.
     FTextureRHIRef Texture=Target->GameThread_GetRenderTargetResource()->GetRenderTargetTexture();
-    FTextureRHIRef MaskTexture=Mask ? MaskTarget->GameThread_GetRenderTargetResource()->GetRenderTargetTexture() : FTextureRHIRef();
-    ENQUEUE_RENDER_COMMAND(BridgeReadPixelsAsync)([State,Texture,MaskTexture](FRHICommandListImmediate& RHICmdList) {
-        if(!Texture.IsValid() || (State->HasMask && !MaskTexture.IsValid())) {State->Done.store(true);return;}
+    ENQUEUE_RENDER_COMMAND(BridgeReadPixelsAsync)([State,Texture](FRHICommandListImmediate& RHICmdList) {
+        if(!Texture.IsValid()) {State->Done.store(true);return;}
         State->Readback=MakeUnique<FRHIGPUTextureReadback>(TEXT("UEBridgeFrame"));
         State->Readback->EnqueueCopy(RHICmdList,Texture.GetReference());
-        if(State->HasMask) {
-            State->MaskReadback=MakeUnique<FRHIGPUTextureReadback>(TEXT("UEBridgeOpacity"));
-            State->MaskReadback->EnqueueCopy(RHICmdList,MaskTexture.GetReference());
-        }
     });
 }

@@ -21,7 +21,7 @@ public final class VideoProtocol {
     }
     public static Frame read(DataInputStream in) throws IOException {
         if(in.readInt()!=MAGIC) throw new IOException("Unsupported UE video protocol");
-        int version=in.readInt();if(version<1 || version>3) throw new IOException("Unsupported UE video protocol");
+        int version=in.readInt();if(version<1 || version>4) throw new IOException("Unsupported UE video protocol");
         int width = in.readInt(), height = in.readInt(); long sequence = Integer.toUnsignedLong(in.readInt());
         int length = in.readInt();
         if (width < 16 || height < 16 || width > 1920 || height > 1080 || length < 4 || length > MAX_BYTES)
@@ -32,7 +32,7 @@ public final class VideoProtocol {
             if(inputSequence<0 || inputSequence>9_007_199_254_740_991L || readbackMs>10000 || encodeMs>10000) throw new IOException("Invalid video timing metadata");
         }
         int maskLength=0;boolean skyMask=false;Camera camera=null;
-        if(version==3) {
+        if(version>=3) {
             int flags=in.readInt();maskLength=in.readInt();
             camera=new Camera(in.readDouble(),in.readDouble(),in.readDouble(),in.readFloat(),in.readFloat(),in.readFloat());
             skyMask=(flags&SKY_MASK)!=0;
@@ -53,7 +53,7 @@ public final class VideoProtocol {
                 if (reader.getWidth(0) != width || reader.getHeight(0) != height) throw new IOException("JPEG dimensions mismatch");
                 BufferedImage image = reader.read(0);
                 int[] argb=image.getRGB(0,0,width,height,null,0,width);
-                if(skyMask) applyMask(argb,mask);
+                if(skyMask) applyMask(argb,mask,version<4);
                 int[] abgr=toAbgr(argb);
                 long decodedAt=System.nanoTime();
                 return new Frame(width,height,sequence,argb,abgr,inputSequence,readbackMs,encodeMs,(decodedAt-decodeStart)/1_000_000.0,decodedAt,skyMask,camera);
@@ -65,7 +65,8 @@ public final class VideoProtocol {
             && Double.isFinite(c.z()) && Math.abs(c.z())<=30_000_000 && Float.isFinite(c.yaw()) && Math.abs(c.yaw())<=1e9
             && Float.isFinite(c.pitch()) && Math.abs(c.pitch())<=90 && Float.isFinite(c.verticalFov()) && c.verticalFov()>=10 && c.verticalFov()<=150;
     }
-    static void applyMask(int[] pixels,byte[] runs) throws IOException {
+    static void applyMask(int[] pixels,byte[] runs) throws IOException {applyMask(pixels,runs,true);}
+    static void applyMask(int[] pixels,byte[] runs,boolean legacyPremultiplied) throws IOException {
         int offset=0;
         for(int i=0;i<runs.length;i+=3) {
             int count=((runs[i]&255)<<8)|(runs[i+1]&255),alpha=runs[i+2]&255;
@@ -75,7 +76,7 @@ public final class VideoProtocol {
                 // UE's black-background capture contains opacity-weighted linear light, encoded with TargetGamma2.2.
                 // GUI_TEXTURED uses straight alpha: undo that weight before Minecraft multiplies it once.
                 if(alpha==0) color=0;
-                else if(alpha<255) color=(STRAIGHT_COLOR[alpha][(color>>>16)&255]<<16)
+                else if(alpha<255 && legacyPremultiplied) color=(STRAIGHT_COLOR[alpha][(color>>>16)&255]<<16)
                     |(STRAIGHT_COLOR[alpha][(color>>>8)&255]<<8)|STRAIGHT_COLOR[alpha][color&255];
                 pixels[offset]=(color&0xffffff)|(alpha<<24);
             }

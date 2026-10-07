@@ -59,7 +59,7 @@ void ABridgeReceiver::BeginPlay() {
     int32 ActualBuffer; Socket->SetReceiveBufferSize(256 * 1024, ActualBuffer);
     VanillaEffects=GetWorld()->SpawnActor<ABridgeVanillaEffects>();
     if(IsValid(VanillaEffects)) Video->AddTickPrerequisiteActor(VanillaEffects);
-    UE_LOG(LogTemp, Display, TEXT("Bridge 0.9.0 listening on 127.0.0.1:%d"), Port);
+    UE_LOG(LogTemp, Display, TEXT("Bridge 0.10.0 listening on 127.0.0.1:%d"), Port);
     Video->Start(VideoPort);
     if (!TargetCharacter) UE_LOG(LogTemp, Warning, TEXT("Bridge: waiting for player Character; will retry every tick"));
     if (!ExplosionSystem) UE_LOG(LogTemp, Warning, TEXT("Bridge: ExplosionSystem is unset; Niagara will not play"));
@@ -113,14 +113,16 @@ void ABridgeReceiver::Tick(float DeltaSeconds) {
         UEControl=Connected && Sealed && LatestInput.Controller;
         const bool Alive=!IsValid(MobWorld) || MobWorld->PlayerHealth>0;
         Bridge->SetAuthorityEnabled(UEControl && Alive);
-        Bridge->ConfigureVisuals(PreviewMaterial,TexturePalette,LatestInput.HeldItem,LatestInput.HeldBlock,LatestInput.HeldColor);
+        Bridge->ConfigureVisuals(PreviewMaterial,TexturePalette,LatestInput.HeldItem,LatestInput.HeldBlock,LatestInput.HeldColor,LatestInput.HeldModelKey);
         Bridge->ConfigureAppearance(PlayerAppearance);
+        Bridge->ConfigureOutline(OutlineMaterial);
         Bridge->SetMinecraftFov(float(LatestInput.CameraFov));
         Bridge->ApplyPlayerVisuals(LatestInput.Perspective,float(LatestInput.SwingProgress),float(LatestInput.EquipProgress),LatestInput.UsingItem,
             LatestInput.UseAction,float(LatestInput.UseProgress),LatestInput.LeftHanded,LatestInput.SkinLayers,LatestInput.SlimArms);
         Bridge->SetInteractionWorld(SyncedWorld);
         if(UEControl && Alive) {
             if(auto* C=Bridge->GetController()) C->SetControlRotation(BridgeProtocol::ToRotation(LatestInput.Yaw,LatestInput.Pitch));
+            Bridge->ApplyFlight(LatestInput.Creative,LatestInput.Flying);
             Bridge->ApplyUEInput(ForwardInput,RightInput,JumpHeld,SneakHeld,LatestInput.Sprint);
         }
         if(IsValid(VanillaEffects)) {
@@ -134,7 +136,8 @@ void ABridgeReceiver::Tick(float DeltaSeconds) {
             } else VanillaEffects->ResetMovement();
         }
     } else UEControl=false;
-    if(IsValid(MobWorld)) {MobWorld->Palette=MobPalette;MobWorld->SetAuthority(UEControl,TargetCharacter);}
+    if(IsValid(MobWorld)) {MobWorld->Palette=MobPalette;MobWorld->SetCreative(LatestInput.Creative);MobWorld->SetAuthority(UEControl,TargetCharacter);}
+    if(IsValid(SyncedWorld)) SyncedWorld->InteractionSound=[this](const FString& Type,const FString& Block,const FVector& Position){QueueFeedback(Type,Block,Position);};
     PumpFeedback(Now);
     if(Sealed && Peer.IsValid() && (LastPose<0 || Now-LastPose>=1.0/60)) { LastPose=Now; SendPose(); }
     Video->SetSource(TargetCharacter ? TargetCharacter->FindComponentByClass<UCameraComponent>() : nullptr, Connected ? Session : FString(),LastSequence);
@@ -266,8 +269,9 @@ void ABridgeReceiver::Process(const FBridgePacket& P, const TSharedRef<FInternet
     Ack->SetStringField(TEXT("session"), Session); Ack->SetStringField(TEXT("eventId"), P.EventId); SendJson(Ack, Sender);
 }
 void ABridgeReceiver::SendJson(const TSharedRef<FJsonObject>& Json, const TSharedRef<FInternetAddr>& Sender) {
-    FString Text; FJsonSerializer::Serialize(Json, TJsonWriterFactory<>::Create(&Text));
+    FString Text; FJsonSerializer::Serialize(Json, TJsonWriterFactory<TCHAR,TCondensedJsonPrintPolicy<TCHAR>>::Create(&Text));
     FTCHARToUTF8 Utf8(*Text); int32 Sent = 0;
+    if(Utf8.Length()>BridgeProtocol::MaxPacketBytes) {UE_LOG(LogTemp,Warning,TEXT("Bridge: outbound UDP packet exceeds budget (%d bytes)"),Utf8.Length());return;}
     Socket->SendTo(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length(), Sent, *Sender);
 }
 void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
@@ -283,10 +287,18 @@ void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
     Reply->SetBoolField(TEXT("cameraReady"), Camera && Camera->IsActive() && TargetCharacter->GetController());
     Reply->SetBoolField(TEXT("vfxReady"), IsValid(ExplosionSystem)); Reply->SetNumberField(TEXT("walls"), Walls);
     Reply->SetNumberField(TEXT("previewBlocks"), PreviewBlocks);
-    Reply->SetStringField(TEXT("build"),TEXT("0.9.0"));
+    Reply->SetStringField(TEXT("build"),TEXT("0.10.0"));
     Reply->SetBoolField(TEXT("blockModelsV2"),true); Reply->SetBoolField(TEXT("videoV3"),true);
     Reply->SetBoolField(TEXT("blockPaletteReady"),IsValid(TexturePalette) && !TexturePalette->BlockstateDefinitions.IsEmpty()
         && !TexturePalette->StateShapes.IsEmpty() && !TexturePalette->FaceMaterials.IsEmpty());
+    Reply->SetBoolField(TEXT("itemsV1"),true);Reply->SetBoolField(TEXT("creativeFlightV1"),true);
+    Reply->SetNumberField(TEXT("itemModelCount"),IsValid(TexturePalette) ? TexturePalette->ItemModels.Num() : 0);
+    if(const auto* Character=Cast<ABridgeCharacter>(TargetCharacter)) {
+        Reply->SetStringField(TEXT("heldModel"),Character->HeldModelStatus.Left(128));
+        Reply->SetBoolField(TEXT("flying"),Character->BridgeFlying);
+    }
+    Reply->SetStringField(TEXT("videoColor"),TEXT("linear sRGB HDR -> single sRGB encode; v4 straight alpha"));
+    Reply->SetNumberField(TEXT("mobTemplateCount"),IsValid(MobPalette) ? MobPalette->Templates.Num() : 0);
     Reply->SetBoolField(TEXT("skySupported"),true);
     Reply->SetBoolField(TEXT("lightingEnabled"),Video->IsLightingEnabled());
     Reply->SetBoolField(TEXT("vanillaSkyEnabled"),Video->IsVanillaSkyEnabled());
@@ -297,7 +309,7 @@ void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
     Reply->SetNumberField(TEXT("mobCount"),IsValid(MobWorld) ? MobWorld->AliveCount() : 0);
     Reply->SetNumberField(TEXT("mobMissing"),IsValid(MobWorld) ? MobWorld->MissingAppearance : 0);
     Reply->SetNumberField(TEXT("uePlayerHealth"),IsValid(MobWorld) ? MobWorld->PlayerHealth : 20);
-    Reply->SetStringField(TEXT("mobReason"),IsValid(MobWorld) ? MobWorld->LastReason : TEXT("not_imported"));
+    Reply->SetStringField(TEXT("mobReason"),IsValid(MobWorld) ? MobWorld->LastReason.Left(96) : TEXT("not_imported"));
     Reply->SetStringField(TEXT("receiverId"),InstanceId);
     Reply->SetBoolField(TEXT("worldV1"),true); Reply->SetBoolField(TEXT("videoV1"),true);
     Reply->SetBoolField(TEXT("blockTexturesV1"),true); Reply->SetBoolField(TEXT("videoControlsV1"),true);
@@ -318,12 +330,12 @@ void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
     ParticleStatus->SetNumberField(TEXT("peakInstances"),Dust.PeakInstances);
     ParticleStatus->SetNumberField(TEXT("groups"),Dust.Groups);
     ParticleStatus->SetStringField(TEXT("lastType"),Dust.LastType);
-    ParticleStatus->SetStringField(TEXT("lastBlock"),Dust.LastBlock);
+    ParticleStatus->SetStringField(TEXT("lastBlock"),Dust.LastBlock.Left(128));
     ParticleStatus->SetNumberField(TEXT("lastRequested"),Dust.LastRequested);
     ParticleStatus->SetNumberField(TEXT("lastSpawned"),Dust.LastSpawned);
     ParticleStatus->SetStringField(TEXT("lastReason"),Dust.LastReason);
     Reply->SetObjectField(TEXT("particles"),ParticleStatus);
-    Reply->SetStringField(TEXT("lastAction"),LastAction);
+    Reply->SetStringField(TEXT("lastAction"),LastAction.Left(96));
     Reply->SetBoolField(TEXT("authorityV1"),Cast<ABridgeCharacter>(TargetCharacter)!=nullptr);
     Reply->SetBoolField(TEXT("ueControl"),UEControl);
     Reply->SetBoolField(TEXT("worldSealed"),SyncedWorld && SyncedWorld->IsSealed());
@@ -399,6 +411,7 @@ void ABridgeReceiver::SendPose() {
     Reply->SetNumberField(TEXT("seq"),double(LastSequence)); Reply->SetNumberField(TEXT("poseSeq"),double(++PoseSequence));
     Reply->SetNumberField(TEXT("x"),-Relative.Y); Reply->SetNumberField(TEXT("y"),Relative.Z); Reply->SetNumberField(TEXT("z"),Relative.X);
     Reply->SetBoolField(TEXT("grounded"),TargetCharacter->GetCharacterMovement()->IsMovingOnGround());
+    if(auto* Bridge=Cast<ABridgeCharacter>(TargetCharacter)) Reply->SetBoolField(TEXT("flying"),Bridge->BridgeFlying);
     SendJson(Reply,Peer.ToSharedRef());
 }
 
@@ -435,7 +448,17 @@ void ABridgeReceiver::BlockAction(const FBridgePacket& P) {
         return;
     }
     if(!P.Sneak && SyncedWorld->UseBlock(Block)) {LastAction=TEXT("block used");return;}
-    if(P.HeldBlock.IsEmpty()) {LastAction=TEXT("select a supported block");return;}
+    if(!P.SpawnType.IsEmpty()) {
+        if(!IsValid(MobWorld)) {
+            MobWorld=GetWorld()->SpawnActor<ABridgeMobWorld>();
+            if(!MobWorld) {LastAction=TEXT("mob world unavailable");return;}
+            MobWorld->Sound=[this](const FString& Sound,const FVector& Position){QueueMobSound(Sound,Position);};
+        }
+        MobWorld->Palette=MobPalette;MobWorld->SetCreative(LatestInput.Creative);MobWorld->SetAuthority(UEControl,TargetCharacter);
+        const FVector Spawn=HitPoint+Normal*(FMath::Abs(Normal.Z)>.5 ? 2.f : 50.f);
+        LastAction=MobWorld->SpawnEgg(P.SpawnType,Spawn,Anchor,P.EventId);return;
+    }
+    if(P.HeldBlock.IsEmpty()) {LastAction=TEXT("select a supported block or spawn egg");return;}
     FString HitId,HitState;
     if(P.HeldBlock.EndsWith(TEXT("_slab")) && SyncedWorld->GetBlockState(Block,HitId,HitState) && HitId==P.HeldBlock
         && ((HitState.Contains(TEXT("type=bottom")) && Normal.Z>.5) || (HitState.Contains(TEXT("type=top")) && Normal.Z<-.5))) {

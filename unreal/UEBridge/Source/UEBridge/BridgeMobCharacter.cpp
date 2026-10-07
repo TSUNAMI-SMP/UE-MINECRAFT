@@ -73,7 +73,7 @@ void ABridgeMobCharacter::Tick(float DeltaSeconds) {
     }
     if(!Enabled) return;
     AttackCooldown=FMath::Max(0.f,AttackCooldown-Dt);Decision-=Dt;
-    ACharacter* Player=Target.Get();FVector Direction=FVector::ZeroVector;
+    ACharacter* Player=WorldOwner.IsValid() && WorldOwner->IsCreative() ? nullptr : Target.Get();FVector Direction=FVector::ZeroVector;
     if(Hostile && Player && (!WorldOwner.IsValid() || WorldOwner->PlayerHealth>0)) {
         FVector Offset=Player->GetActorLocation()-GetActorLocation();float Distance=Offset.Size2D();
         if(Distance<1600.f) {

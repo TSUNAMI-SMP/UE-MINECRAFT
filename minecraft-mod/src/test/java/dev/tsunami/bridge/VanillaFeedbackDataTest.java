@@ -75,4 +75,13 @@ public final class VanillaFeedbackDataTest {
         packet.addProperty("type","land"); effect=VanillaFeedbackData.parse(packet);
         assertEquals(.5,effect.volume(1),1e-6); assertEquals(.75,effect.pitch(1),1e-6);
     }
+    @Test public void authoritativeInteractionTypesAreAcceptedAndUnknownActionsRejected() {
+        var packet=packet();
+        for(String type:new String[]{"open","close","activate","deactivate"}) {
+            packet.addProperty("type",type);var result=VanillaFeedbackData.parse(packet);assertNotNull(result);
+            assertEquals(type.toUpperCase(Locale.ROOT),result.type().name());assertEquals(1f,result.volume(2f),0);
+        }
+        packet.addProperty("type","use");assertNull(VanillaFeedbackData.parse(packet));
+    }
+
 }

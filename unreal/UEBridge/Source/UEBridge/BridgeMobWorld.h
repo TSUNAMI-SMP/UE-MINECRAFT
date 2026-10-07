@@ -18,6 +18,9 @@ public:
     UPROPERTY(VisibleAnywhere,BlueprintReadOnly,Category="Bridge|Mobs") float PlayerHealth=20;
     /** Fired on the game thread. Root receiver turns the native sound ID into reliable MC feedback. */
     TFunction<void(const FString& Sound,const FVector& Location)> Sound;
+    FString SpawnEgg(const FString& Type,const FVector& Feet,const FVector& Anchor,const FString& Id);
+    bool IsCreative() const {return Creative;}
+    void SetCreative(bool Value) {Creative=Value;if(Creative) PlayerHealth=20;}
     bool Import(const FBridgeMobSnapshot& Snapshot,const FVector& Anchor);
     void SetAuthority(bool Active,class ACharacter* Player);
     void Clear();
@@ -33,7 +36,7 @@ protected:
 private:
     UPROPERTY() TArray<TObjectPtr<class ABridgeMobCharacter>> Mobs;
     TSet<FString> SeenIds;
-    bool Authority=false;
+    bool Authority=false,Creative=false;
     TWeakObjectPtr<ACharacter> Player;
     double LastPlayerDamage=-1;
 };

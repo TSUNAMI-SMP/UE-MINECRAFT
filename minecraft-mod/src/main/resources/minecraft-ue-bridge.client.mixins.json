@@ -17,7 +17,14 @@
     "AgeableMobModelAccessor",
     "MobAuthorityMixin",
     "HeldItemRendererAccessor",
-    "LivingEntityVisualAccessor"
+    "LivingEntityVisualAccessor",
+    "TrapdoorSoundAccessor",
+    "ButtonSoundAccessor",
+    "GateSoundAccessor",
+    "ItemLayerTexturesAccessor",
+    "RenderTexturesAccessor",
+    "SpriteImageAccessor",
+    "ItemTextureSpecAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -7,4 +7,5 @@ struct FBridgeModelFace {
     FVector2D UV[4];
     FString TextureId;
     bool bTint=false;
+    FColor Color=FColor::White;
 };

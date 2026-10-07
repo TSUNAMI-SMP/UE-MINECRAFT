@@ -138,6 +138,24 @@ def load_mob_manifest(filename):
         if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", entity) or key not in appearances:
             raise ValueError("Invalid captured entity/appearance reference")
     manifest["manifestHash"] = hashlib.sha256(raw).hexdigest()
+    templates = manifest.get("templates", {})
+    if not isinstance(templates, dict) or len(templates) > 128:
+        raise ValueError("Invalid mob templates")
+    for species, key in templates.items():
+        if not isinstance(species, str) or not re.fullmatch(r"minecraft:[a-z0-9_]+", species) or not isinstance(key, str) or key not in appearances or appearances[key]["type"] != species or "stats" not in appearances[key]:
+            raise ValueError("Invalid mob template appearance")
+    for appearance in appearances.values():
+        stats = appearance.get("stats")
+        if stats is None:
+            continue  # Earlier exports support imported individuals, but not new spawn eggs.
+        if not isinstance(stats, dict):
+            raise ValueError("Invalid mob template stats")
+        for key, low, high in (("width", .1, 20), ("height", .1, 20), ("maxHealth", .1, 1000), ("speed", 0, 2), ("damage", 0, 100)):
+            value = _number(stats.get(key))
+            if not low <= value <= high:
+                raise ValueError("Invalid mob template stat: " + key)
+        if type(stats.get("hostile")) is not bool or type(stats.get("baby")) is not bool:
+            raise ValueError("Invalid mob template flags")
     return manifest
 
 
@@ -244,6 +262,10 @@ def import_minecraft_mobs(filename):
             entry.set_editor_property("texcoords", [unreal.Vector2D(v[3], v[4]) for v in vertices])
             parts.append(entry)
         appearance = unreal.BridgeMobAppearance()
+        if "stats" in source:
+            for field in ("width", "height", "speed", "damage", "hostile", "baby"):
+                appearance.set_editor_property(field, source["stats"][field])
+            appearance.set_editor_property("max_health", source["stats"]["maxHealth"])
         appearance.set_editor_property("key", key)
         appearance.set_editor_property("type", source["type"])
         appearance.set_editor_property("material", material)
@@ -261,6 +283,7 @@ def import_minecraft_mobs(filename):
         raise RuntimeError("Cannot create mob palette")
     with unreal.ScopedEditorTransaction("Assign Minecraft mob palette"):
         palette.set_editor_property("appearances", appearances)
+        palette.set_editor_property("templates", manifest.get("templates", {}))
         if not assets.save_loaded_asset(palette, False):
             raise RuntimeError("Cannot save mob palette")
         receivers[0].set_editor_property("mob_palette", palette)

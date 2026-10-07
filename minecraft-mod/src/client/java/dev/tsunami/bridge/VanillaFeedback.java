@@ -9,6 +9,9 @@ import net.minecraft.registry.Registries;
 import net.minecraft.sound.BlockSoundGroup;
 import net.minecraft.sound.SoundCategory;
 import net.minecraft.sound.SoundEvent;
+import net.minecraft.sound.SoundEvents;
+import net.minecraft.block.*;
+import dev.tsunami.bridge.mixin.*;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.math.random.Random;
@@ -36,15 +39,30 @@ public final class VanillaFeedback {
         SoundEvent sound=switch(effect.type()) {
             case BREAK -> group.getBreakSound(); case PLACE -> group.getPlaceSound();
             case STEP -> group.getStepSound(); case LAND -> group.getFallSound();
+            case OPEN, CLOSE, ACTIVATE, DEACTIVATE -> interactionSound(state.getBlock(),effect.type());
         };
-        SoundCategory category=effect.type()==VanillaFeedbackData.Type.BREAK || effect.type()==VanillaFeedbackData.Type.PLACE
-            ? SoundCategory.BLOCKS : SoundCategory.PLAYERS;
+        if(sound==null) return false;
+        boolean interaction=switch(effect.type()) {case OPEN,CLOSE,ACTIVATE,DEACTIVATE -> true;default -> false;};
+        SoundCategory category=effect.type()==VanillaFeedbackData.Type.STEP || effect.type()==VanillaFeedbackData.Type.LAND
+            ? SoundCategory.PLAYERS : SoundCategory.BLOCKS;
+        boolean on=effect.type()==VanillaFeedbackData.Type.ACTIVATE;
+        float volume=interaction ? (state.getBlock() instanceof ButtonBlock || state.getBlock() instanceof LeverBlock ? .3f : 1f) : effect.volume(group.getVolume());
+        float pitch=interaction ? (state.getBlock() instanceof ButtonBlock || state.getBlock() instanceof LeverBlock ? (on ? .6f : .5f) : .9f+random.nextFloat()*.1f) : effect.pitch(group.getPitch());
         Vec3d soundPosition=rebase(effect,client.getSoundManager().getListenerTransform());
-        client.getSoundManager().play(new PositionedSoundInstance(sound,category,effect.volume(group.getVolume()),
-            effect.pitch(group.getPitch()),random,soundPosition.x,soundPosition.y,soundPosition.z));
+        client.getSoundManager().play(new PositionedSoundInstance(sound,category,volume,
+            pitch,random,soundPosition.x,soundPosition.y,soundPosition.z));
         return true;
     }
 
+    private static SoundEvent interactionSound(Block block,VanillaFeedbackData.Type type) {
+        boolean open=type==VanillaFeedbackData.Type.OPEN;
+        if(block instanceof DoorBlock door) return open ? door.getBlockSetType().doorOpen() : door.getBlockSetType().doorClose();
+        if(block instanceof TrapdoorBlock) {var set=((TrapdoorSoundAccessor)block).bridgeSoundType();return open ? set.trapdoorOpen() : set.trapdoorClose();}
+        if(block instanceof FenceGateBlock) {var wood=((GateSoundAccessor)block).bridgeSoundType();return open ? wood.fenceGateOpen() : wood.fenceGateClose();}
+        if(block instanceof ButtonBlock) {var set=((ButtonSoundAccessor)block).bridgeSoundType();return type==VanillaFeedbackData.Type.ACTIVATE ? set.buttonClickOn() : set.buttonClickOff();}
+        if(block instanceof LeverBlock) return SoundEvents.BLOCK_LEVER_CLICK;
+        return null;
+    }
     private static Vec3d rebase(VanillaFeedbackData effect,SoundListenerTransform minecraftListener) {
         // Minecraft's body remains fixed in UE-control mode. Mapping camera-relative offsets onto the
         // actual audio listener preserves attenuation/stereo position in first person and both third-person views.

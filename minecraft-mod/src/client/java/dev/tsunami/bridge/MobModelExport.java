@@ -45,6 +45,35 @@ public final class MobModelExport {
             if (!(entity instanceof MobEntity mob) || !mob.isAlive() || mob.squaredDistanceTo(client.player) > 64 * 64) continue;
             if (++count > MAX_MOBS) { skipped.add("nearby_mob_limit_128"); break; }
             try {
+                String key=exportAppearance(client,mob,directory,appearances);
+                entities.addProperty(mob.getUuidAsString(),key);next.put(mob.getUuid(),key);
+            } catch (IOException | RuntimeException error) {
+                skipped.add(Registries.ENTITY_TYPE.getId(mob.getType()) + " / " + mob.getUuidAsString() + " / " + error.getMessage());
+            }
+        }
+        JsonObject templates=new JsonObject();
+        for(var egg:net.minecraft.item.SpawnEggItem.getAll()) {
+            var type=egg.getEntityType(egg.getDefaultStack());String id=Registries.ENTITY_TYPE.getId(type).toString();
+            if(MobBridge.unsupportedMovement(id)) {skipped.add(id+" / flight or water gameplay excluded");continue;}
+            if(templates.has(id)) continue;
+            try {
+                // A detached client-side instance is used only to inspect resources. Never add it to a world.
+                var entity=type.create(client.world,net.minecraft.entity.SpawnReason.SPAWN_ITEM_USE);
+                if(!(entity instanceof MobEntity mob)) throw new IOException("No native ground mob template");
+                mob.setPosition(client.player.getX(),client.player.getY(),client.player.getZ());
+                String key=exportAppearance(client,mob,directory,appearances);templates.addProperty(id,key);
+            } catch(IOException | RuntimeException error) {skipped.add(id+" / template: "+error.getMessage());}
+        }
+        manifest.add("templates",templates);
+        if(appearances.isEmpty()) throw new IOException("No exportable ground-mob templates or nearby mobs. See exclusions for unsupported models.");
+        manifest.add("appearances",appearances); manifest.add("entities",entities); manifest.add("skipped",skipped);
+        manifest.addProperty("renderFeatures", "body-model only; armor, saddles, wool/eyes and other feature layers are not captured");
+        Path path=directory.resolve("manifest.json");
+        byte[] json=new GsonBuilder().setPrettyPrinting().create().toJson(manifest).getBytes(StandardCharsets.UTF_8);
+        if(json.length>32*1024*1024) throw new IOException("Mob geometry exceeds export budget");
+        Files.write(path,json,StandardOpenOption.CREATE_NEW); APPEARANCES.clear();APPEARANCES.putAll(next); return path;
+    }
+    private static String exportAppearance(MinecraftClient client,MobEntity mob,Path directory,JsonObject appearances) throws IOException {
                 JsonObject model = capture(client,mob);
                 String textureId = model.remove("textureId").getAsString();
                 var resource = client.getResourceManager().getResource(net.minecraft.util.Identifier.of(textureId))
@@ -61,22 +90,12 @@ public final class MobModelExport {
                 String filename = "textures/" + textureHash + ".png";
                 model.addProperty("texture",filename);
                 if(!appearances.has(key)) {
+                    if(appearances.size()>=128) throw new IOException("Appearance limit 128");
                     Files.createDirectories(directory.resolve("textures"));
                     if(!Files.exists(directory.resolve(filename))) Files.write(directory.resolve(filename),png,StandardOpenOption.CREATE_NEW);
                     appearances.add(key,model);
                 }
-                entities.addProperty(mob.getUuidAsString(),key); next.put(mob.getUuid(),key);
-            } catch (IOException | RuntimeException error) {
-                skipped.add(Registries.ENTITY_TYPE.getId(mob.getType()) + " / " + mob.getUuidAsString() + " / " + error.getMessage());
-            }
-        }
-        if(appearances.isEmpty()) throw new IOException("No exportable nearby mobs. Spawn animals/enemies within 64 blocks and retry.");
-        manifest.add("appearances",appearances); manifest.add("entities",entities); manifest.add("skipped",skipped);
-        manifest.addProperty("renderFeatures", "body-model only; armor, saddles, wool/eyes and other feature layers are not captured");
-        Path path=directory.resolve("manifest.json");
-        byte[] json=new GsonBuilder().setPrettyPrinting().create().toJson(manifest).getBytes(StandardCharsets.UTF_8);
-        if(json.length>32*1024*1024) throw new IOException("Mob geometry exceeds export budget");
-        Files.write(path,json,StandardOpenOption.CREATE_NEW); APPEARANCES.clear();APPEARANCES.putAll(next); return path;
+                return key;
     }
     static String sha256(byte[] bytes) {
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); }
@@ -113,7 +132,11 @@ public final class MobModelExport {
         Vector3f offset=rendererScale.peek().getPositionMatrix().getTranslation(new Vector3f());
         JsonArray scales=new JsonArray();scales.add(scale.x);scales.add(scale.y);scales.add(scale.z);result.add("rendererScale",scales);
         JsonArray offsets=new JsonArray();offsets.add(offset.x);offsets.add(offset.y);offsets.add(offset.z);result.add("rendererOffset",offsets);
-        result.add("parts",parts);result.add("walkFrames",frames);return result;
+        JsonObject stats=new JsonObject();stats.addProperty("width",mob.getWidth());stats.addProperty("height",mob.getHeight());stats.addProperty("maxHealth",mob.getMaxHealth());
+        stats.addProperty("hostile",mob instanceof net.minecraft.entity.mob.HostileEntity);stats.addProperty("baby",mob.isBaby());
+        stats.addProperty("speed",mob.getAttributes().hasAttribute(net.minecraft.entity.attribute.EntityAttributes.MOVEMENT_SPEED) ? mob.getAttributeValue(net.minecraft.entity.attribute.EntityAttributes.MOVEMENT_SPEED) : .25);
+        stats.addProperty("damage",mob.getAttributes().hasAttribute(net.minecraft.entity.attribute.EntityAttributes.ATTACK_DAMAGE) ? mob.getAttributeValue(net.minecraft.entity.attribute.EntityAttributes.ATTACK_DAMAGE) : 0);
+        result.add("stats",stats);result.add("parts",parts);result.add("walkFrames",frames);return result;
     }
     private static void capturePart(ModelPart node,String name,int parent,JsonArray parts,List<ModelPart> nodes,boolean ancestorsVisible) throws IOException {
         if(nodes.size()>=MAX_PARTS) throw new IOException("Model part limit exceeded");

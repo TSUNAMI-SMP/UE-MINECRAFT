@@ -185,14 +185,15 @@ def _latest_export(game_dir, prefix, command):
 
 
 def setup_minecraft_visuals(game_dir):
-    """Import newest local blocks/skin plus an optional mob export; preserve saved content."""
+    """Import newest local blocks, skin, items and optional mobs; preserve saved content."""
     import runpy
     import unreal
     project = pathlib.Path(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()))
     textures_script = project / "import_minecraft_textures.py"
     effects_script = project / "setup_vanilla_effects.py"
-    if not textures_script.is_file() or not effects_script.is_file():
-        raise RuntimeError("Copy import_minecraft_textures.py and setup_vanilla_effects.py next to UEBridge.uproject first")
+    rendering_script = project / "setup_bridge_rendering.py"
+    if not textures_script.is_file() or not effects_script.is_file() or not rendering_script.is_file():
+        raise RuntimeError("Copy all Python helpers from UEBridge-update-0.10.0.zip next to UEBridge.uproject first")
     textures_manifest = _latest_export(game_dir, "textures", "/uebridge textures export")
     player_manifest = _latest_export(game_dir, "player", "/uebridge player export")
     textures_functions = runpy.run_path(str(textures_script))
@@ -211,10 +212,18 @@ def setup_minecraft_visuals(game_dir):
     load_player_manifest(str(player_manifest))
     unreal.log("Minecraft texture export: " + str(textures_manifest))
     unreal.log("Minecraft player export: " + str(player_manifest))
+    items_manifest = _latest_export(game_dir, "items", "/uebridge items export")
+    items_script = project / "import_minecraft_items.py"
+    if not items_script.is_file():
+        raise RuntimeError("Copy import_minecraft_items.py next to UEBridge.uproject first")
+    items_functions = runpy.run_path(str(items_script))
+    items_functions["load_item_manifest"](str(items_manifest))
     textures_functions["import_minecraft_textures"](str(textures_manifest))
     import_minecraft_player(str(player_manifest))
+    items_functions["import_minecraft_items"](str(items_manifest))
     if mobs_functions is not None:
         mobs_functions["import_minecraft_mobs"](str(mobs_manifest))
     else:
-        unreal.log("No local mob export. Spawn nearby mobs and run /uebridge mobs export, then import their latest assets before starting UE control.")
+        unreal.log("No local mob export. Run /uebridge mobs export, then import its spawn-egg templates before starting UE control.")
+    runpy.run_path(str(rendering_script))["setup_bridge_rendering"]()
     unreal.log("Minecraft visuals ready. Block textures, your skin, and vanilla particles are assigned to the saved current level.")

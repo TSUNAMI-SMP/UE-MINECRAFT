@@ -12,7 +12,7 @@ public:
     virtual void Tick(float DeltaSeconds) override;
     void SetAuthorityEnabled(bool Enabled);
     void ApplyUEInput(float Forward,float Right,bool JumpHeld,bool Sneak,bool Sprint=false);
-    void ConfigureVisuals(class UMaterialInterface* Material,class UBridgeBlockPalette* Palette,const FString& Item,const FString& Block,int32 Color);
+    void ConfigureVisuals(class UMaterialInterface* Material,class UBridgeBlockPalette* Palette,const FString& Item,const FString& Block,int32 Color,const FString& ModelKey=FString());
     void ConfigureAppearance(class UBridgePlayerAppearance* Appearance);
     void ApplyPlayerVisuals(int32 Perspective,float SwingProgress,float EquipProgress,bool UsingItem,const FString& UseAction,float UseProgress,bool LeftHanded,int32 SkinLayers,bool SlimArms);
     /** Gameplay always aims from the eyes, also when the display camera is in third person. */
@@ -22,7 +22,11 @@ public:
     bool IsAuthoritySprinting() const;
     void SetMinecraftFov(float VerticalFov);
     void SetInteractionWorld(class ABridgeWorld* Imported);
-    void SwingHand() { SwingRemaining=.30f; }
+    void SwingHand() { if(SwingRemaining<=.15f) SwingRemaining=.30f; }
+    void ApplyFlight(bool Creative,bool Flying);
+    void ConfigureOutline(class UMaterialInterface* Material);
+    UPROPERTY(BlueprintReadOnly,Category="Bridge|Diagnostics") bool BridgeFlying=false;
+    UPROPERTY(BlueprintReadOnly,Category="Bridge|Diagnostics") FString HeldModelStatus=TEXT("empty");
     UPROPERTY(BlueprintReadOnly,Category="Bridge") bool UEAuthority=false;
     bool PreviousJump=false;
     void ApplyMinecraftPose(double BodyHeight, double EyeHeight, bool Sneak);
@@ -37,11 +41,12 @@ public:
 protected:
     virtual bool CanJumpInternal_Implementation() const override;
 private:
+    bool FlightWasAirborne=false,FlightLandingLatch=false;
     UPROPERTY() TObjectPtr<class UStaticMeshComponent> Sleeve;
     UPROPERTY() TObjectPtr<class UStaticMeshComponent> Hand;
     UPROPERTY() TObjectPtr<class UStaticMeshComponent> HeldMesh;
     UPROPERTY() TObjectPtr<class USceneComponent> AimRoot;
-    UPROPERTY() TArray<TObjectPtr<class UStaticMeshComponent>> AimEdges;
+    UPROPERTY() TObjectPtr<class UProceduralMeshComponent> AimOutline;
     UPROPERTY() TObjectPtr<class UMaterialInterface> VisualMaterial;
     UPROPERTY() TObjectPtr<class UBridgeBlockPalette> VisualPalette;
     UPROPERTY() TObjectPtr<class ABridgeWorld> InteractionWorld;
@@ -63,11 +68,12 @@ private:
         TArray<FProcMeshTangent> Tangents;
     };
     TMap<UProceduralMeshComponent*,TArray<FHandSection>> HandSources;
-    bool HeldGeometryReady=false;
-    FString VisualItem, VisualBlock;
+    FIntVector AimVoxel=FIntVector::ZeroValue;FString AimState;bool AimShapeReady=false;
+    bool HeldGeometryReady=false,NativeHeldGeometry=false;
+    FString VisualItem, VisualBlock, VisualModelKey;
     int32 VisualColor=-1;
     bool VisualsConfigured=false;
-    float BobPhase=0, SwingRemaining=0, LimbAmplitude=0;
+    float BobPhase=0, SwingRemaining=0, LimbAmplitude=0, HandBob=0;
     float MinecraftBaseFov=80, FovSprintMultiplier=1;
     bool SprintRequested=false,BodyYawInitialized=false;
     int32 CameraPerspective=0,PlayerSkinLayers=127;

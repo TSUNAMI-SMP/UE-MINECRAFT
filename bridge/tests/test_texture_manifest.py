@@ -202,7 +202,7 @@ class MaterialGraphTest(unittest.TestCase):
         self.unreal = types.SimpleNamespace(Material=Material, MaterialFactoryNew=lambda: None, LinearColor=lambda *args: args,
             BlendMode=types.SimpleNamespace(BLEND_MASKED="masked", BLEND_TRANSLUCENT="translucent"),
             TranslucencyLightingMode=types.SimpleNamespace(TLM_SURFACE="surface"),
-            MaterialProperty=types.SimpleNamespace(MP_BASE_COLOR="base", MP_EMISSIVE_COLOR="emissive", MP_OPACITY_MASK="mask", MP_OPACITY="opacity", MP_ROUGHNESS="roughness"),
+            MaterialProperty=types.SimpleNamespace(MP_BASE_COLOR="base", MP_EMISSIVE_COLOR="emissive", MP_OPACITY_MASK="mask", MP_OPACITY="opacity", MP_ROUGHNESS="roughness", MP_SPECULAR="specular"),
             load_asset=lambda path: self.assets_by_path.get(path))
         for name in ("TextureSampleParameter2D", "VectorParameter", "ScalarParameter", "Constant3Vector", "LinearInterpolate", "Multiply", "Constant"):
             setattr(self.unreal, "MaterialExpression" + name, name)
@@ -250,7 +250,16 @@ class MaterialGraphTest(unittest.TestCase):
         self.assertEqual(0.0, base.inputs["B"][0].properties["r"])
         self.assertEqual(0.0, emissive.inputs["A"][0].properties["r"])
         self.assertIs(material, self.build("cutout"))  # Opaque and cutout reuse masked master.
-        self.assertEqual(1, len(self.saved))
+        self.assertEqual(2, len(self.saved))
+
+    def test_diffuse_master_has_no_white_specular_addition(self):
+        material = self.build("opaque")
+        specular = material.outputs["specular"][0]
+        self.assertEqual("BridgeSpecular", specular.properties["parameter_name"])
+        self.assertEqual(0.0, specular.properties["default_value"])
+        count = len(material.nodes)
+        self.build("opaque")
+        self.assertEqual(count, len(material.nodes))
 
     def test_incomplete_existing_graph_is_rejected(self):
         material = self.build("translucent")

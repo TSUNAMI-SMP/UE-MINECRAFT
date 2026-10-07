@@ -15,7 +15,7 @@ bool ABridgeWorld::Inside(const FIntVector& C) const {
     return Scoped && FMath::Abs(C.X-Center.X)<=Radius && FMath::Abs(C.Y-Center.Y)<=HalfHeight && FMath::Abs(C.Z-Center.Z)<=Radius;
 }
 void ABridgeWorld::Clear(uint64 Barrier) {
-    for (auto& Pair:Cells) if (IsValid(Pair.Value)) Pair.Value->Destroy();
+    for (auto& Pair:Cells) if (IsValid(Pair.Value)) { Pair.Value->Clear(); Pair.Value->Destroy(); }
     for(auto& Box:Boundary) if(Box) Box->DestroyComponent(); Boundary.Empty();
     Sealed=false;ImportId.Empty();Stored.Empty();ButtonRelease.Empty();LastModelError.Empty();SurfaceReason=TEXT("not_sampled");
     Cells.Empty(); Counts.Empty(); Revisions.Empty(); Stages.Empty(); Shapes=0; Scoped=false; ScopeSequence=0; ClearBarrier=Barrier;
@@ -70,7 +70,7 @@ bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterial
         if (P.Sequence<=FMath::Max(ScopeSequence,ClearBarrier)) return true;
         Center=P.Cell; Radius=P.Radius; HalfHeight=P.HalfHeight; ScopeSequence=P.Sequence; Scoped=true;
         for (auto It=Cells.CreateIterator();It;++It) if (!Inside(It.Key())) {
-            if (IsValid(It.Value())) It.Value()->Destroy(); Shapes-=Counts.FindRef(It.Key()); Counts.Remove(It.Key()); It.RemoveCurrent();
+            if (IsValid(It.Value())) { It.Value()->Clear(); It.Value()->Destroy(); } Shapes-=Counts.FindRef(It.Key()); Counts.Remove(It.Key()); It.RemoveCurrent();
         }
         for (auto It=Revisions.CreateIterator();It;++It) if (!Inside(It.Key())) It.RemoveCurrent();
         for(auto It=Stored.CreateIterator();It;++It) if(!Inside(It.Key())) {
@@ -128,7 +128,7 @@ bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterial
     const int32 NewCount=Shapes-Counts.FindRef(P.Cell)+Blocks.Num();
     if (Blocks.Num()>8192 || Colors.Num()>512 || Groups.Num()>2048 || NewCount>4194304) return false;
     if (Blocks.IsEmpty()) {
-        if (auto* Existing=Cells.Find(P.Cell)) { if (IsValid(*Existing)) (*Existing)->Destroy(); Cells.Remove(P.Cell); }
+        if (auto* Existing=Cells.Find(P.Cell)) { if (IsValid(*Existing)) { (*Existing)->Clear(); (*Existing)->Destroy(); } Cells.Remove(P.Cell); }
         Counts.Remove(P.Cell);
     } else Counts.Add(P.Cell,Blocks.Num());
     // Logical data is stored even when every rendered face is currently occluded.
@@ -333,7 +333,7 @@ void ABridgeWorld::RebuildCell(const FIntVector& CellKey) {
     if(!IsValid(Actor)) Actor=GetWorld()->SpawnActor<ABridgeBlockPreview>();
     if(Actor) {
         Actor->Replace(Stored.FindChecked(CellKey),ImportAnchor,SavedMaterial,SavedPalette,NearCollision(CellKey),[this](const FIntVector& P){return IsOpaqueVoxel(P);},Lighting.Get());
-        if(!Actor->HasContent()) {Actor->Destroy();Cells.Remove(CellKey);}
+        if(!Actor->HasContent()) {Actor->Clear();Actor->Destroy();Cells.Remove(CellKey);}
     }
     Counts.Add(CellKey,Stored.FindChecked(CellKey).Num());
 }

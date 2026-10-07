@@ -15,14 +15,27 @@ ABridgeBlockPreview::ABridgeBlockPreview() {
     if (Mesh.Succeeded()) Cube = Mesh.Object;
 }
 void ABridgeBlockPreview::Clear() {
-    for (auto& Group : Groups) if (Group) Group->DestroyComponent();
-    for (auto& Group : ModelGroups) if (Group) Group->DestroyComponent();
+    for (auto& Group : Groups) if (Group) { Group->ClearInstances(); Group->UnregisterComponent(); Group->DestroyComponent(); }
+    for (auto& Group : ModelGroups) if (Group) { Group->ClearAllMeshSections(); Group->UnregisterComponent(); Group->DestroyComponent(); }
     Groups.Empty();ModelGroups.Empty();InstanceBlocks.Empty();LightVertices.Empty();RenderedFaces=DrawSections=NativeProxies=0;
 }
 void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVector& Anchor, UMaterialInterface* Material,UBridgeBlockPalette* Palette,bool Physics,
     const TFunction<bool(const FIntVector&)>& OpaqueAt,FBridgeLightingService* Lighting,bool RebuildVisual) {
-    for(auto& Group:Groups) if(Group) Group->DestroyComponent();Groups.Empty();InstanceBlocks.Empty();NativeProxies=0;
-    if(RebuildVisual) {for(auto& Group:ModelGroups) if(Group) Group->DestroyComponent();ModelGroups.Empty();LightVertices.Empty();RenderedFaces=DrawSections=0;}
+    for(auto& Group:Groups) if(Group) { Group->ClearInstances(); Group->UnregisterComponent(); Group->DestroyComponent(); }
+    Groups.Empty();InstanceBlocks.Empty();NativeProxies=0;
+    UProceduralMeshComponent* ReusableMesh=nullptr;
+    if(RebuildVisual) {
+        // Reuse the component so repeated cell refreshes do not leave old RHI
+        // resources pending while the UE render thread catches up. This is the
+        // allocation that previously exhausted the Windows page file.
+        if(!ModelGroups.IsEmpty()) ReusableMesh=ModelGroups[0].Get();
+        if(ReusableMesh) ReusableMesh->ClearAllMeshSections();
+        for(int32 I=1;I<ModelGroups.Num();++I) if(ModelGroups[I]) {
+            ModelGroups[I]->ClearAllMeshSections(); ModelGroups[I]->UnregisterComponent(); ModelGroups[I]->DestroyComponent();
+        }
+        ModelGroups.Empty();if(ReusableMesh) ModelGroups.Add(ReusableMesh);
+        LightVertices.Empty();RenderedFaces=DrawSections=0;
+    }
     if(!Cube) return;
     // Compact cells retain one logical model per block. Exact native hulls are instantiated
     // only near the UE player; physics never depends on the far rendered surface.
@@ -121,8 +134,11 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
         Group->AddInstance(FTransform(FQuat::Identity,BridgeProtocol::ToUnreal(Block.Position,Anchor),FVector(Block.Size.Z,Block.Size.X,Block.Size.Y)),true);
     }
     if(!Sections.IsEmpty()) {
-        auto* Mesh=NewObject<UProceduralMeshComponent>(this);Mesh->SetupAttachment(RootComponent);Mesh->SetMobility(EComponentMobility::Movable);
-        Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);Mesh->SetCanEverAffectNavigation(false);Mesh->SetGenerateOverlapEvents(false);Mesh->RegisterComponent();ModelGroups.Add(Mesh);
+        auto* Mesh=ReusableMesh;
+        if(!Mesh) {
+            Mesh=NewObject<UProceduralMeshComponent>(this);Mesh->SetupAttachment(RootComponent);Mesh->SetMobility(EComponentMobility::Movable);
+            Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);Mesh->SetCanEverAffectNavigation(false);Mesh->SetGenerateOverlapEvents(false);Mesh->RegisterComponent();ModelGroups.Add(Mesh);
+        }
         int32 Index=0;for(auto& Pair:Sections) {
             auto& Section=Pair.Value;Mesh->CreateMeshSection_LinearColor(Index,Section.Vertices,Section.Indices,Section.Normals,Section.UV,Section.UV1,Section.UV2,Section.UV3,Section.Colors,Section.Tangents,false,false);
             if(Section.Atlas) Mesh->SetMaterial(Index,Section.Material);

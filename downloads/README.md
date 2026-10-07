@@ -2,7 +2,9 @@
 
 ## 更新版0.11.0
 
-素材取り込みには[Python修正パッチ0.11.4](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/UEBridge-lighting-import-fix-0.11.4.zip)を適用します。[3ファイルの上書き・再取り込み手順](../docs/LIGHTING_IMPORT_FIX_0.11.4.md)。0.11.3までを含む累積修正で、MOD交換・UE再ビルド不要です。
+`control ue`でメモリ不足になった場合は[UEメモリ修正パッチ0.11.5](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/UEBridge-memory-fix-0.11.5.zip)を適用します。[2ファイルの上書き・再ビルド手順](../docs/MEMORY_FIX_0.11.5.md)。
+
+素材取り込みには[Python修正パッチ0.11.4](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/UEBridge-lighting-import-fix-0.11.4.zip)を適用します。[3ファイルの上書き・再取り込み手順](../docs/LIGHTING_IMPORT_FIX_0.11.4.md)。
 
 **UEビルドには[修正パッチ0.11.1](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/UEBridge-build-fix-0.11.1.zip)も適用してください。** MODは0.11.0のまま、UEの5ファイルを上書きして再ビルドします。[操作手順](../docs/BUILD_FIX_0.11.1.md)。旧ZIPは保持しています。
 

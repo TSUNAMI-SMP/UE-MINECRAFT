@@ -1,5 +1,21 @@
 param([string]$Manifest = "", [string]$EngineRoot = "", [switch]$Reimport, [switch]$Rebuild)
 $ErrorActionPreference = "Stop"
+function Get-NativeImportFailure([string]$LogPath, [int]$ExitCode) {
+    $detail = "Native import did not complete (editor exit code: $ExitCode). Import log: $LogPath"
+    if (Test-Path -LiteralPath $LogPath) {
+        $lines = @(Get-Content -LiteralPath $LogPath -Encoding UTF8)
+        $errors = @(Select-String -LiteralPath $LogPath -Encoding UTF8 -Pattern 'Native automation failed|Native setup FAILED|Traceback|LogPython: Error:|Fatal error:' -Context 2,20)
+        if ($errors.Count) {
+            $detail += "`nImport errors:`n" + (($errors | ForEach-Object { $_.ToString() }) -join "`n")
+        }
+        # Include the end of the log even if Python never started.
+        $tail = @($lines | Select-Object -Last 80) -join "`n"
+        $detail += "`nLast 80 log lines:`n$tail"
+    } else {
+        $detail += "`nThe editor did not create this log. Check the editor launch/path above."
+    }
+    return $detail
+}
 try {
     $project = Join-Path $PSScriptRoot "UEBridge.uproject"
     if (!(Test-Path -LiteralPath $project)) { throw "Place Play-Native.cmd and Play-Native.ps1 next to your UEBridge.uproject." }
@@ -75,21 +91,31 @@ try {
         if (!(Test-Path -LiteralPath $importScript)) { $importScript = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\..\tools\import_native_play.py")) }
         if (!(Test-Path -LiteralPath $importScript)) { throw "import_native_play.py is missing. Extract all Python helpers from the UE update." }
         Write-Host "Importing this exact export into a separate native-play level: $Manifest"
-        Write-Host "Your existing levels are preserved. Import progress is recorded in Saved\Logs\UEBridge.log."
+        $attemptId = [Guid]::NewGuid().ToString("N")
+        $logs = Join-Path $saved "Logs"
+        New-Item -ItemType Directory -Path $logs -Force | Out-Null
+        $importLog = Join-Path $logs ("NativeImport-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + $attemptId + ".log")
+        Write-Host "Your existing levels are preserved. Dedicated import log: $importLog"
         $previousManifest = $env:UEBRIDGE_NATIVE_MANIFEST
         $previousAutomation = $env:UEBRIDGE_NATIVE_AUTOMATION
+        $previousAttempt = $env:UEBRIDGE_NATIVE_ATTEMPT
         try {
             $env:UEBRIDGE_NATIVE_MANIFEST = $Manifest
             $env:UEBRIDGE_NATIVE_AUTOMATION = "1"
-            $importArguments = @("`"$project`"", "-ExecutePythonScript=`"$importScript`"", "-unattended", "-nosplash", "-NoSound")
+            $env:UEBRIDGE_NATIVE_ATTEMPT = $attemptId
+            $importArguments = @("`"$project`"", "-ExecutePythonScript=`"$importScript`"", "-unattended", "-nosplash", "-NoSound", "-abslog=`"$importLog`"")
             $process = Start-Process -FilePath $editor -ArgumentList $importArguments -Wait -PassThru
         } finally {
             $env:UEBRIDGE_NATIVE_MANIFEST = $previousManifest
             $env:UEBRIDGE_NATIVE_AUTOMATION = $previousAutomation
+            $env:UEBRIDGE_NATIVE_ATTEMPT = $previousAttempt
         }
-        $marker = if (Test-Path -LiteralPath $markerPath) { Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json } else { $null }
-        if ($process.ExitCode -ne 0 -or !$marker -or !$marker.completed -or $marker.manifest -ne $Manifest -or $marker.manifestSha256 -ne $manifestHash -or !(Test-Path -LiteralPath $level)) {
-            throw "Native import did not complete. Read the last 'Native setup FAILED' or 'Native automation failed' error in Saved\Logs\UEBridge.log. Your world saves are preserved."
+        $marker = $null
+        if (Test-Path -LiteralPath $markerPath) {
+            try { $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json } catch { Write-Host "Import completion marker is unreadable." }
+        }
+        if ($process.ExitCode -ne 0 -or !$marker -or !$marker.completed -or $marker.importAttemptId -ne $attemptId -or $marker.map -ne "/Game/Bridge/Native/NativePlay" -or $marker.manifest -ne $Manifest -or $marker.manifestSha256 -ne $manifestHash -or !(Test-Path -LiteralPath $level)) {
+            throw (Get-NativeImportFailure -LogPath $importLog -ExitCode $process.ExitCode)
         }
     }
     Write-Host "Starting UE native play. Minecraft can stay closed. Saved world: Saved\NativeWorlds." -ForegroundColor Green

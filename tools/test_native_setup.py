@@ -360,6 +360,14 @@ class NativeSetupPublication(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'bad checksum'):
                 native._automation_entry()
         self.assertEqual(self.editor.quits, 1)
+        self.assertTrue(any('Traceback (most recent call last)' in entry and 'ValueError: bad checksum' in entry for entry in self.editor.logs))
+        self.assertEqual(self.editor.published, [])
+
+    def test_completion_marker_identifies_current_import_attempt(self):
+        with patch.dict(native.os.environ, {'UEBRIDGE_NATIVE_ATTEMPT': 'current-attempt'}):
+            native._save_marker(self.editor.project, self.package)
+        marker = json.loads((self.editor.project / 'Saved/NativeLauncher.json').read_text())
+        self.assertEqual(marker['importAttemptId'], 'current-attempt')
 
     def test_automated_fresh_dirty_template_is_replaced(self):
         self.editor.current.path = '/Temp/Untitled_1'

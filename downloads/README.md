@@ -1,8 +1,15 @@
 # ダウンロード
 
+## UE取り込み診断更新0.12.2
+
+0.12.1のWindows UEビルド成功は利用者ログで確認しました。取り込みの根本原因は未特定です。専用ログとPython例外全文を保存する診断更新です。
+
+- [UE更新ZIP 0.12.2](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.2/downloads/UEBridge-update-0.12.2.zip)
+- [適用・再試行手順](../docs/UPGRADE_0.12.2.md)
+
 ## UE側ビルド修正版0.12.1
 
-0.12.0のWindows UE 5.8.3ビルドで報告されたコンパイルエラーへ対処した更新です。MODは0.12.0のまま、既存UEプロジェクトへSourceと補助スクリプトを統合コピーします。旧配布物は保持しています。修正後のWindows UEビルド・取り込み・描画は未確認です。
+0.12.0のWindows UE 5.8.3ビルドで報告されたコンパイルエラーへ対処した更新です。MODは0.12.0のまま、既存UEプロジェクトへSourceと補助スクリプトを統合コピーします。旧配布物は保持しています。Windows UEビルド成功は利用者ログで確認しました。取り込み・描画は未確認です。
 
 - [UE更新ZIP 0.12.1](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.1/downloads/UEBridge-update-0.12.1.zip)
 - [SHA-256](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.1/downloads/UEBridge-update-0.12.1.zip.sha256)

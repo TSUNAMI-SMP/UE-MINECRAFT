@@ -14,6 +14,7 @@ import os
 import pathlib
 import re
 import runpy
+import traceback
 import uuid
 
 NATIVE_MAP = '/Game/Bridge/Native/NativePlay'
@@ -188,7 +189,8 @@ def _save_marker(project, package):
     try:
         with temporary.open('x', encoding='utf-8') as stream:
             json.dump(dict(completed=True, manifest=str(package['path']), manifestSha256=package['manifestSha256'],
-                           map=NATIVE_MAP, packageId=package['manifest']['id']), stream, ensure_ascii=False, indent=2)
+                           map=NATIVE_MAP, packageId=package['manifest']['id'],
+                           importAttemptId=os.environ.get('UEBRIDGE_NATIVE_ATTEMPT', '')), stream, ensure_ascii=False, indent=2)
             stream.flush()
             os.fsync(stream.fileno())
         temporary.replace(marker)
@@ -337,7 +339,9 @@ def _automation_entry():
             raise RuntimeError('No native package selected; call import_native_play(path) or launch Play-Native.cmd')
         import_native_play(filename)
     except Exception as error:
+        # Record the full traceback before requesting editor shutdown.
         unreal.log_error('Native automation failed: ' + str(error))
+        unreal.log_error(traceback.format_exc())
         raise
     finally:
         if automated:

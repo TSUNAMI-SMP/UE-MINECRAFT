@@ -305,7 +305,7 @@ class MaterialGraphTest(unittest.TestCase):
         self.assertEqual('PixelNormalWS', actor_shade.inputs['WorldNormal'][0].kind)
         self.assertEqual(['WorldNormal'], [entry.get_editor_property('input_name') for entry in actor_shade.properties['inputs']])
         self.assertEqual('VertexColor', blend.inputs['B'][0].kind)
-        self.assertEqual('RGB', blend.inputs['B'][1])
+        self.assertEqual('RGBA', blend.inputs['B'][1])
         self.assertEqual(1.0, blend.inputs['Alpha'][0].properties['default_value'])
 
 

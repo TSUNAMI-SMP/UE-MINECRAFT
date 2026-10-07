@@ -65,7 +65,7 @@ return lightLinearRGB * pow(saturate(Light.b),2.2);
 '''
 
 
-def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None, use_vertex=True, vertex_output='RGB'):
+def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None, use_vertex=True, vertex_output='RGBA'):
     """Connect colour outputs; preserves texture alpha and caller's UV/tint graph."""
     collection = ensure_lighting_collection(unreal)
     def node(cls):
@@ -116,9 +116,14 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
         'return float3(1,1,shade);')
     wire(normal, actor_shade, 'WorldNormal')
     shaded_actor = node(unreal.MaterialExpressionMultiply); wire(actor, shaded_actor, 'A'); wire(actor_shade, shaded_actor, 'B')
-    vertex = vertex_node or node(unreal.MaterialExpressionVertexColor)
-    blend = node(unreal.MaterialExpressionLinearInterpolate)
-    wire(shaded_actor, blend, 'A'); wire(vertex, blend, 'B', vertex_output); wire(parameter('BridgeUseVertexLight', float(use_vertex)), blend, 'Alpha')
+    # Face/item masters deliberately use the actor branch only. UE5.8 rejects a
+    # VertexColor connection on this path when its graph has no vertex payload.
+    if use_vertex:
+        vertex = vertex_node or node(unreal.MaterialExpressionVertexColor)
+        blend = node(unreal.MaterialExpressionLinearInterpolate)
+        wire(shaded_actor, blend, 'A'); wire(vertex, blend, 'B', vertex_output); wire(parameter('BridgeUseVertexLight', 1.0), blend, 'Alpha')
+    else:
+        blend = shaded_actor
     lightmap = node(unreal.MaterialExpressionCustom)
     lightmap.set_editor_property('output_type', unreal.CustomMaterialOutputType.CMOT_FLOAT3)
     lightmap.set_editor_property('description', 'Bridge native lightmap v1')

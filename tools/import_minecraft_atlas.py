@@ -209,7 +209,7 @@ def _atlas_master(unreal, assets, tools, editing, root, texture, translucent):
     colored = node(unreal.MaterialExpressionMultiply); wire(sample, colored, "A", "RGB"); wire(tint, colored, "B")
     import runpy
     wire_vanilla_lighting = runpy.run_path(str(pathlib.Path(__file__).with_name("bridge_lighting_materials.py")))["wire_vanilla_lighting"]
-    wire_vanilla_lighting(unreal, editing, material, colored, vertex, use_vertex=True)
+    wire_vanilla_lighting(unreal, editing, material, colored, vertex, use_vertex=True, vertex_output="RGBA")
     if not editing.connect_material_property(sample, "A", unreal.MaterialProperty.MP_OPACITY if translucent else unreal.MaterialProperty.MP_OPACITY_MASK):
         raise RuntimeError("Cannot connect atlas opacity")
     roughness = node(unreal.MaterialExpressionConstant); roughness.set_editor_property("r", 0.85)

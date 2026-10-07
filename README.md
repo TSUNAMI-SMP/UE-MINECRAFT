@@ -3,7 +3,7 @@
 Fabric **Minecraft Java 1.21.11 / Java 21** と **Unreal Engine 5.8** を同じPCで
 接続する実験用プロジェクト。Minecraftが入力・HUD・既存の音を担当し、UE主体モードではUEが移動・衝突・設置・破壊の判定と描画を担当します。既存サーバーへのインストールは不要です。
 
-**素材取り込み修正0.11.2：** CustomInputのUE5.8 API呼び出しを修正。[Python1ファイルの上書き・再取り込み手順](docs/LIGHTING_IMPORT_FIX_0.11.2.md)。MOD交換・UE再ビルドは不要です。
+**素材取り込み修正0.11.3：** 頂点光を使わない素材の接続とアトラスClamp入力を修正。[Python3ファイルの上書き・再取り込み手順](docs/LIGHTING_IMPORT_FIX_0.11.3.md)。0.11.2のCustomInput修正を含み、MOD交換・UE再ビルドは不要です。
 
 **UEビルド修正0.11.1：** 0.11.0を使う場合は[5ファイルの修正パッチと再ビルド手順](docs/BUILD_FIX_0.11.1.md)も適用してください。MODは0.11.0のままです。
 

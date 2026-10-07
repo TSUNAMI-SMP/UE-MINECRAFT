@@ -25,7 +25,7 @@ with zipfile.ZipFile(output, "x", zipfile.ZIP_DEFLATED) as archive:
             archive.write(root / relative, "UE-MINECRAFT/" + relative)
     archive.write(jar, "UE-MINECRAFT/artifacts/" + jar.name)
     # Local UE Python helpers must also sit beside the .uproject in the full download.
-    for helper in ("setup_world_bridge.py", "import_minecraft_textures.py", "import_minecraft_player.py", "import_minecraft_mobs.py", "import_minecraft_items.py", "setup_vanilla_effects.py", "setup_bridge_rendering.py"):
+    for helper in ("setup_world_bridge.py", "import_minecraft_textures.py", "import_minecraft_player.py", "import_minecraft_mobs.py", "import_minecraft_items.py", "setup_vanilla_effects.py", "setup_bridge_rendering.py", "bridge_lighting_materials.py", "import_minecraft_atlas.py"):
         archive.write(root / "tools" / helper, "UE-MINECRAFT/unreal/UEBridge/" + helper)
     digest = hashlib.sha256(jar.read_bytes()).hexdigest()
     archive.writestr("UE-MINECRAFT/artifacts/SHA256SUMS.txt", digest + "  " + jar.name + "\n")

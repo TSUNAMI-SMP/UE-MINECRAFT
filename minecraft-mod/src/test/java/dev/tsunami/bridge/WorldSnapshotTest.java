@@ -114,4 +114,28 @@ public class WorldSnapshotTest {
             assertTrue(p.toString().getBytes(StandardCharsets.UTF_8).length<=2048);
         }
     }
+    @Test public void compactCellsRetainBuriedOwnershipNativeLightAndFitDatagrams() {
+        var cell=new WorldSnapshot.Cell(-2,8,3);List<WorldSnapshot.Shape> shapes=new ArrayList<>();
+        for(int i=0;i<512;i++) {int x=cell.x()*8+(i&7),y=cell.y()*8+(i>>6),z=cell.z()*8+((i>>3)&7);
+            shapes.add(new WorldSnapshot.Shape(x+.5,y+.5,z+.5,0xabc123,1,1,1,"minecraft:stone",false,x,y,z,"",1,15,i%16,15,0));}
+        var packets=WorldSnapshot.encodeCompact(cell,shapes,1.123456789,64,3.987654321);assertTrue(packets.size()<=8);
+        Set<Integer> owners=new HashSet<>();for(var packet:packets) {
+            var palette=packet.getAsJsonArray("palette");assertEquals(1,palette.size());
+            for(var value:packet.getAsJsonArray("blocks")) {var row=value.getAsJsonArray();assertTrue(owners.add(row.get(0).getAsInt()));
+                assertEquals(row.get(0).getAsInt()%16,row.get(3).getAsInt());assertEquals(15,row.get(2).getAsInt());}
+            packet.addProperty("v",1);packet.addProperty("kind","event");packet.addProperty("session",UUID.randomUUID().toString());
+            packet.addProperty("eventId",UUID.randomUUID().toString());packet.addProperty("seq",9007199254740991L);packet.addProperty("snapshotSeq",9007199254740991L);
+            packet.addProperty("x",0);packet.addProperty("y",0);packet.addProperty("z",0);
+            if(packet.get("batchIndex").getAsInt()==0) {var seed=new com.google.gson.JsonArray();for(int n=0;n<64;n++) seed.add(15);packet.add("skyTop",seed);}
+            assertTrue("Bounded compact payload",packet.toString().getBytes(StandardCharsets.UTF_8).length<=2048);
+        }assertEquals(512,owners.size());
+    }
+    @Test public void compactRowsRejectWrongCellDuplicatesAndFingerprintLightChanges() {
+        var a=new WorldSnapshot.Shape(.5,.5,.5,0,1,1,1,"minecraft:stone",false,0,0,0,"",1,15,0,15,0);
+        var b=new WorldSnapshot.Shape(.5,.5,.5,0,1,1,1,"minecraft:stone",false,0,0,0,"",1,12,0,15,0);
+        assertNotEquals(WorldSnapshot.fingerprint(List.of(a)),WorldSnapshot.fingerprint(List.of(b)));
+        try {WorldSnapshot.encodeCompact(new WorldSnapshot.Cell(0,0,0),List.of(a,a),0,0,0);fail();}catch(IllegalArgumentException expected) {}
+        try {WorldSnapshot.encodeCompact(new WorldSnapshot.Cell(1,0,0),List.of(a),0,0,0);fail();}catch(IllegalArgumentException expected) {}
+        assertEquals(0,WorldSnapshot.encodeCompact(new WorldSnapshot.Cell(0,0,0),List.of(),0,0,0).getFirst().getAsJsonArray("blocks").size());
+    }
 }

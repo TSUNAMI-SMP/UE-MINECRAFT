@@ -19,10 +19,12 @@ public final class VideoOverlay {
     private BridgeTransport transport;
     private double inputToUpload=-1,readbackMs,encodeMs,decodeMs,uploadMs;
     private VideoProtocol.Frame uploaded;
+    private final GpuVideoBridge gpu=new GpuVideoBridge();
     public void setTransport(BridgeTransport transport) { this.transport=transport; }
     public String timing() {
         return inputToUpload<0 ? "映像遅延計測待ち" : String.format(java.util.Locale.ROOT,
-            "入力→upload=%.1fms GPU読戻し=%.1f 圧縮=%.1f 復号=%.1f upload=%.1fms",inputToUpload,readbackMs,encodeMs,decodeMs,uploadMs);
+            "入力→描画投入=%.1fms 映像準備=%.1f 圧縮=%.1f 復号=%.1f copy/upload=%.1fms / %s",
+            inputToUpload,readbackMs,encodeMs,decodeMs,uploadMs,client==null?"":client.latency());
     }
     public void register() {
         HudElementRegistry.attachElementBefore(VanillaHudElements.CROSSHAIR, TEXTURE, (context,ticks) -> draw(context));
@@ -32,6 +34,7 @@ public final class VideoOverlay {
         if (client != next) { client = next; uploaded=null; inputToUpload=-1; release(); }
     }
     private void release() {
+        gpu.close();
         if (texture != null) MinecraftClient.getInstance().getTextureManager().destroyTexture(TEXTURE);
         texture = null;
     }
@@ -45,9 +48,18 @@ public final class VideoOverlay {
                 texture = new NativeImageBackedTexture("UE Bridge video", width,height,false);
                 mc.getTextureManager().registerTexture(TEXTURE,texture);
             }
-            long uploadStart=System.nanoTime();NativeImage image = texture.getImage();
-            // NativeImage.imageId() is its native RGBA buffer in Minecraft 1.21.11.
-            MemoryUtil.memIntBuffer(image.imageId(),width*height).put(frame.abgr());texture.upload();
+            long uploadStart=System.nanoTime();
+            try {
+                if(frame.gpu()!=null) gpu.copy(frame,texture);
+                else {
+                    NativeImage image = texture.getImage();
+                    // NativeImage.imageId() is its native RGBA buffer in Minecraft 1.21.11.
+                    MemoryUtil.memIntBuffer(image.imageId(),width*height).put(frame.abgr());texture.upload();
+                }
+            } catch(RuntimeException | UnsatisfiedLinkError e) {
+                client.disableGpu(e.getMessage());gpu.close();client.release(frame);return;
+            }
+            client.release(frame);
             uploadMs=(System.nanoTime()-uploadStart)/1_000_000.0;
             readbackMs=frame.readbackMs();encodeMs=frame.encodeMs();decodeMs=frame.decodeMs();
             inputToUpload=transport==null || frame.inputSequence()==0 ? -1 : transport.inputAgeMillis(frame.inputSequence());
@@ -67,6 +79,7 @@ public final class VideoOverlay {
                 context.fill(x,top,left,top+dh,0xff101010);context.fill(left+dw,top,x+w,top+dh,0xff101010);
             }
             context.drawTexture(RenderPipelines.GUI_TEXTURED,TEXTURE,x+(w-dw)/2,y+(h-dh)/2,0,0,dw,dh,width,height,width,height);
+            if(uploaded!=null) client.displayed(uploaded,inputToUpload);
         } else context.drawTextWithShadow(mc.textRenderer,client.status(),x+4,y+4,0xffffffff);
         if(mode==2 && transport!=null && transport.diagnostics().ueControl() && transport.mobsSupported()) {
             double health=transport.playerHealth();

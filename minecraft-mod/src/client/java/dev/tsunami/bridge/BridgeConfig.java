@@ -23,7 +23,10 @@ public final class BridgeConfig {
     public int videoMode = 0; // 0=off, 1=picture in picture, 2=full screen
     public int videoPort = 7780;
     public boolean videoSkipVanilla=true;
-    public int videoQuality = 1; // low/balanced/high/ultra
+    public int videoQuality = 3; // low/balanced/high/ultra; target is 1920x1080
+    public int terrainDistanceChunks = 4;
+    public int targetFps = 30;
+    public int videoTransport = 0; // 0=auto, 1=JPEG/TCP, 2=GPU sharing with JPEG fallback
     public double videoExposure = 0;
     public boolean lighting = true;
     public boolean vanillaSky = false;
@@ -37,8 +40,11 @@ public final class BridgeConfig {
         if (inputHz < 20 || inputHz > 240) throw new IllegalArgumentException("inputHz must be 20..240");
         if (previewRadius < 1 || previewRadius > 8) throw new IllegalArgumentException("previewRadius must be 1..8");
         if (previewHalfHeight < 1 || previewHalfHeight > 4) throw new IllegalArgumentException("previewHalfHeight must be 1..4");
-        if (worldRadius < 1 || worldRadius > 3 || worldHalfHeight < 1 || worldHalfHeight > 2)
-            throw new IllegalArgumentException("worldRadius must be 1..3 / worldHalfHeight 1..2");
+        if (worldRadius < 1 || worldRadius > 12 || worldHalfHeight < 1 || worldHalfHeight > 6)
+            throw new IllegalArgumentException("worldRadius must be 1..12 / worldHalfHeight 1..6");
+        if (terrainDistanceChunks < 4 || terrainDistanceChunks > 6 || targetFps < 1 || targetFps > 60
+                || videoTransport < 0 || videoTransport > 2)
+            throw new IllegalArgumentException("terrainDistanceChunks must be 4..6 / targetFps 1..60 / videoTransport 0..2");
         if (videoMode < 0 || videoMode > 2 || videoPort < 1024 || videoPort > 65535)
             throw new IllegalArgumentException("videoMode must be 0..2 / videoPort 1024..65535");
         if (videoQuality < 0 || videoQuality > 3 || !Double.isFinite(videoExposure) || Math.abs(videoExposure)>6)
@@ -55,7 +61,7 @@ public final class BridgeConfig {
             var tree = JsonParser.parseString(Files.readString(path));
             if (!tree.isJsonObject()) throw new IllegalArgumentException("config must be an object");
             var object = tree.getAsJsonObject();
-            for (String name : new String[]{"port", "inputHz", "previewRadius", "previewHalfHeight", "worldRadius", "worldHalfHeight", "videoMode", "videoPort", "videoQuality"}) if (object.has(name)) {
+            for (String name : new String[]{"port", "inputHz", "previewRadius", "previewHalfHeight", "worldRadius", "worldHalfHeight", "videoMode", "videoPort", "videoQuality", "terrainDistanceChunks", "targetFps", "videoTransport"}) if (object.has(name)) {
                 var value = object.get(name);
                 if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) throw new IllegalArgumentException(name + " must be an integer");
                 double number = value.getAsDouble();

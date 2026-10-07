@@ -15,12 +15,12 @@ output = root / f"downloads/UEBridge-update-{version}.zip"
 with zipfile.ZipFile(output, "x", zipfile.ZIP_DEFLATED) as archive:
     prefix = "unreal/UEBridge/"
     for path in sorted(tracked):
-        if path.startswith(prefix + "Source/") or path in (prefix + "Build-UEBridge.cmd", prefix + "Build-UEBridge.ps1"):
+        if path.startswith(prefix + "Source/") or path in (prefix + "Build-UEBridge.cmd", prefix + "Build-UEBridge.ps1", prefix + "Launch-UEBridge-GPU.cmd", prefix + "Launch-UEBridge-GPU.ps1"):
             archive.write(root / path, path[len(prefix):])
     archive.write(root / "tools/setup_world_bridge.py", "setup_world_bridge.py")
     if (root / "tools/import_minecraft_textures.py").is_file():
         archive.write(root / "tools/import_minecraft_textures.py", "import_minecraft_textures.py")
-    for helper in ("import_minecraft_player.py", "import_minecraft_mobs.py", "import_minecraft_items.py", "setup_vanilla_effects.py", "setup_bridge_rendering.py"):
+    for helper in ("import_minecraft_player.py", "import_minecraft_mobs.py", "import_minecraft_items.py", "setup_vanilla_effects.py", "setup_bridge_rendering.py", "bridge_lighting_materials.py", "import_minecraft_atlas.py"):
         if (root / "tools" / helper).is_file():
             archive.write(root / "tools" / helper, helper)
     archive.write(root / f"docs/UPGRADE_{version}.md", "UPDATE_INSTRUCTIONS.md")

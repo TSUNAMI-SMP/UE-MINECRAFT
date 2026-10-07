@@ -6,5 +6,8 @@ public class UEBridge : ModuleRules {
             "Core", "CoreUObject", "Engine", "InputCore", "Sockets", "Networking",
             "Json", "Niagara", "GeometryCollectionEngine", "FieldSystemEngine", "ChaosSolverEngine", "ImageWrapper", "RenderCore", "RHI", "ProceduralMeshComponent"
         });
+        if (Target.Platform == UnrealTargetPlatform.Win64) {
+            PublicSystemLibraries.AddRange(new string[] { "d3d11.lib", "dxgi.lib", "d3dcompiler.lib" });
+        }
     }
 }

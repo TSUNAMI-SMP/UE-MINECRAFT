@@ -6,14 +6,18 @@ import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.MemoryCacheImageInputStream;
 
-/** Bounded JPEG stream. v3 adds a matched, lossless opacity mask and captured camera. */
+/** Bounded JPEG stream; v5 leases a shared GPU frame without pixel payload/readback/JPEG. */
 public final class VideoProtocol {
     public static final int MAGIC = 0x55454256, MAX_BYTES = 2*1024*1024;
-    public static final int SKY_MASK=1, MAX_MASK_BYTES=1920*1080*3;
+    public static final int SKY_MASK=1, GPU_FRAME=2, MAX_MASK_BYTES=1920*1080*3;
     private static final int[][] STRAIGHT_COLOR=straightColorTable();
     public record Camera(double x,double y,double z,float yaw,float pitch,float verticalFov) {}
-    public record Frame(int width,int height,long sequence,int[] argb,int[] abgr,long inputSequence,
-                        double readbackMs,double encodeMs,double decodeMs,long decodedAt,boolean skyMask,Camera camera) {}
+    public record GpuFrame(long handle,long adapter,int slot,int generation) {}
+    public record Frame(int width,int height,long sequence,int[] abgr,long inputSequence,
+                        double readbackMs,double encodeMs,double decodeMs,long decodedAt,boolean skyMask,Camera camera,GpuFrame gpu) {
+        /** Debug/tests only. Runtime uploads ABGR directly, avoiding an additional full-frame allocation. */
+        public int[] argb(){return toAbgr(abgr);}
+    }
     static int[] toAbgr(int[] argb) {
         int[] result=new int[argb.length];
         for(int i=0;i<argb.length;i++) {int v=argb[i];result[i]=(v&0xff00ff00)|((v&255)<<16)|((v>>>16)&255);}
@@ -21,10 +25,10 @@ public final class VideoProtocol {
     }
     public static Frame read(DataInputStream in) throws IOException {
         if(in.readInt()!=MAGIC) throw new IOException("Unsupported UE video protocol");
-        int version=in.readInt();if(version<1 || version>4) throw new IOException("Unsupported UE video protocol");
+        int version=in.readInt();if(version<1 || version>5) throw new IOException("Unsupported UE video protocol");
         int width = in.readInt(), height = in.readInt(); long sequence = Integer.toUnsignedLong(in.readInt());
         int length = in.readInt();
-        if (width < 16 || height < 16 || width > 1920 || height > 1080 || length < 4 || length > MAX_BYTES)
+        if (width < 16 || height < 16 || width > 1920 || height > 1080 || length < (version==5?0:4) || length > MAX_BYTES)
             throw new IOException("Invalid UE video dimensions/length");
         long inputSequence=0;double readbackMs=0,encodeMs=0;
         if(version>=2) {
@@ -36,9 +40,18 @@ public final class VideoProtocol {
             int flags=in.readInt();maskLength=in.readInt();
             camera=new Camera(in.readDouble(),in.readDouble(),in.readDouble(),in.readFloat(),in.readFloat(),in.readFloat());
             skyMask=(flags&SKY_MASK)!=0;
-            if((flags&~SKY_MASK)!=0 || maskLength<0 || maskLength>MAX_MASK_BYTES || maskLength%3!=0
-                || skyMask!=(maskLength>0) || maskLength>(long)width*height*3 || !validCamera(camera))
+            boolean gpu=version==5;
+            if((flags&~(gpu ? SKY_MASK|GPU_FRAME : SKY_MASK))!=0 || gpu!=((flags&GPU_FRAME)!=0)
+                || maskLength<0 || maskLength>MAX_MASK_BYTES || maskLength%3!=0
+                || (!gpu && skyMask!=(maskLength>0)) || (gpu && (maskLength!=0 || length!=0))
+                || maskLength>(long)width*height*3 || !validCamera(camera))
                 throw new IOException("Invalid video mask/camera metadata");
+        }
+        if(version==5) {
+            long handle=in.readLong(),adapter=in.readLong();int slot=in.readInt(),generation=in.readInt();
+            if(handle==0 || slot<0 || slot>=3 || generation==0) throw new IOException("Invalid shared GPU frame lease");
+            return new Frame(width,height,sequence,new int[0],inputSequence,readbackMs,encodeMs,0,System.nanoTime(),skyMask,camera,
+                new GpuFrame(handle,adapter,slot,generation));
         }
         byte[] bytes = new byte[length]; in.readFully(bytes);
         byte[] mask=new byte[maskLength];in.readFully(mask);long decodeStart=System.nanoTime();
@@ -52,13 +65,29 @@ public final class VideoProtocol {
                 // Reject oversized decoded images before allocating their pixels.
                 if (reader.getWidth(0) != width || reader.getHeight(0) != height) throw new IOException("JPEG dimensions mismatch");
                 BufferedImage image = reader.read(0);
-                int[] argb=image.getRGB(0,0,width,height,null,0,width);
-                if(skyMask) applyMask(argb,mask,version<4);
-                int[] abgr=toAbgr(argb);
+                int[] abgr=decodeAbgr(image,width,height);
+                if(skyMask) applyMask(abgr,mask,version<4); // R/B symmetric; alpha processing also applies to ABGR.
                 long decodedAt=System.nanoTime();
-                return new Frame(width,height,sequence,argb,abgr,inputSequence,readbackMs,encodeMs,(decodedAt-decodeStart)/1_000_000.0,decodedAt,skyMask,camera);
+                return new Frame(width,height,sequence,abgr,inputSequence,readbackMs,encodeMs,(decodedAt-decodeStart)/1_000_000.0,decodedAt,skyMask,camera,null);
             } finally { reader.dispose(); }
         }
+    }
+    private static int[] decodeAbgr(BufferedImage image,int width,int height) {
+        var raster=image.getRaster();
+        if(image.getType()==BufferedImage.TYPE_3BYTE_BGR && raster.getDataBuffer() instanceof java.awt.image.DataBufferByte data
+            && raster.getSampleModel() instanceof java.awt.image.ComponentSampleModel layout && layout.getPixelStride()==3
+            && raster.getMinX()==0 && raster.getMinY()==0 && raster.getSampleModelTranslateX()==0 && raster.getSampleModelTranslateY()==0
+            && data.getNumBanks()==1 && java.util.Arrays.equals(layout.getBandOffsets(),new int[]{2,1,0})) {
+            byte[] pixels=data.getData();int[] result=new int[width*height];int stride=layout.getScanlineStride(),offset=data.getOffset();
+            for(int y=0;y<height;y++) for(int x=0;x<width;x++) {
+                int at=offset+y*stride+x*3;
+                result[y*width+x]=0xff000000|((pixels[at]&255)<<16)|((pixels[at+1]&255)<<8)|(pixels[at+2]&255);
+            }
+            return result;
+        }
+        int[] result=image.getRGB(0,0,width,height,null,0,width);
+        for(int i=0;i<result.length;i++){int v=result[i];result[i]=(v&0xff00ff00)|((v&255)<<16)|((v>>>16)&255);}
+        return result;
     }
     private static boolean validCamera(Camera c) {
         return Double.isFinite(c.x()) && Math.abs(c.x())<=30_000_000 && Double.isFinite(c.y()) && Math.abs(c.y())<=30_000_000

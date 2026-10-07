@@ -36,6 +36,8 @@ public:
     void ResetMovement();
     void SpawnBreak(const FVector& Center,const FString& BlockId,FColor Tint,const TArray<FBox>& MinecraftShapeBoxes=TArray<FBox>());
     void ConfigureParticleTuning(float SizeMultiplier,float DensityMultiplier,float LifetimeMultiplier);
+    /** Native light levels at the interpolated dust position; root maps UE to source voxels. */
+    TFunction<FLinearColor(const FVector& Position)> SampleLight;
     UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="Bridge|Particles",meta=(ClampMin="0.25",ClampMax="2.0")) float ParticleSizeMultiplier=.75f;
     UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="Bridge|Particles",meta=(ClampMin="0.0",ClampMax="1.0")) float ParticleDensityMultiplier=1.f;
     UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="Bridge|Particles",meta=(ClampMin="0.25",ClampMax="2.0")) float ParticleLifetimeMultiplier=.9f;
@@ -46,6 +48,7 @@ private:
         FString Group;
         FVector Previous=FVector::ZeroVector, Position=FVector::ZeroVector, Velocity=FVector::ZeroVector;
         FVector2D TextureOffset=FVector2D::ZeroVector;
+        FLinearColor Light=FLinearColor(1,0,1,1);
         float Size=10;
         int32 Age=0, Lifetime=10;
     };

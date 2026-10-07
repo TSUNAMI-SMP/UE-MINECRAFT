@@ -156,5 +156,43 @@ public class VideoProtocolTest {
         VideoProtocol.applyMask(nativeColor,mask,false);VideoProtocol.applyMask(legacy,mask,true);
         assertEquals(0x80406080,nativeColor[0]);assertTrue((legacy[0]&255)>(nativeColor[0]&255));
     }
+    private byte[] sharedFrame(int flags,int payload,int mask,long handle,int slot,int generation) throws Exception {
+        var bytes=new ByteArrayOutputStream();var out=new DataOutputStream(bytes);
+        for(int v:new int[]{VideoProtocol.MAGIC,5,1920,1080,42,payload})out.writeInt(v);
+        out.writeLong(123);out.writeInt(1250);out.writeInt(0);out.writeInt(flags);out.writeInt(mask);
+        out.writeDouble(2);out.writeDouble(65.62);out.writeDouble(-4);out.writeFloat(45);out.writeFloat(-12);out.writeFloat(58.72f);
+        out.writeLong(handle);out.writeLong(0x12345678abcdef01L);out.writeInt(slot);out.writeInt(generation);
+        return bytes.toByteArray();
+    }
+    @Test public void gpuFrameCarriesMatchedCameraAlphaAndLeaseWithoutAllocatingPixels() throws Exception {
+        var frame=VideoProtocol.read(new DataInputStream(new ByteArrayInputStream(sharedFrame(3,0,0,0x1234,2,9))));
+        assertEquals(1920,frame.width());assertEquals(1080,frame.height());assertEquals(0,frame.abgr().length);
+        assertTrue(frame.skyMask());assertEquals(123,frame.inputSequence());assertEquals(42,frame.sequence());
+        assertEquals(2,frame.camera().x(),0);assertEquals(0x1234,frame.gpu().handle());assertEquals(2,frame.gpu().slot());
+        assertEquals(9,frame.gpu().generation());assertEquals(1.25,frame.readbackMs(),0);
+    }
+    @Test public void rejectInvalidGpuMetadataBeforeOpeningAnyNativeResource() throws Exception {
+        for(byte[] bytes:new byte[][]{sharedFrame(1,0,0,1,0,1),sharedFrame(6,0,0,1,0,1),sharedFrame(2,4,0,1,0,1),
+            sharedFrame(3,0,3,1,0,1),sharedFrame(2,0,0,0,0,1),sharedFrame(2,0,0,1,3,1),sharedFrame(2,0,0,1,0,0)}) {
+            try {VideoProtocol.read(new DataInputStream(new ByteArrayInputStream(bytes)));fail();}catch(IOException expected){}
+        }
+    }
+    @Test public void gpuHandshakeLeaseReleaseAndJpegFallbackTravelThroughRealLoopback() throws Exception {
+        String session="01234567-1234-1234-1234-0123456789ab";
+        try(var server=new ServerSocket(0,1,InetAddress.getByName("127.0.0.1"));var client=new VideoClient(server.getLocalPort(),session,true,true)) {
+            server.setSoTimeout(2000);
+            try(var peer=server.accept()) {
+                peer.setSoTimeout(2000);var input=new DataInputStream(peer.getInputStream());
+                assertEquals("UEB5"+session,new String(input.readNBytes(40),StandardCharsets.US_ASCII));
+                peer.getOutputStream().write(sharedFrame(3,0,0,0x1234,2,9));peer.getOutputStream().flush();
+                long deadline=System.nanoTime()+2_000_000_000L;VideoProtocol.Frame frame=null;
+                while(frame==null && System.nanoTime()<deadline){frame=client.poll();if(frame==null)Thread.sleep(5);}
+                assertNotNull(frame);client.release(frame);
+                assertEquals(0x55454241,input.readInt());assertEquals(42,input.readInt());assertEquals(2,input.readInt());assertEquals(9,input.readInt());
+                client.disableGpu("test fallback");assertEquals(0x55454246,input.readInt());
+                assertEquals(0,input.readInt());assertEquals(0,input.readInt());assertEquals(0,input.readInt());
+            }
+        }
+    }
 
 }

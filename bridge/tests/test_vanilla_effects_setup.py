@@ -22,12 +22,21 @@ class PropertyObject:
     def set_editor_property(self, name, value):
         self.properties[name] = value
 
+    def get_editor_property(self, name):
+        return self.properties[name]
+
 
 class Material(PropertyObject):
     def __init__(self):
         super().__init__()
         self.nodes = []
         self.outputs = {}
+
+
+class Collection(PropertyObject):
+    def __init__(self):
+        super().__init__()
+        self.properties.update(scalar_parameters=[], vector_parameters=[])
 
 
 class Expression(PropertyObject):
@@ -65,26 +74,35 @@ class Editor:
             api.LevelEditorSubsystem: types.SimpleNamespace(save_current_level=self.save_level),
         }
         api.get_editor_subsystem = subsystems.__getitem__
-        api.EditorLoadingAndSavingUtils = types.SimpleNamespace(get_dirty_map_packages=lambda: [object()] if self.dirty else [])
+        api.EditorLoadingAndSavingUtils = types.SimpleNamespace(get_dirty_map_packages=lambda: [object()] if self.dirty else [], save_dirty_packages=lambda *args: True)
         api.BridgeReceiver, api.Material = Receiver, Material
         api.MaterialFactoryNew = object
+        api.MaterialParameterCollection = Collection
+        api.MaterialParameterCollectionFactoryNew = object
+        api.CollectionScalarParameter = api.CollectionVectorParameter = PropertyObject
+        api.CustomInput = lambda **fields: types.SimpleNamespace(**fields)
+        api.CustomMaterialOutputType = types.SimpleNamespace(CMOT_FLOAT3='float3')
+        api.MaterialShadingModel = types.SimpleNamespace(MSM_DEFAULT_LIT='lit', MSM_UNLIT='unlit')
         api.load_asset = lambda path: self.assets.get(path, object() if path.startswith("/Engine/") else None)
         api.EditorAssetLibrary = types.SimpleNamespace(does_asset_exist=lambda path: path in self.assets,
-            save_loaded_asset=self.save_asset)
+            save_loaded_asset=self.save_asset, list_assets=lambda *args: list(self.assets))
         api.AssetToolsHelpers = types.SimpleNamespace(get_asset_tools=lambda: types.SimpleNamespace(create_asset=self.create_asset))
         api.ScopedEditorTransaction = lambda name: contextlib.nullcontext()
-        api.BlendMode = types.SimpleNamespace(BLEND_MASKED="masked")
-        api.MaterialProperty = types.SimpleNamespace(MP_BASE_COLOR="base", MP_OPACITY_MASK="mask", MP_ROUGHNESS="roughness")
+        api.BlendMode = types.SimpleNamespace(BLEND_MASKED="masked", BLEND_OPAQUE="opaque")
+        api.MaterialProperty = types.SimpleNamespace(MP_BASE_COLOR="base", MP_OPACITY_MASK="mask", MP_ROUGHNESS="roughness", MP_SPECULAR="specular", MP_EMISSIVE_COLOR="emissive")
         api.LinearColor = lambda *values: values
         api.log = lambda text: None
         for name in ("TextureCoordinate", "Constant2Vector", "Multiply", "PerInstanceCustomData", "Add",
-                     "AppendVector", "VertexInterpolator", "TextureSampleParameter2D", "VectorParameter", "Constant"):
+                     "AppendVector", "VertexInterpolator", "TextureSampleParameter2D", "VectorParameter", "Constant",
+                     "ScalarParameter", "CollectionParameter", "VertexNormalWS", "PixelNormalWS", "Custom", "VertexColor", "LinearInterpolate", "Constant3Vector"):
             setattr(api, "MaterialExpression" + name, type(name, (Expression,), {}))
         api.MaterialEditingLibrary = types.SimpleNamespace(delete_all_material_expressions=self.clear,
             create_material_expression=self.create_expression, connect_material_expressions=self.connect,
             connect_material_property=self.connect_property, recompile_material=self.recompiled.append,
             get_texture_parameter_names=lambda material: [] if self.fail_parameters else self.parameter_names(material, "TextureSampleParameter2D"),
-            get_vector_parameter_names=lambda material: self.parameter_names(material, "VectorParameter"))
+            get_vector_parameter_names=lambda material: self.parameter_names(material, "VectorParameter"),
+            get_scalar_parameter_names=lambda material: self.parameter_names(material, "ScalarParameter"),
+            get_material_property_input_node=lambda material, prop: material.outputs.get(prop,(None,None))[0])
 
     @staticmethod
     def parameter_names(material, kind):
@@ -110,6 +128,8 @@ class Editor:
     def connect(self, source, output, target, pin):
         if self.fail_connections:
             return False
+        if type(source).__name__ == "VertexInterpolator" and output:
+            return False  # UE interpolators expose an unnamed output, not VertexColor's RGB pin.
         if type(target).__name__ == "TextureSampleParameter2D":
             # Texture sample inputs expose UVs, not the C++ field Coordinates.
             # MaterialEditingLibrary accepts an empty name for the first input.
@@ -151,7 +171,8 @@ def evaluate(node, uv, offsets):
     if name == "VertexInterpolator":
         return input_value("")
     if name == "AppendVector":
-        return (input_value("A"), input_value("B"))
+        a, b = input_value("A"), input_value("B")
+        return (a if isinstance(a, tuple) else (a,)) + (b if isinstance(b, tuple) else (b,))
     left = input_value("A")
     right = input_value("B", node.properties.get("const_b"))
     operation = (lambda a, b: a + b) if name == "Add" else (lambda a, b: a * b)
@@ -168,6 +189,8 @@ class VanillaEffectsSetupTest(unittest.TestCase):
         (project / "UEBridge.uproject").touch()
         (project / "Source/UEBridge").mkdir(parents=True)
         (project / "Source/UEBridge/BridgeVanillaEffects.h").touch()
+        (project / "bridge_lighting_materials.py").write_text((SCRIPT.parent / "bridge_lighting_materials.py").read_text())
+        (project / "setup_vanilla_effects.py").write_text(SCRIPT.read_text())
         self.editor = Editor(project)
 
     def test_quarter_sprite_uvs_and_explicit_custom_data_transport(self):
@@ -187,13 +210,53 @@ class VanillaEffectsSetupTest(unittest.TestCase):
         self.assertTrue(material.properties["two_sided"])
         self.assertTrue(material.properties["used_with_instanced_static_meshes"])
 
+    def test_native_particle_light_uses_three_explicit_channels_without_altering_uv(self):
+        material = self.editor.run()
+        indices = sorted(node.properties['data_index'] for node in material.nodes if type(node).__name__ == 'PerInstanceCustomData')
+        self.assertEqual([0, 1, 2, 3, 4], indices)
+        lightmap = next(node for node in material.nodes if type(node).__name__ == 'Custom' and node.properties.get('description') == 'Bridge native lightmap v1')
+        blend = lightmap.inputs['Light'][0]
+        light, output = blend.inputs['B']
+        self.assertEqual('VertexInterpolator', type(light).__name__)
+        self.assertEqual('', output)
+        for sky, block, shade in ((0, 0, 1), (1, 0, 1), (.2, .7, .9)):
+            self.assertEqual((sky, block, shade), evaluate(light, (.1, .9), (.3, .4, sky, block, shade)))
+        use_vertex = blend.inputs['Alpha'][0]
+        self.assertEqual('BridgeUseVertexLight', use_vertex.properties['parameter_name'])
+        self.assertEqual(1.0, use_vertex.properties['default_value'])
+        self.assertEqual('lit', material.properties['shading_model'])
+        self.assertIn('base', material.outputs)
+        self.assertIn('emissive', material.outputs)
+        self.assertIn('specular', material.outputs)
+        self.assertEqual('ParticleColor', next(node for node in material.nodes if type(node).__name__ == 'VectorParameter' and node.properties.get('parameter_name') == 'ParticleColor').properties['parameter_name'])
+    def test_standalone_render_migration_rebuilds_legacy_dust_with_instance_light(self):
+        import runpy
+        owned = Material(); user_material = Material()
+        self.editor.assets['/Game/Bridge/Minecraft/M_MinecraftDust_v1'] = owned
+        self.editor.assets['/Game/Bridge/Minecraft/UserMaterial'] = user_material
+        with patch.dict(sys.modules, {'unreal': self.editor.api}):
+            runpy.run_path(str(SCRIPT.parent / 'setup_bridge_rendering.py'))['setup_bridge_rendering']()
+        self.assertIs(owned, self.editor.receivers[0].properties['vanilla_particle_material'])
+        self.assertIs(user_material, self.editor.assets['/Game/Bridge/Minecraft/UserMaterial'])
+        self.assertEqual([], user_material.nodes)
+        self.assertEqual([0,1,2,3,4], sorted(node.properties['data_index'] for node in owned.nodes if type(node).__name__ == 'PerInstanceCustomData'))
+        self.assertEqual(2, self.editor.level_saves)
+        self.assertIn('outline_material', self.editor.receivers[0].properties)
+
+    def test_missing_lighting_helper_blocks_asset_edits(self):
+        (pathlib.Path(self.temp.name) / 'bridge_lighting_materials.py').unlink()
+        with self.assertRaisesRegex(RuntimeError, 'Copy bridge_lighting_materials'):
+            self.editor.run()
+        self.assertEqual({}, self.editor.assets)
+        self.assertEqual([], self.editor.saved)
+
     def test_retry_repairs_owned_asset_and_saves_receiver_assignment(self):
         material = self.editor.run()
         count = len(material.nodes)
         material.nodes.append(object())
         self.assertIs(material, self.editor.run())
         self.assertEqual(count, len(material.nodes))
-        self.assertEqual(1, len(self.editor.assets))
+        self.assertEqual(2, len(self.editor.assets))
         self.assertIs(material, self.editor.receivers[0].properties["vanilla_particle_material"])
         self.assertEqual(2, self.editor.level_saves)
 
@@ -228,7 +291,7 @@ class VanillaEffectsSetupTest(unittest.TestCase):
                 self.editor.run()
             setattr(self.editor, field, False)
             self.assertEqual({}, self.editor.receivers[0].properties)
-            self.assertEqual([], self.editor.saved)
+            self.assertTrue(all(isinstance(asset, Collection) for asset in self.editor.saved))
             self.assertEqual(0, self.editor.level_saves)
 
 

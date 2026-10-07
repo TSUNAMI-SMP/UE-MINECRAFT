@@ -92,6 +92,12 @@ bool Bake(const Object& Model,const Object& Application,TArray<FBridgeModelFace>
             FBridgeModelFace Face;
             if(!FaceObject->TryGetStringField(TEXT("texture"),Face.TextureId)) return false;
             double TintIndex=-1;FaceObject->TryGetNumberField(TEXT("tintindex"),TintIndex);Face.bTint=TintIndex>=0;
+            FString CullFace;FaceObject->TryGetStringField(TEXT("cullface"),CullFace);
+            const FVector CullNormal=CullFace==TEXT("up") ? FVector(0,1,0) : CullFace==TEXT("down") ? FVector(0,-1,0)
+                : CullFace==TEXT("east") ? FVector(1,0,0) : CullFace==TEXT("west") ? FVector(-1,0,0)
+                : CullFace==TEXT("south") ? FVector(0,0,1) : CullFace==TEXT("north") ? FVector(0,0,-1) : FVector::ZeroVector;
+            const FVector Cull=Rotation.RotateVector(CullNormal);
+            Face.CullOffset=FIntVector(FMath::RoundToInt(Cull.X),FMath::RoundToInt(Cull.Y),FMath::RoundToInt(Cull.Z));
             FVector Normal;FVector4 Rectangle;
             const double A=From.X,B=From.Y,C=From.Z,D=To.X,E=To.Y,F=To.Z;
             if(Pair.Key==TEXT("down")) {
@@ -168,9 +174,12 @@ FVector UBridgeBlockPalette::GetModelOffset(const FString& BlockId,const FIntVec
     return FVector(FMath::Clamp(X,-Horizontal,Horizontal),Y,FMath::Clamp(Z,-Horizontal,Horizontal));
 }
 bool UBridgeBlockPalette::GetStateBoxes(const FString& BlockId,const FString& StateKey,TArray<FBox>& Collision,TArray<FBox>& Outline) const {
+    const FString CacheKey=BlockId+TEXT("[")+StateKey+TEXT("]");
+    if(const auto* Cached=CollisionCache.Find(CacheKey)) {Collision=*Cached;Outline=OutlineCache.FindChecked(CacheKey);return true;}
     Collision.Reset();Outline.Reset();const Object Entry=ReadShapes(BlockId);
     const Object States=Child(Entry,TEXT("states"));const Object State=Child(States,StateKey.IsEmpty() ? DefaultState(BlockId) : StateKey);
-    return Boxes(State,TEXT("collision"),Collision) && Boxes(State,TEXT("outline"),Outline);
+    const bool Valid=Boxes(State,TEXT("collision"),Collision) && Boxes(State,TEXT("outline"),Outline);
+    if(Valid && CollisionCache.Num()<65536) {CollisionCache.Add(CacheKey,Collision);OutlineCache.Add(CacheKey,Outline);}return Valid;
 }
 bool UBridgeBlockPalette::HasSolidFace(const FString& BlockId,const FString& StateKey,const FString& Face) const {
     const Object State=Child(Child(ReadShapes(BlockId),TEXT("states")),StateKey.IsEmpty() ? DefaultState(BlockId) : StateKey);
@@ -185,6 +194,15 @@ bool UBridgeBlockPalette::HasSolidFace(const FString& BlockId,const FString& Sta
 bool UBridgeBlockPalette::CannotConnect(const FString& BlockId,const FString& StateKey) const {
     const Object State=Child(Child(ReadShapes(BlockId),TEXT("states")),StateKey.IsEmpty() ? DefaultState(BlockId) : StateKey);
     bool Result=false;if(State.IsValid()) State->TryGetBoolField(TEXT("cannotConnect"),Result);return Result;
+}
+bool UBridgeBlockPalette::IsOpaqueFullCube(const FString& BlockId,const FString& StateKey) const {
+    const FString Key=BlockId+TEXT("[")+StateKey+TEXT("]");
+    if(const bool* Cached=OpaqueCache.Find(Key)) return *Cached;
+    const Object State=Child(Child(ReadShapes(BlockId),TEXT("states")),StateKey.IsEmpty() ? DefaultState(BlockId) : StateKey);
+    bool Opaque=false;
+    // Older manifests never guessed transparency from physics; their faces remain visible.
+    if(State.IsValid()) State->TryGetBoolField(TEXT("opaqueFullCube"),Opaque);
+    OpaqueCache.Add(Key,Opaque);return Opaque;
 }
 bool UBridgeBlockPalette::BuildModel(const FString& BlockId,const FString& StateKey,TArray<FBridgeModelFace>& Out) const {
     Out.Reset();const FString State=StateKey.IsEmpty() ? DefaultState(BlockId) : StateKey;

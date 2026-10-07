@@ -92,6 +92,11 @@ def _validate_models(manifest):
                 raise ValueError(f"{identifier}: state={key!r}: {error}. Update the Bridge MOD and re-export textures.") from error
             if not isinstance(state, dict):
                 raise ValueError("Invalid native state")
+            for lighting_key in ('emission', 'opacity'):
+                if lighting_key in state and (type(state[lighting_key]) is not int or not 0 <= state[lighting_key] <= 15):
+                    raise ValueError('Invalid native state lighting')
+            if 'opaqueFullCube' in state and type(state['opaqueFullCube']) is not bool:
+                raise ValueError('Invalid native opaque cube')
             if type(state.get("cannotConnect", False)) is not bool:
                 raise ValueError("Invalid native connection flag")
             solid = state.get("solidFaces")
@@ -245,75 +250,73 @@ def load_texture_manifest(filename):
     return manifest
 
 
+def _lighting_functions(unreal):
+    import runpy
+    source = globals().get('__file__')
+    script = pathlib.Path(source).with_name('bridge_lighting_materials.py') if source else pathlib.Path(
+        unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir())) / 'bridge_lighting_materials.py'
+    if not script.is_file():
+        raise RuntimeError('Copy bridge_lighting_materials.py next to UEBridge.uproject first')
+    return runpy.run_path(str(script))
+
+
 def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mode):
-    """Create/reuse the actual UE material graph; alpha behavior is texture metadata."""
-    translucent = alpha_mode == "translucent"
-    name = "M_MinecraftModel_" + ("Translucent" if translucent else "Masked") + "_v2"
-    path = root + "/" + name
+    """Rebuild our generated master only, retaining existing texture instances."""
+    translucent = alpha_mode == 'translucent'
+    name = 'M_MinecraftModel_' + ('Translucent' if translucent else 'Masked') + '_v2'
+    path = root + '/' + name
     parent = unreal.load_asset(path) if assets.does_asset_exist(path) else None
     if parent is None:
         parent = tools.create_asset(name, root, unreal.Material, unreal.MaterialFactoryNew())
-        if parent is None:
-            raise RuntimeError("Cannot create model-face material")
-        parent.set_editor_property("blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT if translucent else unreal.BlendMode.BLEND_MASKED)
-        parent.set_editor_property("opacity_mask_clip_value", 0.1)
-        parent.set_editor_property("two_sided", True)  # Crossed plant planes need both sides.
-        if translucent:
-            # UE's surface lighting path is needed for stained glass and ice, rather
-            # than the default volumetric-particle translucency lighting.
-            parent.set_editor_property("translucency_lighting_mode", unreal.TranslucencyLightingMode.TLM_SURFACE)
-        def expression(cls):
-            value = editing.create_material_expression(parent, cls, 0, 0)
-            if value is None:
-                raise RuntimeError("Cannot create model material expression")
-            return value
-        def connect(a, b, pin="", output=""):
-            if not editing.connect_material_expressions(a, output, b, pin):
-                raise RuntimeError("Cannot connect model material: " + pin)
-        sample = expression(unreal.MaterialExpressionTextureSampleParameter2D)
-        sample.set_editor_property("parameter_name", "FaceTexture"); sample.set_editor_property("texture", sample_texture)
-        color = expression(unreal.MaterialExpressionVectorParameter)
-        color.set_editor_property("parameter_name", "BlockColor"); color.set_editor_property("default_value", unreal.LinearColor(1, 1, 1, 1))
-        tint = expression(unreal.MaterialExpressionScalarParameter)
-        tint.set_editor_property("parameter_name", "FaceTint"); tint.set_editor_property("default_value", 0.0)
-        white = expression(unreal.MaterialExpressionConstant3Vector); white.set_editor_property("constant", unreal.LinearColor(1, 1, 1, 1))
-        blend = expression(unreal.MaterialExpressionLinearInterpolate)
-        connect(white, blend, "A"); connect(color, blend, "B"); connect(tint, blend, "Alpha")
-        colored = expression(unreal.MaterialExpressionMultiply)
-        connect(sample, colored, "A", "RGB"); connect(blend, colored, "B")
-        unlit = expression(unreal.MaterialExpressionScalarParameter)
-        unlit.set_editor_property("parameter_name", "BridgeUnlit"); unlit.set_editor_property("default_value", 0.0)
-        zero = expression(unreal.MaterialExpressionConstant); zero.set_editor_property("r", 0.0)
-        base = expression(unreal.MaterialExpressionLinearInterpolate)
-        connect(colored, base, "A"); connect(zero, base, "B"); connect(unlit, base, "Alpha")
-        emissive = expression(unreal.MaterialExpressionLinearInterpolate)
-        connect(zero, emissive, "A"); connect(colored, emissive, "B"); connect(unlit, emissive, "Alpha")
-        alpha_target = unreal.MaterialProperty.MP_OPACITY if translucent else unreal.MaterialProperty.MP_OPACITY_MASK
-        for node_value, output, target in ((base, "", unreal.MaterialProperty.MP_BASE_COLOR), (emissive, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR), (sample, "A", alpha_target)):
-            if not editing.connect_material_property(node_value, output, target):
-                raise RuntimeError("Cannot connect model-face output")
-        roughness = expression(unreal.MaterialExpressionConstant); roughness.set_editor_property("r", 0.85)
-        if not editing.connect_material_property(roughness, "", unreal.MaterialProperty.MP_ROUGHNESS):
-            raise RuntimeError("Cannot connect model-face roughness")
-        editing.recompile_material(parent)
-        if not assets.save_loaded_asset(parent, False):
-            raise RuntimeError("Cannot save model-face master")
-    elif not isinstance(parent, unreal.Material):
-        raise RuntimeError("Model master path has another asset type")
-    required = {"FaceTexture"}
-    if not required.issubset({str(name) for name in editing.get_texture_parameter_names(parent)}):
-        raise RuntimeError("Model-face master has an incomplete texture graph")
-    scalars = {str(name) for name in editing.get_scalar_parameter_names(parent)}
-    if "BridgeSpecular" not in scalars:
-        specular = editing.create_material_expression(parent, unreal.MaterialExpressionScalarParameter, -200, 300)
-        specular.set_editor_property("parameter_name", "BridgeSpecular"); specular.set_editor_property("default_value", 0.0)
-        if not editing.connect_material_property(specular, "", unreal.MaterialProperty.MP_SPECULAR):
-            raise RuntimeError("Cannot connect diffuse-only specular")
-        editing.recompile_material(parent)
-        if not assets.save_loaded_asset(parent, False):
-            raise RuntimeError("Cannot save diffuse-only master")
-    if not {"FaceTint", "BridgeUnlit"}.issubset(scalars):
-        raise RuntimeError("Model-face master has an incomplete tint/lighting graph")
+    if not isinstance(parent, unreal.Material):
+        raise RuntimeError('Model master path has another asset type')
+    scalar_names = {str(value) for value in editing.get_scalar_parameter_names(parent)}
+    texture_names = {str(value) for value in editing.get_texture_parameter_names(parent)}
+    if {'FaceTint', 'BridgeUnlit', 'BridgeUseVertexLight', 'BridgeSpecular'}.issubset(scalar_names) and 'FaceTexture' in texture_names:
+        # All texture instances share a master: do not rebuild/recompile it once per item sprite.
+        return parent
+    lighting = _lighting_functions(unreal)  # Resolve required helper before replacing a graph.
+    # This graph migration repairs both the ON branch and old fixed-brightness OFF.
+    editing.delete_all_material_expressions(parent)
+    parent.set_editor_property('blend_mode', unreal.BlendMode.BLEND_TRANSLUCENT if translucent else unreal.BlendMode.BLEND_MASKED)
+    parent.set_editor_property('opacity_mask_clip_value', 0.1)
+    parent.set_editor_property('two_sided', True)
+    if translucent:
+        parent.set_editor_property('translucency_lighting_mode', unreal.TranslucencyLightingMode.TLM_SURFACE)
+    def expression(cls):
+        value = editing.create_material_expression(parent, cls, 0, 0)
+        if value is None:
+            raise RuntimeError('Cannot create model material expression')
+        return value
+    def connect(a, b, pin='', output=''):
+        if not editing.connect_material_expressions(a, output, b, pin):
+            raise RuntimeError('Cannot connect model material: ' + pin)
+    sample = expression(unreal.MaterialExpressionTextureSampleParameter2D)
+    sample.set_editor_property('parameter_name', 'FaceTexture'); sample.set_editor_property('texture', sample_texture)
+    color = expression(unreal.MaterialExpressionVectorParameter)
+    color.set_editor_property('parameter_name', 'BlockColor'); color.set_editor_property('default_value', unreal.LinearColor(1, 1, 1, 1))
+    tint = expression(unreal.MaterialExpressionScalarParameter)
+    tint.set_editor_property('parameter_name', 'FaceTint'); tint.set_editor_property('default_value', 0.0)
+    white = expression(unreal.MaterialExpressionConstant3Vector); white.set_editor_property('constant', unreal.LinearColor(1, 1, 1, 1))
+    blend = expression(unreal.MaterialExpressionLinearInterpolate)
+    connect(white, blend, 'A'); connect(color, blend, 'B'); connect(tint, blend, 'Alpha')
+    colored = expression(unreal.MaterialExpressionMultiply)
+    connect(sample, colored, 'A', 'RGB'); connect(blend, colored, 'B')
+    lighting['wire_vanilla_lighting'](unreal, editing, parent, colored,
+        use_vertex=not root.endswith('/Items'))
+    alpha_target = unreal.MaterialProperty.MP_OPACITY if translucent else unreal.MaterialProperty.MP_OPACITY_MASK
+    if not editing.connect_material_property(sample, 'A', alpha_target):
+        raise RuntimeError('Cannot connect model-face alpha')
+    roughness = expression(unreal.MaterialExpressionConstant); roughness.set_editor_property('r', 0.85)
+    if not editing.connect_material_property(roughness, '', unreal.MaterialProperty.MP_ROUGHNESS):
+        raise RuntimeError('Cannot connect model-face roughness')
+    editing.recompile_material(parent)
+    if not assets.save_loaded_asset(parent, False):
+        raise RuntimeError('Cannot save model-face master')
+    if not {'FaceTexture'}.issubset({str(name) for name in editing.get_texture_parameter_names(parent)}):
+        raise RuntimeError('Model-face master has an incomplete texture graph')
+    if not {'FaceTint', 'BridgeUnlit', 'BridgeUseVertexLight'}.issubset({str(name) for name in editing.get_scalar_parameter_names(parent)}):
+        raise RuntimeError('Model-face master has an incomplete tint/lighting graph')
     return parent
 
 
@@ -323,6 +326,8 @@ def import_minecraft_textures(filename):
     project = pathlib.Path(unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()))
     if not (project / "UEBridge.uproject").is_file() or not (project / "Source/UEBridge/BridgeBlockPalette.h").is_file():
         raise RuntimeError("Use the updated UEBridge project only")
+    if not (project / 'bridge_lighting_materials.py').is_file() or (manifest['version'] == 2 and not (project / 'import_minecraft_atlas.py').is_file()):
+        raise RuntimeError('Copy bridge_lighting_materials.py and import_minecraft_atlas.py next to UEBridge.uproject first')
     if unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world() is not None:
         raise RuntimeError("Stop Play before importing textures")
     if unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages():
@@ -385,8 +390,10 @@ def import_minecraft_textures(filename):
         parent = unreal.load_asset(parent_path) if assets.does_asset_exist(parent_path) else None
         if parent is None:
             parent = tools.create_asset("M_MinecraftFaces_v4", root, unreal.Material, unreal.MaterialFactoryNew())
-            if parent is None:
-                raise RuntimeError("Cannot create texture master material")
+        if not isinstance(parent, unreal.Material):
+            raise RuntimeError("Master material path is occupied by a different type")
+        if parent is not None:
+            editing.delete_all_material_expressions(parent)
             parent.set_editor_property("used_with_instanced_static_meshes", True)
             parent.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED)
             parent.set_editor_property("opacity_mask_clip_value", 0.1)
@@ -420,7 +427,7 @@ def import_minecraft_textures(filename):
                 wire(sample, product, "A", "RGB"); wire(blend, product, "B")
                 channels[face] = product
                 alpha_channels[face] = sample
-            normal = node(unreal.MaterialExpressionVertexNormalWS)
+            normal = node(unreal.MaterialExpressionPixelNormalWS)
             z = node(unreal.MaterialExpressionComponentMask)
             z.set_editor_property("r", False); z.set_editor_property("g", False)
             z.set_editor_property("b", True); z.set_editor_property("a", False)
@@ -440,16 +447,7 @@ def import_minecraft_textures(filename):
             wire(opacity_first, opacity, "A"); wire(alpha_channels["Bottom"], opacity, "B", "A"); wire(bottom, opacity, "Alpha")
             if not editing.connect_material_property(opacity, "", unreal.MaterialProperty.MP_OPACITY_MASK):
                 raise RuntimeError("Cannot connect cube alpha mask")
-            # One parameter switches diffuse shading off and restores pixel color as emissive.
-            unlit = node(unreal.MaterialExpressionScalarParameter)
-            unlit.set_editor_property("parameter_name", "BridgeUnlit"); unlit.set_editor_property("default_value", 0.0)
-            zero = node(unreal.MaterialExpressionConstant); zero.set_editor_property("r", 0.0)
-            base = node(unreal.MaterialExpressionLinearInterpolate)
-            wire(result, base, "A"); wire(zero, base, "B"); wire(unlit, base, "Alpha")
-            emissive = node(unreal.MaterialExpressionLinearInterpolate)
-            wire(zero, emissive, "A"); wire(result, emissive, "B"); wire(unlit, emissive, "Alpha")
-            if not editing.connect_material_property(base, "", unreal.MaterialProperty.MP_BASE_COLOR) or not editing.connect_material_property(emissive, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR):
-                raise RuntimeError("Cannot connect lighting switch")
+            _lighting_functions(unreal)['wire_vanilla_lighting'](unreal, editing, parent, result, use_vertex=False)
             roughness = node(unreal.MaterialExpressionConstant); roughness.set_editor_property("r", 0.85)
             editing.connect_material_property(roughness, "", unreal.MaterialProperty.MP_ROUGHNESS)
             editing.recompile_material(parent)
@@ -566,6 +564,12 @@ def import_minecraft_textures(filename):
                 merged = dict(palette.get_editor_property(field))
                 merged.update({key: json.dumps(value, separators=(",", ":"), ensure_ascii=True) for key, value in source.items()})
                 palette.set_editor_property(field, merged)
+        if manifest['version'] == 2:
+            import runpy
+            atlas_script = project / 'import_minecraft_atlas.py'
+            if not atlas_script.is_file():
+                raise RuntimeError('Copy import_minecraft_atlas.py next to UEBridge.uproject first')
+            runpy.run_path(str(atlas_script))['import_minecraft_atlas'](unreal, manifest, palette, root)
         if not assets.save_loaded_asset(palette, False):
             raise RuntimeError("Cannot save texture palette")
         receivers[0].set_editor_property("texture_palette", palette)

@@ -24,11 +24,31 @@ class ItemManifestTest(unittest.TestCase):
     def load(self, data=None):
         path = self.root / 'manifest.json'; path.write_text(json.dumps(self.manifest if data is None else data))
         return items.load_item_manifest(path)
-    def test_native_quads_tints_and_four_display_contexts_round_trip(self):
+    def test_native_quads_tints_and_ground_display_contexts_round_trip(self):
         result = self.load()
         self.assertEqual(set(items.CONTEXTS), set(result['items'][self.key]))
         self.assertEqual(0x345678, result['items'][self.key][items.CONTEXTS[0]][0]['color'])
         self.assertEqual(str(self.root / 'textures' / (self.hash + '.png')), result['textures'][self.hash]['source'])
+    def test_legacy_hand_only_export_remains_valid_without_fabricated_ground(self):
+        data = copy.deepcopy(self.manifest)
+        data['items'][self.key].pop('ground')
+        result = self.load(data)
+        self.assertEqual(set(items.HAND_CONTEXTS), set(result['items'][self.key]))
+        self.assertEqual(0, items.ground_model_count(result))
+        self.assertNotIn('ground', result['items'][self.key])
+    def test_new_ground_display_retains_native_scale_and_texture(self):
+        data = copy.deepcopy(self.manifest)
+        data['items'][self.key]['ground'][0]['vertices'] = [[-.25,.125,0],[.25,.125,0],[.25,.625,0],[-.25,.625,0]]
+        result = self.load(self.compressed(data))
+        self.assertEqual(1, items.ground_model_count(result))
+        self.assertEqual([-.25,.125,0], result['items'][self.key]['ground'][0]['vertices'][0])
+        self.assertEqual(self.hash, result['items'][self.key]['ground'][0]['texture'])
+    def test_partial_or_unknown_ground_contexts_are_rejected(self):
+        for extra in ('fixed', 'ground_typo'):
+            data = copy.deepcopy(self.manifest); data['items'][self.key][extra] = data['items'][self.key]['ground']
+            with self.assertRaises(ValueError): self.load(data)
+        data = copy.deepcopy(self.manifest); data['items'][self.key]['ground'] = []
+        with self.assertRaises(ValueError): self.load(data)
     def test_native_geometry_rejects_nan_booleans_and_incomplete_quads(self):
         for value in (float('nan'), float('inf'), True, '1'):
             data = copy.deepcopy(self.manifest); data['items'][self.key][items.CONTEXTS[0]][0]['vertices'][0][0] = value

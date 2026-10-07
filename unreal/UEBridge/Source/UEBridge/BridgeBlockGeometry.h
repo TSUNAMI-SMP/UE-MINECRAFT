@@ -8,4 +8,6 @@ struct FBridgeModelFace {
     FString TextureId;
     bool bTint=false;
     FColor Color=FColor::White;
+    /** Native cullface is independent of the normal (rotated cuboids may have none). */
+    FIntVector CullOffset=FIntVector::ZeroValue;
 };

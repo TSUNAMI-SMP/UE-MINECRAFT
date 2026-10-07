@@ -185,6 +185,8 @@ def import_minecraft_mobs(filename):
     receivers = [actor for actor in unreal.get_editor_subsystem(unreal.EditorActorSubsystem).get_all_level_actors() if isinstance(actor, unreal.BridgeReceiver)]
     if len(receivers) != 1:
         raise RuntimeError("The current saved level must have exactly one BridgeReceiver")
+    if not (project / 'bridge_lighting_materials.py').is_file():
+        raise RuntimeError('Copy bridge_lighting_materials.py next to UEBridge.uproject before importing mobs')
     assets, tools = unreal.EditorAssetLibrary, unreal.AssetToolsHelpers.get_asset_tools()
     editing = unreal.MaterialEditingLibrary
     root = "/Game/Bridge/Minecraft/Mobs"
@@ -224,7 +226,12 @@ def import_minecraft_mobs(filename):
         raise RuntimeError("Cannot create mob texture parameter")
     sample.set_editor_property("parameter_name", "MobTexture")
     sample.set_editor_property("texture", texture_for(first))
-    if not editing.connect_material_property(sample, "RGB", unreal.MaterialProperty.MP_BASE_COLOR) or not editing.connect_material_property(sample, "A", unreal.MaterialProperty.MP_OPACITY_MASK):
+    import runpy
+    helper = project / 'bridge_lighting_materials.py'
+    if not helper.is_file():
+        raise RuntimeError('Copy bridge_lighting_materials.py next to UEBridge.uproject first')
+    runpy.run_path(str(helper))['wire_vanilla_lighting'](unreal, editing, parent, sample, use_vertex=False)
+    if not editing.connect_material_property(sample, "A", unreal.MaterialProperty.MP_OPACITY_MASK):
         raise RuntimeError("Cannot connect mob texture color/alpha")
     roughness = editing.create_material_expression(parent, unreal.MaterialExpressionConstant, -250, 180)
     roughness.set_editor_property("r", 0.85)

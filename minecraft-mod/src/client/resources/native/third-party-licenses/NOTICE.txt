@@ -1,0 +1,49 @@
+Third-party notices for uebridge_gpu.dll
+========================================
+
+The Windows x64 DLL embeds GCC libgcc/libstdc++ runtime code and
+MinGW-w64 runtime support. These notices apply to those third-party
+components. They do not replace the project license for UE-MINECRAFT
+source code.
+
+Release toolchain:
+- GCC 14.2.0, Debian g++-mingw-w64-x86-64-posix 14.2.0-19+27+b1
+- MinGW-w64 12.0.0, Debian mingw-w64-common/x86-64-dev 12.0.0-5
+
+GCC libgcc and GNU ISO C++ Library (libstdc++)
+Copyright (C) Free Software Foundation, Inc. and contributors.
+Licensed under GNU GPL version 3 or later, with GCC Runtime Library
+Exception version 3.1. The native library was compiled using GCC,
+with no non-GPL compiler plugin or intermediate-code optimizer.
+Verbatim license texts:
+- GCC-GPL-3.0.txt (GCC COPYING3)
+- GCC-RUNTIME-EXCEPTION-3.1.txt (GCC COPYING.RUNTIME)
+- GCC-package-notices.txt (complete notices from the installed Debian
+  cross-compiler package; its retained historical references are part
+  of that package's verbatim notice)
+
+Official license sources:
+https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-14/COPYING3
+https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-14/COPYING.RUNTIME
+GCC source:
+https://gcc.gnu.org/releases.html
+https://sources.debian.org/src/gcc-mingw-w64/
+
+MinGW-w64 runtime
+Copyright (C) the MinGW-w64 project and the individual contributors
+listed in MinGW-w64-notices.txt. The complete installed Debian notice
+includes Zope Public License 2.1, public-domain, BSD and Expat/MIT
+notices for its runtime, support libraries and headers.
+The complete inventory also identifies files not linked into this DLL;
+including that inventory does not imply that every listed component
+is included in the binary.
+MinGW-w64 source and version:
+https://github.com/mingw-w64/mingw-w64/tree/v12.0.0
+https://sources.debian.org/src/mingw-w64/12.0.0-5/
+
+Provenance of installed notices:
+/usr/share/doc/gcc-mingw-w64-base/copyright
+/usr/share/doc/mingw-w64-common/copyright
+
+The DLL imports Windows system libraries (d3d11, dxgi, opengl32,
+kernel32 and msvcrt). Windows system DLLs are not distributed here.

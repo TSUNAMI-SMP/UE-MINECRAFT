@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.nio.ByteBuffer;
 import java.security.MessageDigest;
@@ -21,7 +22,8 @@ public final class WorldSnapshot {
                     && Math.abs((long)z - center.z) <= radius;
         }
     }
-    public record Shape(double x, double y, double z, int color, double sx, double sy, double sz, String blockId, boolean collision, int blockX,int blockY,int blockZ,String stateKey,int role) {
+    public record Shape(double x, double y, double z, int color, double sx, double sy, double sz, String blockId, boolean collision, int blockX,int blockY,int blockZ,String stateKey,int role,int skyLight,int blockLight,int opacity,int emission) {
+        public Shape(double x,double y,double z,int color,double sx,double sy,double sz,String blockId,boolean collision,int blockX,int blockY,int blockZ,String stateKey,int role) { this(x,y,z,color,sx,sy,sz,blockId,collision,blockX,blockY,blockZ,stateKey,role,15,0,15,0); }
         public Shape(double x,double y,double z,int color,double sx,double sy,double sz,String blockId,boolean collision,int blockX,int blockY,int blockZ) { this(x,y,z,color,sx,sy,sz,blockId,collision,blockX,blockY,blockZ,"",0); }
         public Shape(double x,double y,double z,int color,double sx,double sy,double sz,String blockId,boolean collision) { this(x,y,z,color,sx,sy,sz,blockId,collision,0,0,0); }
         public Shape(double x,double y,double z,int color,double sx,double sy,double sz) { this(x,y,z,color,sx,sy,sz,"",false); }
@@ -33,7 +35,8 @@ public final class WorldSnapshot {
                     || sx <= 0 || sy <= 0 || sz <= 0 || sx > 4 || sy > 4 || sz > 4
                     || Math.abs((long)blockX)>30000000 || Math.abs((long)blockY)>30000000 || Math.abs((long)blockZ)>30000000
                     || blockId==null || blockId.length()>128 || (!blockId.isEmpty() && !blockId.matches("[a-z0-9_.-]+:[a-z0-9_./-]+"))
-                    || stateKey==null || stateKey.length()>1024 || !stateKey.matches("[a-z0-9_=,.-]*") || role<0 || role>3)
+                    || stateKey==null || stateKey.length()>1024 || !stateKey.matches("[a-z0-9_=,.-]*") || role<0 || role>3
+                    || skyLight<0 || skyLight>15 || blockLight<0 || blockLight>15 || opacity<0 || opacity>15 || emission<0 || emission>15)
                 throw new IllegalArgumentException("Invalid world shape");
         }
     }
@@ -50,9 +53,43 @@ public final class WorldSnapshot {
                 hash.update((byte)(s.collision ? 1 : 0)); hash.update((byte)id.length); hash.update(id);
                 hash.update((byte)s.role); byte[] state=s.stateKey.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 hash.update((byte)(state.length>>8)); hash.update((byte)state.length); hash.update(state);
+                hash.update((byte)s.skyLight);hash.update((byte)s.blockLight);hash.update((byte)s.opacity);hash.update((byte)s.emission);
             }
             return java.util.HexFormat.of().formatHex(hash.digest());
         } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
+    }
+    /** Dictionary-coded logical native blocks, including buried voxels for UE edits/light. */
+    public static List<JsonObject> encodeCompact(Cell cell,List<Shape> shapes,double originX,double originY,double originZ) {
+        if(shapes.size()>512 || !Double.isFinite(originX) || !Double.isFinite(originY) || !Double.isFinite(originZ)
+                || Math.abs(originX)>30000000 || Math.abs(originY)>30000000 || Math.abs(originZ)>30000000)
+            throw new IllegalArgumentException("Invalid compact cell/origin");
+        String id=UUID.randomUUID().toString(); List<JsonObject> result=new ArrayList<>();
+        JsonArray palette=new JsonArray(),rows=new JsonArray(); Map<String,Integer> indices=new java.util.LinkedHashMap<>();
+        var owners=new java.util.HashSet<Integer>();
+        for(Shape shape:shapes) {
+            int x=shape.blockX-cell.x*8,y=shape.blockY-cell.y*8,z=shape.blockZ-cell.z*8;
+            if(shape.role!=1 || shape.blockId.isEmpty() || x<0 || x>7 || y<0 || y>7 || z<0 || z>7 || !owners.add(x+(z<<3)+(y<<6)))
+                throw new IllegalArgumentException("Compact cells require one native visual per local voxel");
+            JsonArray entry=new JsonArray();entry.add(shape.blockId);entry.add(shape.stateKey);entry.add(shape.color);entry.add(shape.opacity);entry.add(shape.emission);
+            String key=entry.toString(); Integer p=indices.get(key);
+            JsonArray row=new JsonArray();row.add(x+(z<<3)+(y<<6));row.add(p==null ? palette.size() : p);row.add(shape.skyLight);row.add(shape.blockLight);
+            int candidateBytes=palette.toString().length()+rows.toString().length()+row.toString().length()+(p==null ? key.length() : 0);
+            if(rows.size()>0 && (rows.size()>=128 || (p==null && palette.size()>=32) || candidateBytes>1396)) {
+                result.add(compactPacket(cell,id,originX,originY,originZ,palette,rows));palette=new JsonArray();rows=new JsonArray();indices.clear();p=null;
+                row.set(1,new com.google.gson.JsonPrimitive(0));
+            }
+            if(p==null) {p=palette.size();indices.put(key,p);palette.add(entry);}
+            rows.add(row);
+            if(palette.toString().length()+rows.toString().length()>1400) throw new IllegalArgumentException("Compact native state exceeds UDP budget");
+        }
+        if(rows.size()>0 || result.isEmpty()) result.add(compactPacket(cell,id,originX,originY,originZ,palette,rows));
+        for(int i=0;i<result.size();i++) {result.get(i).addProperty("batchIndex",i);result.get(i).addProperty("totalBatches",result.size());}
+        return result;
+    }
+    private static JsonObject compactPacket(Cell cell,String id,double x,double y,double z,JsonArray palette,JsonArray rows) {
+        JsonObject packet=new JsonObject();packet.addProperty("event","world_cell_compact");cellFields(packet,cell);
+        packet.addProperty("snapshotId",id);packet.addProperty("ox",x);packet.addProperty("oy",y);packet.addProperty("oz",z);
+        packet.add("palette",palette);packet.add("blocks",rows);return packet;
     }
     public static List<JsonObject> encode(Cell cell, List<Shape> shapes) {
         return encode(cell,shapes,false);

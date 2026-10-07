@@ -605,3 +605,215 @@ ignored by latest-export selection. Importer checks containment, checksum, gzip
 CRC, exact bounded decompressed length and all previous geometry/PNG validations.
 Legacy uncompressed version1 exports remain supported. UE palette data and the
 network/rendering protocol are unchanged; no UE module rebuild is required.
+
+## Terrain, lighting, item transactions and GPU video (0.11.0)
+
+This section supersedes the earlier release-specific limits and behavior. Both
+MOD and UE sources must be updated. UDP remains loopback JSON v1, at most2048
+bytes. Source Minecraft blocks are read; UE maintains gameplay edits. Local
+Minecraft player inventory is changed only by the new item escrow described below.
+
+### Per-event receipts and newly summoned mobs
+
+UE event ACKs add `receiverId`, the exact event's `seq`, `accepted:boolean`, and
+`reason` (at most160 characters). An accepted transport receipt establishes that
+this event was handled successfully, not that a shader/model was drawn. Rejection
+receipts terminate retries and expose the actual failure stage. The client matches
+receiver, session, event UUID and sequence before granting source-mob ownership.
+Legacy ACKs remain accepted for older non-transactional features. UE retains up to
+32768 event IDs/results for10seconds; this larger window covers compact terrain
+traffic without exhausting the former2048-ID budget. Client per-event receipts
+are retained in a1024-entry bounded map until receiver change.
+
+After sealing, native mobs are scanned every250ms near both the frozen MC source
+position and the current UE position. Read-only integrated-server snapshots use
+the spatial entity index for up to128 new target UUIDs, including entities outside
+the frozen client player's tracking range; primitive results cross to the client
+thread. Old/different-dimension/LAN results are discarded on source generation
+changes. No source entity is created, moved or rewritten by this scan. Newly summoned adult UUIDs can resolve their
+species through `templates`, with exact-type adult appearance fallback for older
+nearby-only palettes. An exported individual UUID retains its captured appearance.
+Baby geometry without its individual capture is deferred rather than substituted
+with an adult. `/summon` keeps its actual Minecraft coordinates; relative vanilla
+commands therefore still reference the frozen native player. New command
+`/uebridge mobs summon minecraft:zombie` (or villager) sends:
+
+```json
+{"event":"mob_template_spawn","importId":"00000000-0000-4000-8000-000000000003","mobType":"minecraft:zombie","x":0,"y":0,"z":2}
+```
+
+This reliable event uses UE-relative feet and the normal event envelope. The
+assigned palette, exact species, loaded-terrain bounds, supported floor, world
+capsule overlap, player capsule and actor/model initialization are checked before
+acceptance. A bounded adjacent-position search may move an obstructed ground spawn;
+it never skips the selected wall or closed door. Individual `mob_spawn` still
+supplies its width/height/health/appearance. Successfully delivered UUIDs are
+retained as tombstones so retransmission cannot resurrect a killed UE copy.
+Limits are128 live mobs and4096 source/spawn IDs per import. Each source UUID is
+leased only after its own accepted receipt; rejected/expired spawns leave the source
+running. Up to3 transport attempts keep the same UUID and bounded backoff. Stop,
+stale control, disconnect or a changed receiver releases all in-memory leases.
+Mob copies outside loaded terrain stop simulation until their area is loaded again.
+
+Species defaults are exported before nearby variants consume the128-appearance
+budget, with zombie/villager first. Empty cuboid exports are rejected. Empty root
+hierarchy nodes remain valid; complete geometry, UV, parent and pose validation
+precedes actor creation. `mobReason`, import status and `Bridge mob ...` UE logs
+include the palette/type/appearance and failed stage. These remain ground body
+models with generic AI; flying/swimming, feature layers and full species AI are
+not implied by successful spawning.
+
+### Compact cells and independent source chunk loading
+
+`terrainV2:true` enables horizontal `world_scope.radius:1..12` **8-block cells**
+and `halfHeight:1..6`. Four and six Minecraft chunks correspond to radii8 and12,
+with81 and169 native horizontal source chunks respectively, including the center.
+The largest inclusive scope is25×25×13=8125 cells; `world_commit.cells` now allows
+27..8125. After seal, a newer scope follows UE position. New cells are streamed
+without replacing already edited source voxels; UE edits remain authoritative.
+
+`world_cell_compact` has the reliable snapshot/cell envelope, `ox/oy/oz` absolute
+MC origin, and dictionary-coded native blocks. A palette entry is
+`[blockId,stateKey,RGBInteger,opacity,emission]`; a voxel row is
+`[localIndex,paletteIndex,skyLight,blockLight]`. Light, opacity and emission are
+integers0..15. Local index=`localX + (localZ<<3) + (localY<<6)`, with each coordinate
+0..7. The exact absolute owner comes from `cell*8 + local`; its center is relative
+to the provided origin. Visual/selection/collision geometry comes from the local
+validated native state palette, so repeated physics boxes do not cross the wire.
+
+```json
+{"event":"world_cell_compact","cellX":0,"cellY":0,"cellZ":0,"ox":0,"oy":64,"oz":0,"snapshotId":"00000000-0000-4000-8000-000000000004","snapshotSeq":10,"batchIndex":0,"totalBatches":1,"palette":[["minecraft:stone","",16777215,15,0]],"blocks":[[0,0,15,0]]}
+```
+
+At most32 dictionary entries and128 rows per packet,512 batches and512 unique
+logical voxels per completed cell. Duplicated owners, dangling dictionary indices,
+fractional or coerced values and invalid state characters are rejected. The client
+splits smaller packets to preserve the2048-byte envelope limit. `skyTop` optionally
+adds64 integer light levels to batch0, ordered localX+(localZ<<3), sampled at the
+cell's top boundary. Missing source chunks are loading, never an empty snapshot.
+An actually empty ready cell still commits one empty batch and its sky boundary.
+
+`SourceTerrainAccess` requests FULL chunks from the dedicated integrated server
+at the UE center, independently of native client render distance/player position.
+It uses loading-only, non-serialized,43-tick expiring tickets, refreshes active
+ones, keeps at most8 generation requests and requests2 new chunks per service job.
+No blocking `getChunk`/future join or player teleport is used. An actual FULL,
+light-ready WorldChunk is required before copying state/color/light. Cell snapshots
+are immutable across threads; the request queue is32 and cache256 cells. Server
+copying caps8 cells/4096 reads per job with a4ms work budget; empty sections skip
+voxel reads. Biome color sampling uses only already loaded chunks, so a color
+lookup cannot synchronously generate an adjacent chunk. Temporary tickets are
+removed on stop/world exit/dimension or LAN
+change. New terrain can generate in this dedicated local world as normal exploration
+would; source blocks, entities and forced-chunk state are not edited.
+
+UE drops faces occluded by native adjacent full faces, reuses a local texture
+atlas/material groups, and rebuilds affected cells under a bounded work queue.
+Near-player/mob/drop collision regions are maintained separately from distant
+visual meshes. This changes drawing/transfer cost; it does not establish actual
+Windows FPS without measurement.
+
+### Vanilla lighting environment
+
+Input may add a fully typed `vanillaLight` object:
+`skyFactor,blockFactor:0..4`; `ambient,gamma,nightVision,darkness,darkenWorld:0..1`;
+`skyColor,ambientColor:0..0xffffff` RGB integers; `hasSky:boolean`. Partial objects
+and nonfinite/coerced/out-of-range values are rejected. Native1.21.11 environment
+attributes, resource colors, gamma and lightmap/effect controls are sampled read-only.
+
+Lighting OFF now uses separate unlit diffuse materials driven by per-face
+brightness, corner AO, block/sky light and native lightmap-like environment values.
+UE terrain edits update local light propagation and the changed mesh; native source
+light is the starting condition, not a continuous overwrite of UE edits. Dynamic
+arms/items/mobs/drops receive surrounding light. The MC sky remains aligned to the
+same camera/day/environment. Lighting ON retains the UE lit path and its own
+material settings; toggling does not permanently replace the user's lights or level.
+Native lightmap timing/color and UE shader output still require real-game comparison.
+
+Dust instances preserve custom-data channels0/1 for UV offsets and add channels2
+for sky light,3 for block light and4 for face shade: five floats per instance.
+The material explicitly interpolates custom data into the pixel shader. Runtime
+lighting refreshes existing dust at20Hz; particle UVs and lighting do not share
+channels. Reimporting the0.11 dust material is required for these new channels.
+
+### Item escrow and world drops
+
+`itemDropsV1:true` enables configured vanilla drop-key input, including vanilla
+whole-stack modifier behavior. Input adds an inventory session `itemEpoch:UUID`
+and `itemSession:boolean`. Chat/GUI pauses keep escrow; full control exit renews
+the epoch. An old pending request cannot recreate an item in a closed epoch.
+Drops use an auxiliary packet, not the generic event retry queue:
+
+```json
+{"v":1,"kind":"item_drop","session":"00000000-0000-4000-8000-000000000001","seq":11,"itemTx":"00000000-0000-4000-8000-000000000005","itemEpoch":"00000000-0000-4000-8000-000000000006","importId":"00000000-0000-4000-8000-000000000003","itemId":"minecraft:diamond_sword","itemModelKey":"minecraft:diamond_sword@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","itemCount":1,"itemMaxCount":1,"position":{"x":0,"y":1.3,"z":0.5},"velocity":{"x":0,"y":2,"z":6}}
+```
+
+Position is relative MC blocks and velocity is MC blocks/sec, per component±30.
+Count/maxCount are integers1..99 with count≤native maximum. Model keys match the
+item identity. The dedicated integrated-server thread first validates the selected
+stack/components/slot and reserves exactly that count in an escrow, then sends the
+transaction. The receiver verifies current peer/session/epoch/import/controller,
+spawn reach and native GROUND model. No native MC dropped-item entity is created.
+Repeated itemTx does not create another drop. UE owns launch/gravity/collision,
+spin/bob, nearby pickup, stack merging and lifetime under bounded live-item limits.
+
+Results use `kind:"item_feedback"`, current session/receiver/seq, itemTx,
+`itemRevision`, `itemAction` (`spawned`, `pickup`, `refund`, `rejected`), `itemCount`
+and bounded `itemReason`. MC applies each transaction revision once on its server
+thread and replies with auxiliary `kind:"item_resolve"`, itemTx, itemRevision and
+`itemAccepted:0..99`. Resolution can finish after control exit and does not renew
+or acquire the gameplay input lease. UE retains/retries unsettled balances until
+accepted inventory counts settle them. Full exit refunds remaining balances; a
+full inventory retains remainder in the mod's player-NBT escrow for later recovery.
+The escrow is stored beside the same inventory save, preventing process restart
+from abandoning transient UE drops. This exclusively-owned NBT field is the only
+new source save mutation beyond the corresponding inventory count changes.
+
+Item exports add native `ground` display context alongside the four held contexts.
+Old hand-only captures remain usable as held items; ground spawn rejects/refunds
+those items and asks for0.11 export/import. Component hashes/tints and native
+model textures continue to apply. Offhand, feature models and live item animation
+limitations from0.10 remain unless their actual exporter context is supported.
+
+### GPU frames, fallback and performance accounting
+
+The optional Windows x64/NVIDIA backend requires MC OpenGL4.3 plus
+`WGL_NV_DX_interop2`, UE's D3D11 RHI (`-d3d11`), and the same GPU adapter. The MOD
+contains a JNI consumer DLL; UE provides three shared BGRA8 D3D11 textures and
+GPU readiness queries. RGB is straight sRGB and native-sky alpha is in the same
+shared image. Copies/conversion stay on the GPU; no CPU pixel readback/JPEG is
+required for a successful GPU frame. DirectX12 remains on the JPEG fallback.
+D3D11 lighting features differ from D3D12/Lumen; use a compatible saved level.
+
+A40-byte handshake `UEB5` plus the current36-character UDP session requests GPU
+sharing; `UEB3` and `UEBH` remain JPEG paths. Version5 frames preserve the84-byte
+v3/v4 metadata header, require JPEG/mask byte lengths0, and set flag2 (`GPU_FRAME`),
+optionally flag1 (`SKY_MASK`). The header appends uint64 shared handle, uint64
+DXGI adapter LUID, uint32 slot0..2 and nonzero uint32 generation:108 bytes total.
+All wire integer words/float bit patterns remain network-byte-order. No image
+payload follows v5; the handle is only for local validated native interop.
+
+After rendering or superseding a frame, MC sends16 TCP bytes: magic `UEBA`,
+uint32 frame sequence, slot, generation. UE releases only the exact slot lease.
+A producer does not reuse an unacknowledged texture. Latest-frame replacement
+releases discarded frames; frames do not accumulate. `UEBF` plus three zero words
+requests JPEG fallback when native interop fails without changing UDP session or
+inventory epoch. Backend/RHI/adapter failures are surfaced in diagnostics.
+`maskCountsAvailable` distinguishes actual CPU mask counts from unavailable GPU
+counts. The GPU path does not read back its alpha mask to count foreground or
+translucent pixels; zero counts with this flagfalse mean unknown, not an empty
+frame.
+
+`video_config.fps` permits1..60 while dimensions remain≤1920×1080; this is a
+capture target, not an achieved FPS. `perf_status` separately reports current
+receiver/session/input-sequence: `fps`, `frameMs` (averaged UE tick intervals),
+`faces`, `renderSections`, `cells`, `streamPending`, `lightPending`, `itemCount`,
+`videoTransport`, `gpuReason`, `videoReadyMs`, `videoDropped`. These intervals are
+not GPU profiler timings. MC video diagnostics report received/displayed frame
+rates and bounded input-to-display latency samples separately from MC HUD FPS.
+
+Acceptance target: RTX5060,1920×1080,4–6 native chunks, displayed UE-video≥30fps
+in the documented repeatable scene after streaming/light queues settle. Compare
+JPEG and GPU, lighting ON/OFF, and four versus six chunks. Cloud tests can verify
+Java/native cross-compilation, schemas and portable math; they cannot certify
+UE5.8 compilation, WGL/driver interoperability, final rendering or target FPS.

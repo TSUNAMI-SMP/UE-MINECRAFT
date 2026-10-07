@@ -7,8 +7,8 @@ public final class VanillaSkyComposite {
     private static boolean active;
     private VanillaSkyComposite() {}
     public static void prepare(VideoClient next,boolean requested) {
-        if(source!=next) {source=next;displayed=null;}
-        if(next!=null) {var frame=next.poll();if(frame!=null) displayed=frame;}
+        if(source!=next) {if(source!=null)source.release(displayed);source=next;displayed=null;}
+        if(next!=null) {var frame=next.poll();if(frame!=null){next.release(displayed);displayed=frame;}}
         active=requested && next!=null && next.fresh() && displayed!=null && displayed.skyMask();
     }
     public static boolean active() {return active;}

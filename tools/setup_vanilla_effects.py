@@ -22,6 +22,11 @@ def setup_vanilla_effects():
     if len(receivers) != 1:
         raise RuntimeError("The current saved level must contain exactly one BridgeReceiver")
 
+    import runpy
+    lighting_helper = project / "bridge_lighting_materials.py"
+    if not lighting_helper.is_file():
+        raise RuntimeError("Copy bridge_lighting_materials.py next to UEBridge.uproject first")
+    lighting = runpy.run_path(str(lighting_helper))
     assets = unreal.EditorAssetLibrary
     editing = unreal.MaterialEditingLibrary
     name, folder = "M_MinecraftDust_v1", "/Game/Bridge/Minecraft"
@@ -93,8 +98,23 @@ def setup_vanilla_effects():
     product = node(unreal.MaterialExpressionMultiply)
     wire(sample, product, "A", "RGB")
     wire(color, product, "B")
-    if not editing.connect_material_property(product, "", unreal.MaterialProperty.MP_BASE_COLOR):
-        raise RuntimeError("Cannot connect dust Base Color")
+    # Keep the proven UV channels 0/1 intact. Three explicit custom-data channels
+    # carry native sky/block/shade per particle instead of one light for the group.
+    native_light = []
+    for index in range(2, 5):
+        custom = node(unreal.MaterialExpressionPerInstanceCustomData)
+        custom.set_editor_property("data_index", index)
+        native_light.append(custom)
+    levels = node(unreal.MaterialExpressionAppendVector)
+    wire(native_light[0], levels, "A")
+    wire(native_light[1], levels, "B")
+    light_rgb = node(unreal.MaterialExpressionAppendVector)
+    wire(levels, light_rgb, "A")
+    wire(native_light[2], light_rgb, "B")
+    interpolated_light = node(unreal.MaterialExpressionVertexInterpolator)
+    wire(light_rgb, interpolated_light)
+    lighting['wire_vanilla_lighting'](unreal, editing, material, product,
+        vertex_node=interpolated_light, use_vertex=True, vertex_output='')
     if not editing.connect_material_property(sample, "A", unreal.MaterialProperty.MP_OPACITY_MASK):
         raise RuntimeError("Cannot connect dust Opacity Mask")
     roughness = node(unreal.MaterialExpressionConstant)

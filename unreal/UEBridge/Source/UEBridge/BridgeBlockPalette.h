@@ -26,8 +26,13 @@ public:
     FVector GetModelOffset(const FString& BlockId,const FIntVector& SourceBlock) const;
     bool HasSolidFace(const FString& BlockId,const FString& StateKey,const FString& Face) const;
     bool CannotConnect(const FString& BlockId,const FString& StateKey) const;
+    bool IsOpaqueFullCube(const FString& BlockId,const FString& StateKey) const;
+    /** Atlas rectangles are minU,minV,sizeU,sizeV with a local native texture id key. */
+    UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Bridge|Terrain") TMap<FString,FVector4> AtlasRects;
+    UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Bridge|Terrain") TMap<FString,FString> AtlasPages;
+    UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Bridge|Terrain") TMap<FString,TObjectPtr<UMaterialInterface>> AtlasMaterials;
 #if WITH_EDITOR
-    virtual void PostEditChangeProperty(FPropertyChangedEvent& Event) override { ModelCache.Empty();ShapeCache.Empty();Super::PostEditChangeProperty(Event); }
+    virtual void PostEditChangeProperty(FPropertyChangedEvent& Event) override { ModelCache.Empty();ShapeCache.Empty();OpaqueCache.Empty();CollisionCache.Empty();OutlineCache.Empty();Super::PostEditChangeProperty(Event); }
 #endif
     UMaterialInterface* FindFaceMaterial(const FString& TextureId,bool bTint) const {
         const auto* Material=FaceMaterials.Find(TextureId+(bTint ? TEXT("#1") : TEXT("#0")));
@@ -50,5 +55,7 @@ private:
     // Resource palettes are immutable while Play runs. Cache model baking per state, not per cell.
     mutable TMap<FString,TArray<FBridgeModelFace>> ModelCache;
     mutable TMap<FString,TSharedPtr<class FJsonObject>> ShapeCache;
+    mutable TMap<FString,bool> OpaqueCache;
+    mutable TMap<FString,TArray<FBox>> CollisionCache,OutlineCache;
     TSharedPtr<class FJsonObject> ReadShapes(const FString& BlockId) const;
 };

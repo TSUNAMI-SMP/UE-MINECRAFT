@@ -13,6 +13,8 @@ public:
     void SetAuthority(bool Active,ACharacter* Target);
     bool Hit(float Damage,const FVector& Direction);
     bool Alive() const { return Health>0; }
+    FString ModelDiagnostic() const {return InitializationReason;}
+    int32 ModelVertexCount() const {return VertexCount;}
     virtual void Tick(float DeltaSeconds) override;
     UPROPERTY(VisibleAnywhere,BlueprintReadOnly,Category="Bridge|Mob") FString MinecraftId;
     UPROPERTY(VisibleAnywhere,BlueprintReadOnly,Category="Bridge|Mob") FString MinecraftType;
@@ -28,5 +30,7 @@ private:
     float Damage=0, Phase=0, WalkWeight=0, Decision=0, AttackCooldown=0, DeathAge=0, Stuck=0;
     FVector Wander=FVector::ZeroVector, LastPosition=FVector::ZeroVector;
     FRandomStream Random;
+    FString InitializationReason=TEXT("not_initialized");
+    int32 VertexCount=0;
     void Animate(float DeltaSeconds);
 };

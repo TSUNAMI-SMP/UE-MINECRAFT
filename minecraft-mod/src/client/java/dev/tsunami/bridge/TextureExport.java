@@ -14,7 +14,8 @@ public final class TextureExport {
     private static final class Unsupported extends IOException { Unsupported(String message) { super(message); } Unsupported(String message, Throwable cause) { super(message,cause); } }
     public interface Resources { byte[] read(String resourceId) throws IOException; }
     /** Particle colour is sampled from the active world's vanilla BlockColors before the worker starts. */
-    public record State(Map<String,String> properties,List<double[]> collision,List<double[]> outline,List<String> solidFaces,boolean cannotConnect) {
+    public record State(Map<String,String> properties,List<double[]> collision,List<double[]> outline,List<String> solidFaces,boolean cannotConnect,Boolean opaqueFullCube,int emission,int opacity) {
+        public State(Map<String,String> properties,List<double[]> collision,List<double[]> outline,List<String> solidFaces,boolean cannotConnect) {this(properties,collision,outline,solidFaces,cannotConnect,null,0,15);}
         public State(Map<String,String> properties,List<double[]> collision,List<double[]> outline) { this(properties,collision,outline,null,false); }
     }
     public record Block(String id, Map<String,String> properties, int particleColor,List<State> states,String excludedReason,double horizontalOffset,double verticalOffset) {
@@ -239,6 +240,8 @@ public final class TextureExport {
                 JsonObject data=new JsonObject(); data.add("collision",boxes(state.collision)); data.add("outline",boxes(state.outline));
                 if(state.solidFaces!=null) {JsonArray facesJson=new JsonArray();for(String face:state.solidFaces) facesJson.add(face);data.add("solidFaces",facesJson);}
                 data.addProperty("cannotConnect",state.cannotConnect);
+                if(state.opaqueFullCube!=null) data.addProperty("opaqueFullCube",state.opaqueFullCube);
+                data.addProperty("emission",state.emission);data.addProperty("opacity",state.opacity);
                 states.add(stateKey(state.properties),data);
             }
             p.add("states",states);

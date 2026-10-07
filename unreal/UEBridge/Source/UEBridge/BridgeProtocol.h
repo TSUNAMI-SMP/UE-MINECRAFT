@@ -3,7 +3,7 @@
 #include "Dom/JsonObject.h"
 #include "BridgeMobData.h"
 
-enum class EBridgeKind { Input, Tnt, Bow, Snapshot, ClearPreview, WorldCell, WorldScope, WorldClear, WorldBegin, WorldCommit, VideoConfig, BlockAction, FeedbackAck, MobSpawn, MobClear, PlayerRespawn };
+enum class EBridgeKind { Input, Tnt, Bow, Snapshot, ClearPreview, WorldCell, WorldScope, WorldClear, WorldBegin, WorldCommit, VideoConfig, BlockAction, FeedbackAck, MobSpawn, MobClear, MobTemplateSpawn, PlayerRespawn, ItemDrop, ItemResolve };
 struct FBridgeBlock {
     FVector Position = FVector::ZeroVector; // Minecraft-relative block centers.
     int32 Color = 0;
@@ -14,6 +14,8 @@ struct FBridgeBlock {
     bool HasSourceBlock=false;
     FString StateKey;
     uint8 Role=0; // 0 legacy, 1 baked render model, 2 collision, 3 outline/selection.
+    uint8 SkyLight=15,BlockLight=0,Emission=0,Opacity=15;
+    bool HasLight=false,NativeCompact=false;
 };
 struct FBridgePacket {
     EBridgeKind Kind = EBridgeKind::Input;
@@ -25,7 +27,7 @@ struct FBridgePacket {
     bool Sneak = false, Controller=false;
     FString ImportId, Action, HeldItem, HeldBlock, SpawnType, HeldModelKey;
     int32 HeldColor=0xffffff;
-    bool Sprint=false,Creative=false,Flying=false;
+    bool Sprint=false,Creative=false,Flying=false,ItemSession=false,CompactTerrain=false;
     int32 Perspective=0, SkinLayers=127;
     double SwingProgress=0, EquipProgress=1, UseProgress=0, CameraFov=80;
     bool UsingItem=false, LeftHanded=false, SlimArms=false;
@@ -40,6 +42,11 @@ struct FBridgePacket {
     bool Lighting=true, VanillaSky=false;
     double ParticleScale=.75,ParticleDensity=1,ParticleLifetime=.9;
     FBridgeMobSnapshot Mob;
+    TSharedPtr<FJsonObject> VanillaLight;
+    TArray<uint8> SkyTop;
+    FString ItemTx,ItemId,ItemModelKey,ItemEpoch;
+    int32 ItemCount=0,ItemMaxCount=64,ItemRevision=0,ItemAccepted=0;
+    FVector ItemPosition=FVector::ZeroVector,ItemVelocity=FVector::ZeroVector;
     int32 BatchIndex = 0, TotalBatches = 0;
     TArray<FBridgeBlock> Blocks;
 };

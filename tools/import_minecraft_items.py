@@ -8,7 +8,8 @@ import re
 import struct
 import zlib
 
-CONTEXTS = ('firstperson_righthand', 'firstperson_lefthand', 'thirdperson_righthand', 'thirdperson_lefthand')
+HAND_CONTEXTS = ('firstperson_righthand', 'firstperson_lefthand', 'thirdperson_righthand', 'thirdperson_lefthand')
+CONTEXTS = HAND_CONTEXTS + ('ground',)
 MAX_PAYLOAD_BYTES = 256 * 1024 * 1024
 
 def load_item_manifest(filename):
@@ -71,7 +72,7 @@ def load_item_manifest(filename):
         if not isinstance(values, list) or len(values) != size or any(type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 4096 for v in values):
             raise ValueError('Invalid native item geometry')
     for key, contexts in items.items():
-        if not isinstance(key, str) or not re.fullmatch(r'[a-z0-9_.-]+:[a-z0-9_./-]+@[0-9a-f]{64}', key) or '..' in key or not isinstance(contexts, dict) or set(contexts) != set(CONTEXTS):
+        if not isinstance(key, str) or not re.fullmatch(r'[a-z0-9_.-]+:[a-z0-9_./-]+@[0-9a-f]{64}', key) or '..' in key or not isinstance(contexts, dict) or set(contexts) not in (set(HAND_CONTEXTS), set(CONTEXTS)):
             raise ValueError('Invalid item ID/display contexts')
         for faces in contexts.values():
             if not isinstance(faces, list) or not 1 <= len(faces) <= 8192:
@@ -89,6 +90,10 @@ def load_item_manifest(filename):
                     for value in values:
                         vector(value, size)
     return manifest
+
+
+def ground_model_count(manifest):
+    return sum('ground' in contexts for contexts in manifest['items'].values())
 
 
 def import_minecraft_items(filename):
@@ -148,4 +153,8 @@ def import_minecraft_items(filename):
         palette.set_editor_property('item_materials', materials)
         if not assets.save_loaded_asset(palette, False):
             raise RuntimeError('Cannot save native item palette')
+    ground = ground_model_count(manifest)
+    if ground < len(manifest['items']):
+        unreal.log_warning(f"Legacy hand models retained: {len(manifest['items']) - ground} items lack native GROUND display. Drops are rejected and refunded for those items; run /uebridge items export with MOD 0.11.0 and import again.")
+    unreal.log(f"Native ground models: {ground}/{len(manifest['items'])}")
     unreal.log(f"Native item models ready: {len(manifest['items'])}; exclusions: {len(manifest.get('excluded', {}))}. See local manifest.json for unsupported renderers.")

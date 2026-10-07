@@ -1,5 +1,20 @@
 # ダウンロード
 
+## 更新版0.11.0
+
+- [MOD 0.11.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/minecraft-ue-bridge-0.11.0.jar)
+- [既存UE用更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/UEBridge-update-0.11.0.zip)
+- [ソース＋MOD一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/UE-Minecraft-MVP-0.11.0.zip)
+- [上書き対象・再書き出し・起動と性能確認の手順](../docs/UPGRADE_0.11.0.md)
+
+ゾンビ・村人の召喚とモデル初期化、UE照明への復帰、Minecraftの光情報を使う照明OFF、投下・拾得を修正／実装しました。隠れた地形の面を省き、アトラスと地形ストリーミング、WindowsのD3D11／NVIDIA GPU共有映像を追加しています。GPU共有の条件が合わない場合はJPEGへ戻ります。
+
+**MODとUEの両方の更新、UE再ビルド、ブロック・スキン・アイテム・モブの再書き出し／取り込みが必要です。** Sourceを統合コピーし、Content／Config／Saved／保存済みレベルを保持します。旧版ZIP・mainは保持します。
+
+目標はRTX 5060、1080p、4～6チャンク、実映像30fps以上です。クラウドで可能なテストは行っていますが、**UE5.8ビルド・描画・Windows統合動作・実機FPSの目標達成は未確認**です。受信FPSと描画投入FPS、入力遅延の計測を追加しています。
+
+MODビルド、Java152件・Python65件、独立C++の光・地形・召喚位置・映像タイミングの検証が成功しました。Windows x64のGPU用DLLはMODへ同梱しています。
+
 ## アイテム書き出し容量修正0.10.1
 
 - [MOD 0.10.1](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.10.0/downloads/minecraft-ue-bridge-0.10.1.jar)

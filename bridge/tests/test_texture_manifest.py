@@ -190,7 +190,7 @@ class MaterialGraphTest(unittest.TestCase):
             def __init__(self):
                 self.properties, self.nodes, self.outputs = {}, [], {}
             def set_editor_property(self, name, value):
-                if name not in ("blend_mode", "opacity_mask_clip_value", "two_sided", "translucency_lighting_mode"):
+                if name not in ("blend_mode", "opacity_mask_clip_value", "two_sided", "translucency_lighting_mode", "shading_model"):
                     raise RuntimeError("Unexpected material property " + name)
                 self.properties[name] = value
         class Expression:
@@ -198,32 +198,46 @@ class MaterialGraphTest(unittest.TestCase):
                 self.kind, self.properties, self.inputs = kind, {}, {}
             def set_editor_property(self, name, value):
                 self.properties[name] = value
+        class Property:
+            def __init__(self, **kwargs):
+                import uuid
+                self.properties = {'id': uuid.uuid4().hex, **kwargs}
+            def set_editor_property(self, name, value): self.properties[name] = value
+            def get_editor_property(self, name): return self.properties.get(name, [])
+        class Collection(Property): pass
         self.assets_by_path, self.saved = {}, []
         self.unreal = types.SimpleNamespace(Material=Material, MaterialFactoryNew=lambda: None, LinearColor=lambda *args: args,
             BlendMode=types.SimpleNamespace(BLEND_MASKED="masked", BLEND_TRANSLUCENT="translucent"),
             TranslucencyLightingMode=types.SimpleNamespace(TLM_SURFACE="surface"),
             MaterialProperty=types.SimpleNamespace(MP_BASE_COLOR="base", MP_EMISSIVE_COLOR="emissive", MP_OPACITY_MASK="mask", MP_OPACITY="opacity", MP_ROUGHNESS="roughness", MP_SPECULAR="specular"),
-            load_asset=lambda path: self.assets_by_path.get(path))
-        for name in ("TextureSampleParameter2D", "VectorParameter", "ScalarParameter", "Constant3Vector", "LinearInterpolate", "Multiply", "Constant"):
-            setattr(self.unreal, "MaterialExpression" + name, name)
+            load_asset=lambda path: self.assets_by_path.get(path),
+            MaterialShadingModel=types.SimpleNamespace(MSM_DEFAULT_LIT='lit'),
+            MaterialParameterCollection=Collection, MaterialParameterCollectionFactoryNew=lambda: None,
+            CollectionScalarParameter=Property, CollectionVectorParameter=Property, Guid=lambda *args: args,
+            CustomMaterialOutputType=types.SimpleNamespace(CMOT_FLOAT3='float3'), CustomInput=lambda **kwargs: kwargs)
+        for name in ("TextureSampleParameter2D", "VectorParameter", "ScalarParameter", "Constant3Vector", "LinearInterpolate", "Multiply", "Constant", 'CollectionParameter', 'Add', 'VertexColor', 'Custom', 'PixelNormalWS'):
+            setattr(self.unreal, "MaterialExpression" + name, type(name, (), {}))
         self.assets = types.SimpleNamespace(does_asset_exist=lambda path: path in self.assets_by_path,
             save_loaded_asset=lambda material, force: self.saved.append(material) is None)
         def create(name, root, cls, factory):
             result = cls(); self.assets_by_path[root + "/" + name] = result; return result
         self.tools = types.SimpleNamespace(create_asset=create)
+        self.unreal.EditorAssetLibrary = self.assets
+        self.unreal.AssetToolsHelpers = types.SimpleNamespace(get_asset_tools=lambda: self.tools)
         def node(material, kind, x, y):
-            result = Expression(kind); material.nodes.append(result); return result
+            result = Expression(kind.__name__); material.nodes.append(result); return result
         def connect(a, output, b, pin):
             b.inputs[pin] = (a, output); return True
         def output(node_value, pin, target):
             for material in self.assets_by_path.values():
-                if node_value in material.nodes:
+                if isinstance(material, self.unreal.Material) and node_value in material.nodes:
                     material.outputs[target] = (node_value, pin); return True
             return False
         self.editing = types.SimpleNamespace(create_material_expression=node, connect_material_expressions=connect,
             connect_material_property=output, recompile_material=lambda material: None,
             get_texture_parameter_names=lambda material: [n.properties["parameter_name"] for n in material.nodes if n.kind == "TextureSampleParameter2D"],
-            get_scalar_parameter_names=lambda material: [n.properties["parameter_name"] for n in material.nodes if n.kind == "ScalarParameter"])
+            get_scalar_parameter_names=lambda material: [n.properties["parameter_name"] for n in material.nodes if n.kind == "ScalarParameter"],
+            delete_all_material_expressions=lambda material: (material.nodes.clear(), material.outputs.clear()))
 
     def build(self, mode):
         return module._model_parent(self.unreal, self.assets, self.tools, self.editing, "/Game/Bridge/Minecraft", object(), mode)
@@ -242,30 +256,52 @@ class MaterialGraphTest(unittest.TestCase):
         self.assertTrue(leaves.properties["two_sided"])
 
     def test_lighting_switch_controls_both_base_and_emissive(self):
-        material = self.build("opaque")
-        base, emissive = material.outputs["base"][0], material.outputs["emissive"][0]
-        self.assertIs(base.inputs["Alpha"][0], emissive.inputs["Alpha"][0])
-        self.assertEqual("BridgeUnlit", base.inputs["Alpha"][0].properties["parameter_name"])
-        self.assertIs(base.inputs["A"][0], emissive.inputs["B"][0])
-        self.assertEqual(0.0, base.inputs["B"][0].properties["r"])
-        self.assertEqual(0.0, emissive.inputs["A"][0].properties["r"])
-        self.assertIs(material, self.build("cutout"))  # Opaque and cutout reuse masked master.
-        self.assertEqual(2, len(self.saved))
+        material = self.build('opaque')
+        base, emissive = material.outputs['base'][0], material.outputs['emissive'][0]
+        self.assertIs(base.inputs['Alpha'][0], emissive.inputs['Alpha'][0])
+        mode = base.inputs['Alpha'][0].inputs['A'][0]
+        self.assertEqual('BridgeVanillaMode', mode.properties['parameter_name'])
+        self.assertEqual('CollectionParameter', mode.kind)
+        self.assertIs(base.inputs['A'][0], emissive.inputs['B'][0].inputs['A'][0])
+        self.assertEqual(0.0, base.inputs['B'][0].properties['r'])
+        self.assertEqual(0.0, emissive.inputs['A'][0].properties['r'])
+        self.assertEqual('lit', material.properties['shading_model'])
+        self.assertIs(material, self.build('cutout'))
+        self.assertEqual(1, sum(isinstance(value, self.unreal.Material) for value in self.saved))
 
-    def test_diffuse_master_has_no_white_specular_addition(self):
-        material = self.build("opaque")
-        specular = material.outputs["specular"][0]
-        self.assertEqual("BridgeSpecular", specular.properties["parameter_name"])
-        self.assertEqual(0.0, specular.properties["default_value"])
+    def test_specular_is_restored_only_for_ue_branch(self):
+        material = self.build('opaque')
+        specular = material.outputs['specular'][0]
+        self.assertEqual('BridgeSpecular', specular.inputs['A'][0].properties['parameter_name'])
+        self.assertEqual(.5, specular.inputs['A'][0].properties['default_value'])
+        self.assertEqual(0, specular.inputs['B'][0].properties['r'])
+        self.assertIs(specular.inputs['Alpha'][0], material.outputs['base'][0].inputs['Alpha'][0])
         count = len(material.nodes)
-        self.build("opaque")
+        self.build('opaque')
         self.assertEqual(count, len(material.nodes))
 
-    def test_incomplete_existing_graph_is_rejected(self):
-        material = self.build("translucent")
-        material.nodes[:] = [node for node in material.nodes if node.properties.get("parameter_name") != "BridgeUnlit"]
-        with self.assertRaisesRegex(RuntimeError, "tint/lighting"):
-            self.build("translucent")
+    def test_partial_generated_graph_is_repaired_and_collection_ids_retained(self):
+        material = self.build('translucent')
+        collection = self.assets_by_path['/Game/Bridge/Minecraft/MPC_BridgeLighting_v1']
+        before = [value.properties['id'] for value in collection.properties['scalar_parameters']]
+        material.nodes[:] = [node for node in material.nodes if node.properties.get('parameter_name') != 'BridgeUseVertexLight']
+        self.assertIs(material, self.build('translucent'))
+        self.assertIn('BridgeUseVertexLight', self.editing.get_scalar_parameter_names(material))
+        self.assertEqual(before, [value.properties['id'] for value in collection.properties['scalar_parameters']])
+        self.assertEqual(len(before), len(set(before)))
+
+    def test_native_environment_and_actor_light_inputs_are_present(self):
+        material = self.build('opaque')
+        lightmap = next(node for node in material.nodes if node.kind == 'Custom' and node.properties.get('description') == 'Bridge native lightmap v1')
+        self.assertEqual({'Light', 'SkyFactor', 'BlockFactor', 'Ambient', 'Gamma', 'NightVision', 'Darkness', 'DarkenWorld', 'SkyColor', 'AmbientColor'}, set(lightmap.inputs))
+        self.assertEqual('float3', lightmap.properties['output_type'])
+        blend = lightmap.inputs['Light'][0]
+        self.assertEqual('BridgeLight', blend.inputs['A'][0].inputs['A'][0].properties['parameter_name'])
+        actor_shade = blend.inputs['A'][0].inputs['B'][0]
+        self.assertEqual('PixelNormalWS', actor_shade.inputs['WorldNormal'][0].kind)
+        self.assertEqual('VertexColor', blend.inputs['B'][0].kind)
+        self.assertEqual('RGB', blend.inputs['B'][1])
+        self.assertEqual(1.0, blend.inputs['Alpha'][0].properties['default_value'])
 
 
 if __name__ == "__main__":

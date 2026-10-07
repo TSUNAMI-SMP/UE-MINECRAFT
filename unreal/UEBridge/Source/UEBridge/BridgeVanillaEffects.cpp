@@ -21,6 +21,10 @@ namespace {
 // IEEE-754 JSON numbers are exact only through 2^53-1. Saturate long-lived counters.
 constexpr uint64 MaxDiagnosticCount=9007199254740991ull;
 void CountUp(uint64& Counter,uint64 Amount) { Counter=FMath::Min(MaxDiagnosticCount,Counter+Amount); }
+FLinearColor SafeLight(const FLinearColor& Value) {
+    auto Channel=[](float V,float Fallback){return FMath::IsFinite(V) ? FMath::Clamp(V,0.f,1.f) : Fallback;};
+    return FLinearColor(Channel(Value.R,1),Channel(Value.G,0),Channel(Value.B,1),1);
+}
 }
 
 ABridgeVanillaEffects::ABridgeVanillaEffects() {
@@ -125,11 +129,14 @@ FString ABridgeVanillaEffects::FindGroup(const FString& BlockId,FColor Tint) {
     Group->SetupAttachment(RootComponent); Group->SetMobility(EComponentMobility::Movable);
     Group->SetStaticMesh(ParticlePlane); Group->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     Group->SetCanEverAffectNavigation(false); Group->SetGenerateOverlapEvents(false); Group->SetCastShadow(false);
-    Group->NumCustomDataFloats=2;
+    // UV offsets 0/1 retain the proven material contract. Native lighting is
+    // instance-local, so one texture group can span sunlight and a dark room.
+    Group->NumCustomDataFloats=5;
     auto* Dynamic=UMaterialInstanceDynamic::Create(DustMaterial,this);
     if(!IsValid(Dynamic)) { Group->DestroyComponent(); Reject(Diagnostics.LastRequested,TEXT("material_instance")); return FString(); }
     Dynamic->SetTextureParameterValue(TEXT("ParticleTexture"),DustTexture);
     Dynamic->SetVectorParameterValue(TEXT("ParticleColor"),FLinearColor::FromSRGBColor(Tint)*.6f);
+    Dynamic->SetScalarParameterValue(TEXT("BridgeUseVertexLight"),1.f);
     Group->SetMaterial(0,Dynamic); Group->RegisterComponent();
     if(!Group->IsRegistered()) { Group->DestroyComponent(); Reject(Diagnostics.LastRequested,TEXT("component_registration")); return FString(); }
     Groups.Add(Key,Group);
@@ -146,6 +153,7 @@ bool ABridgeVanillaEffects::AddParticle(const FVector& Position,const FVector& V
     Particle.Size=BridgeParticleMath::QuadSizeCm(FMath::FRand(),ParticleSizeMultiplier);
     Particle.Lifetime=BridgeParticleMath::LifetimeTicks(FMath::FRand(),ParticleLifetimeMultiplier);
     Particle.TextureOffset=FVector2D(FMath::FRand()*.75f,FMath::FRand()*.75f);
+    if(SampleLight) Particle.Light=SafeLight(SampleLight(Position));
     Particles.Add(MoveTemp(Particle));
     CountUp(Diagnostics.Spawned,1); ++Diagnostics.LastSpawned;
     return true;
@@ -219,7 +227,7 @@ void ABridgeVanillaEffects::SampleCharacter(ABridgeCharacter* Character,float De
     } else if(Grounded && !HasSurface && Character->IsAuthoritySprinting() && HorizontalDistance>.01f && Velocity.SizeSquared2D()>25) {
         SprintClock+=FMath::Clamp(DeltaSeconds,0.f,.1f);
         if(SprintClock>=.05f) {
-            SprintClock=FMath::Fmod(SprintClock,.05f); BeginRequest(TEXT("sprint"),FString(),1); Reject(1,TEXT("missing_surface"));
+            SprintClock=FMath::Fmod(SprintClock,.05f); BeginRequest(TEXT("sprint"),FString(),1); Reject(1,TEXT("missing_surface: ")+Terrain->GetSurfaceReason());
         }
     } else SprintClock=0;
     PreviousFeet=Feet; WasGrounded=Grounded;
@@ -243,6 +251,7 @@ void ABridgeVanillaEffects::Tick(float DeltaSeconds) {
                 if(Hit.Normal.Z>.5f) { Particle.Velocity.X*=.7f; Particle.Velocity.Y*=.7f; }
             }
             Particle.Position=Next; Particle.Velocity*=.98f;
+            if(SampleLight) Particle.Light=SafeLight(SampleLight(Particle.Position));
         }
         Particles.RemoveAll([](const FDustParticle& Particle){return Particle.Age>Particle.Lifetime;});
     }
@@ -267,6 +276,9 @@ void ABridgeVanillaEffects::Tick(float DeltaSeconds) {
             : Group->AddInstance(Transform,true)==Instance;
         Submitted=Group->SetCustomDataValue(Instance,0,Particle.TextureOffset.X,false) && Submitted;
         Submitted=Group->SetCustomDataValue(Instance,1,Particle.TextureOffset.Y,false) && Submitted;
+        Submitted=Group->SetCustomDataValue(Instance,2,Particle.Light.R,false) && Submitted;
+        Submitted=Group->SetCustomDataValue(Instance,3,Particle.Light.G,false) && Submitted;
+        Submitted=Group->SetCustomDataValue(Instance,4,Particle.Light.B,false) && Submitted;
         if(!Submitted) Reject(0,TEXT("render_submission"));
     }
     for(auto& Entry:Groups) {

@@ -84,7 +84,7 @@ bool FBridgeWorldProtocolTest::RunTest(const FString& Parameters) {
     P=PacketJson(Text); P->SetNumberField(TEXT("totalBatches"),1025); TestFalse(TEXT("World batch limit"),BridgeProtocol::Parse(P,Out));
     P=PacketJson(Text); P->SetStringField(TEXT("event"),TEXT("world_scope")); P->SetNumberField(TEXT("radius"),2); P->SetNumberField(TEXT("halfHeight"),1);
     TestTrue(TEXT("World scope"),BridgeProtocol::Parse(P,Out));
-    P->SetNumberField(TEXT("radius"),4); TestFalse(TEXT("World scope limit"),BridgeProtocol::Parse(P,Out));
+    P->SetNumberField(TEXT("radius"),13); TestFalse(TEXT("World scope limit"),BridgeProtocol::Parse(P,Out));
     P->SetStringField(TEXT("event"),TEXT("world_clear")); TestTrue(TEXT("World clear"),BridgeProtocol::Parse(P,Out));
     return true;
 }
@@ -204,4 +204,86 @@ bool FBridgeBlockActionProtocolTest::RunTest(const FString& Parameters) {
     P->SetStringField(TEXT("heldBlock"),TEXT(""));TestTrue(TEXT("Empty hand breaks"),BridgeProtocol::Parse(P,Out));
     return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeCompactCellTest,"UEBridge.Protocol.CompactNativeCell",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBridgeCompactCellTest::RunTest(const FString& Parameters) {
+    const FString Text=TEXT("{\"v\":1,\"kind\":\"event\",\"session\":\"00000000-0000-4000-8000-000000000001\",\"seq\":5,\"eventId\":\"00000000-0000-4000-8000-000000000002\",\"event\":\"world_cell_compact\",\"cellX\":-1,\"cellY\":0,\"cellZ\":1,\"x\":0,\"y\":0,\"z\":0,\"ox\":0,\"oy\":0,\"oz\":0,\"snapshotId\":\"00000000-0000-4000-8000-000000000003\",\"snapshotSeq\":3,\"batchIndex\":0,\"totalBatches\":1,\"palette\":[[\"minecraft:oak_stairs\",\"facing=east,half=bottom,shape=straight,waterlogged=false\",16777215,0,0]],\"blocks\":[[511,0,12,7]]}");
+    FBridgePacket Out;TestTrue(TEXT("Dictionary native cell"),BridgeProtocol::Parse(PacketJson(Text),Out));
+    TestTrue(TEXT("Compact voxel restores exact absolute owner"),Out.Blocks.Num()==1 && Out.Blocks[0].SourceBlock==FIntVector(-1,7,15));
+    if(Out.Blocks.Num()==1) {
+        const FBridgeBlock& Block=Out.Blocks[0];
+        TestTrue(TEXT("Native roles and light metadata"),Block.Role==1 && Block.NativeCompact && Block.HasLight && Block.HasSourceBlock);
+        TestEqual(TEXT("Sky light"),int32(Block.SkyLight),12);TestEqual(TEXT("Block light"),int32(Block.BlockLight),7);
+        TestTrue(TEXT("Origin-relative voxel center"),Block.Position.Equals(FVector(-.5,7.5,15.5)));
+    }
+    TestFalse(TEXT("Duplicate voxel in one batch"),BridgeProtocol::Parse(PacketJson(Text.Replace(TEXT("[[511,0,12,7]]"),TEXT("[[511,0,12,7],[511,0,12,7]]"))),Out));
+    TestFalse(TEXT("Index must be inside its 8-cubed cell"),BridgeProtocol::Parse(PacketJson(Text.Replace(TEXT("[[511,0,12,7]]"),TEXT("[[512,0,12,7]]"))),Out));
+    TestFalse(TEXT("Palette references are bounded"),BridgeProtocol::Parse(PacketJson(Text.Replace(TEXT("[[511,0,12,7]]"),TEXT("[[511,1,12,7]]"))),Out));
+    TestFalse(TEXT("Light integer bounds"),BridgeProtocol::Parse(PacketJson(Text.Replace(TEXT("[[511,0,12,7]]"),TEXT("[[511,0,16,7]]"))),Out));
+    TestFalse(TEXT("Boolean light is rejected"),BridgeProtocol::Parse(PacketJson(Text.Replace(TEXT("[[511,0,12,7]]"),TEXT("[[511,0,true,7]]"))),Out));
+    TestFalse(TEXT("State path characters rejected"),BridgeProtocol::Parse(PacketJson(Text.Replace(TEXT("facing=east"),TEXT("facing=../east"))),Out));
+    auto P=PacketJson(Text);TArray<TSharedPtr<FJsonValue>> Seed;
+    for(int32 I=0;I<64;++I) Seed.Add(MakeShared<FJsonValueNumber>(15));
+    P->SetArrayField(TEXT("skyTop"),Seed);TestTrue(TEXT("64-column sky boundary"),BridgeProtocol::Parse(P,Out));TestEqual(TEXT("Sky columns retained"),Out.SkyTop.Num(),64);
+    P->SetNumberField(TEXT("totalBatches"),2);P->SetNumberField(TEXT("batchIndex"),1);
+    TestFalse(TEXT("Sky boundary only on the first atomic batch"),BridgeProtocol::Parse(P,Out));
+    P=PacketJson(Text);Seed.Pop();P->SetArrayField(TEXT("skyTop"),Seed);TestFalse(TEXT("Partial sky boundary rejected"),BridgeProtocol::Parse(P,Out));
+    P=PacketJson(Text);P->SetArrayField(TEXT("palette"),{});P->SetArrayField(TEXT("blocks"),{});
+    TestTrue(TEXT("Entirely empty native cell still commits"),BridgeProtocol::Parse(P,Out));
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeVanillaEnvironmentTest,"UEBridge.Protocol.VanillaEnvironment",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBridgeVanillaEnvironmentTest::RunTest(const FString& Parameters) {
+    auto P=PacketJson(Input);FBridgePacket Out;
+    auto Environment=PacketJson(TEXT("{\"skyFactor\":0.2,\"blockFactor\":1,\"ambient\":0,\"gamma\":0.5,\"nightVision\":0,\"darkness\":0,\"darkenWorld\":0,\"skyColor\":12566463,\"ambientColor\":16777215,\"hasSky\":true}"));
+    P->SetObjectField(TEXT("vanillaLight"),Environment);TestTrue(TEXT("Native night/lightmap controls"),BridgeProtocol::Parse(P,Out));TestTrue(TEXT("Environment retained"),Out.VanillaLight.IsValid());
+    Environment->SetStringField(TEXT("gamma"),TEXT("0.5"));TestFalse(TEXT("Coerced gamma rejected"),BridgeProtocol::Parse(P,Out));Environment->SetNumberField(TEXT("gamma"),.5);
+    Environment->SetNumberField(TEXT("skyFactor"),4.1);TestFalse(TEXT("Sky intensity bound"),BridgeProtocol::Parse(P,Out));Environment->SetNumberField(TEXT("skyFactor"),.2);
+    Environment->SetNumberField(TEXT("nightVision"),-1);TestFalse(TEXT("Effect intensity bound"),BridgeProtocol::Parse(P,Out));Environment->SetNumberField(TEXT("nightVision"),0);
+    Environment->SetNumberField(TEXT("skyColor"),.5);TestFalse(TEXT("RGB must be integral"),BridgeProtocol::Parse(P,Out));Environment->SetNumberField(TEXT("skyColor"),12566463);
+    Environment->SetStringField(TEXT("hasSky"),TEXT("true"));TestFalse(TEXT("Dimension sky flag typed"),BridgeProtocol::Parse(P,Out));Environment->SetBoolField(TEXT("hasSky"),false);
+    TestTrue(TEXT("Skyless dimensions supported"),BridgeProtocol::Parse(P,Out));Environment->RemoveField(TEXT("blockFactor"));TestFalse(TEXT("Partial environment rejected"),BridgeProtocol::Parse(P,Out));
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeItemTransactionTest,"UEBridge.Protocol.ItemTransactions",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBridgeItemTransactionTest::RunTest(const FString& Parameters) {
+    const FString Text=TEXT("{\"v\":1,\"kind\":\"item_drop\",\"session\":\"00000000-0000-4000-8000-000000000001\",\"seq\":5,\"itemTx\":\"00000000-0000-4000-8000-000000000002\",\"itemEpoch\":\"00000000-0000-4000-8000-000000000004\",\"importId\":\"00000000-0000-4000-8000-000000000003\",\"itemId\":\"minecraft:diamond_sword\",\"itemModelKey\":\"minecraft:diamond_sword@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"itemCount\":1,\"itemMaxCount\":1,\"position\":{\"x\":0,\"y\":1.5,\"z\":1},\"velocity\":{\"x\":0,\"y\":0.2,\"z\":0.3}}");
+    FBridgePacket Out;TestTrue(TEXT("Auxiliary item drop without gameplay-event envelope"),BridgeProtocol::Parse(PacketJson(Text),Out));
+    TestTrue(TEXT("Ground item model and transaction epoch"),Out.Kind==EBridgeKind::ItemDrop && Out.ItemId==TEXT("minecraft:diamond_sword") && !Out.ItemEpoch.IsEmpty());
+    auto P=PacketJson(Text);P->RemoveField(TEXT("itemEpoch"));TestFalse(TEXT("Drop must have inventory session epoch"),BridgeProtocol::Parse(P,Out));
+    P=PacketJson(Text);P->SetNumberField(TEXT("itemCount"),2);TestFalse(TEXT("Cannot exceed native maximum stack"),BridgeProtocol::Parse(P,Out));
+    P=PacketJson(Text);P->SetStringField(TEXT("itemId"),TEXT("minecraft:stick"));TestFalse(TEXT("Model must correspond to dropped item"),BridgeProtocol::Parse(P,Out));
+    P=PacketJson(Text);P->GetObjectField(TEXT("velocity"))->SetNumberField(TEXT("y"),31);TestFalse(TEXT("Velocity components bounded"),BridgeProtocol::Parse(P,Out));
+    P=PacketJson(Text);P->GetObjectField(TEXT("position"))->SetStringField(TEXT("x"),TEXT("0"));TestFalse(TEXT("Nested vector types validated"),BridgeProtocol::Parse(P,Out));
+    P=PacketJson(Text);P->SetStringField(TEXT("kind"),TEXT("item_resolve"));P->RemoveField(TEXT("itemEpoch"));P->SetNumberField(TEXT("itemRevision"),1);P->SetNumberField(TEXT("itemAccepted"),0);
+    TestTrue(TEXT("Pending settlement remains resolvable after the inventory session closes"),BridgeProtocol::Parse(P,Out));
+    P->SetNumberField(TEXT("itemAccepted"),.5);TestFalse(TEXT("Accepted inventory count integral"),BridgeProtocol::Parse(P,Out));
+    P->SetNumberField(TEXT("itemAccepted"),0);P->SetNumberField(TEXT("itemRevision"),100001);TestFalse(TEXT("Bounded settlement revision"),BridgeProtocol::Parse(P,Out));
+    P=PacketJson(Input);P->SetBoolField(TEXT("itemSession"),true);P->SetStringField(TEXT("itemEpoch"),TEXT("not-a-uuid"));TestFalse(TEXT("Input session epoch validated"),BridgeProtocol::Parse(P,Out));
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeTemplateSpawnTest,"UEBridge.Protocol.MobTemplateSpawn",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBridgeTemplateSpawnTest::RunTest(const FString& Parameters) {
+    auto P=PacketJson(Input);FBridgePacket Out;P->SetStringField(TEXT("kind"),TEXT("event"));P->SetStringField(TEXT("event"),TEXT("mob_template_spawn"));
+    P->SetStringField(TEXT("eventId"),TEXT("00000000-0000-4000-8000-000000000002"));P->SetStringField(TEXT("importId"),TEXT("00000000-0000-4000-8000-000000000003"));
+    for(const TCHAR* Species:{TEXT("minecraft:zombie"),TEXT("minecraft:villager")}) {
+        P->SetStringField(TEXT("mobType"),Species);TestTrue(TEXT("Species template at authoritative feet"),BridgeProtocol::Parse(P,Out));
+        TestTrue(TEXT("Template event has exact type and relative position"),Out.Kind==EBridgeKind::MobTemplateSpawn && Out.SpawnType==Species && Out.Position.Equals(FVector(1,2,3)));
+    }
+    P->SetStringField(TEXT("mobType"),TEXT("minecraft:bad:type"));TestFalse(TEXT("Exactly one namespace delimiter"),BridgeProtocol::Parse(P,Out));
+    P->SetStringField(TEXT("mobType"),TEXT("minecraft:Zombie"));TestFalse(TEXT("Uppercase registry identity rejected"),BridgeProtocol::Parse(P,Out));
+    P->SetStringField(TEXT("mobType"),TEXT("minecraft:zombie"));P->RemoveField(TEXT("importId"));TestFalse(TEXT("Current world import required"),BridgeProtocol::Parse(P,Out));
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeExtendedScopeTest,"UEBridge.Protocol.SixChunkScope",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FBridgeExtendedScopeTest::RunTest(const FString& Parameters) {
+    auto P=PacketJson(Input);FBridgePacket Out;P->SetStringField(TEXT("kind"),TEXT("event"));P->SetStringField(TEXT("event"),TEXT("world_scope"));
+    P->SetStringField(TEXT("eventId"),TEXT("00000000-0000-4000-8000-000000000002"));P->SetNumberField(TEXT("cellX"),0);P->SetNumberField(TEXT("cellY"),0);P->SetNumberField(TEXT("cellZ"),0);
+    P->SetNumberField(TEXT("radius"),12);P->SetNumberField(TEXT("halfHeight"),6);TestTrue(TEXT("Six chunk horizontal range and 13 vertical cells"),BridgeProtocol::Parse(P,Out));
+    P->SetNumberField(TEXT("halfHeight"),7);TestFalse(TEXT("Height bounded"),BridgeProtocol::Parse(P,Out));
+    P->SetStringField(TEXT("event"),TEXT("world_commit"));P->SetStringField(TEXT("importId"),TEXT("00000000-0000-4000-8000-000000000003"));P->SetNumberField(TEXT("cells"),8125);
+    TestTrue(TEXT("8125-cell import count"),BridgeProtocol::Parse(P,Out));P->SetNumberField(TEXT("cells"),8126);TestFalse(TEXT("Maximum import count"),BridgeProtocol::Parse(P,Out));
+    return true;
+}
+
 #endif

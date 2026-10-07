@@ -3,7 +3,12 @@
 Fabric **Minecraft Java 1.21.11 / Java 21** と **Unreal Engine 5.8** を同じPCで
 接続する実験用プロジェクト。Minecraftが入力・HUD・既存の音を担当し、UE主体モードではUEが移動・衝突・設置・破壊の判定と描画を担当します。既存サーバーへのインストールは不要です。
 
-**MOD・アイテム取り込み修正0.10.1：** `Item manifest exceeds 64 MiB` を修正。全モデルJSONを圧縮保存し、新しい取り込みスクリプトで検証・展開します。[MODとPython1ファイルの更新手順](docs/ITEM_EXPORT_FIX_0.10.1.md)。UEは0.10.0のまま、C++再ビルド不要です。
+**更新版0.11.0：** モブ召喚・初期取り込み後の追加転送、UE照明とバニラ風の光の分離、昼夜・光源・AO、アイテム投下と拾得、アトラス／隠れた面の削減、UE位置に追従する地形取得、WindowsのGPU共有経路と性能計測を追加。
+**MODとUEを両方更新・UE再ビルド・素材再書き出し／取り込みが必要です。**
+[MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/minecraft-ue-bridge-0.11.0.jar) / [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/UEBridge-update-0.11.0.zip) / [具体的な更新・計測手順](docs/UPGRADE_0.11.0.md)。
+目標はRTX 5060で1080p・4～6チャンク・実映像30fps以上です。**UE5.8ビルド・Windows GPU共有・描画・目標FPS達成はクラウドでは未確認です。** D3D11の共有経路と通常D3D12のJPEG経路を実機で比較します。
+
+**過去のMOD・アイテム取り込み修正0.10.1：** `Item manifest exceeds 64 MiB` を修正。全モデルJSONを圧縮保存し、新しい取り込みスクリプトで検証・展開します。[MODとPython1ファイルの更新手順](docs/ITEM_EXPORT_FIX_0.10.1.md)。UEは0.10.0のまま、C++再ビルド不要です。
 
 **更新版0.10.0：** 映像の色変換・照明OFF時の白浮き対策、黒いネイティブ形状のアウトライン、腕の振り時間・ボブ・残像対策、持ち物のネイティブモデル取得、地上モブのスポーンエッグ、開閉／スイッチ音、クリエイティブ限定の飛行を実装。
 **MODとUEを両方更新・UE再ビルド・素材再書き出し／取り込みが必要です。**
@@ -45,7 +50,7 @@ UE5.8ビルド・描画はWindows実機での確認が必要です。
 - 保存済みレベルを継続使用。今回の粒子マテリアルは補助スクリプトで再設定します。
 - 腕と全身は自分のスキン。主手の持ち物はローカルに取得したネイティブモデルを使います。取得できないモデルは診断へ表示します。
 - UE地形の直接編集、地上モブの卵生成、クリエイティブ限定の飛行。サバイバルの全ルールは未実装。MCワールドは変更せず、UEの変更は同じPlay中に保持。
-- 映像は最大1080p/60fpsの設定に対応。実際のfps・遅延はPCで測定。JPEG方式を継続し、空合成には同じHDR撮影の透明度をマスクとして転送します。GPU共有は未実装。
+- 映像は最大1080p/60fpsの設定に対応。実際のfps・遅延はPCで測定。JPEG方式を比較・互換用に残し、Windows D3D11/OpenGLのGPU共有経路も実装。空合成には同じHDR撮影の透明度を使います。共有の実機動作・目標FPSは未確認です。
 
 ## 保存先
 
@@ -62,7 +67,9 @@ tools/import_minecraft_textures.py  ローカル素材のUE取り込み
 tools/import_minecraft_player.py    スキン/最新の素材をまとめて取り込み
 tools/import_minecraft_items.py     主手のネイティブ持ち物モデルを取り込み
 tools/import_minecraft_mobs.py      地上モブ・スポーンエッグ用素材を取り込み
-tools/setup_bridge_rendering.py    生成素材のSpecular・黒い輪郭素材を設定
+tools/import_minecraft_atlas.py    地形の描画用アトラスを作成
+tools/bridge_lighting_materials.py UE照明／バニラ風光の生成素材
+tools/setup_bridge_rendering.py    生成素材の照明分離・黒い輪郭を設定
 tools/setup_vanilla_effects.py      UE内のバニラ風ブロック粒子設定
 unreal/UEBridge/Build-UEBridge.cmd  Windows用C++ビルド補助
 ```
@@ -90,7 +97,7 @@ cd minecraft-mod
 ./gradlew build
 ```
 
-`build/libs/minecraft-ue-bridge-0.10.1.jar` がMOD本体です（`-sources.jar`ではありません）。
+`build/libs/minecraft-ue-bridge-0.11.0.jar` がMOD本体です（`-sources.jar`ではありません）。
 Minecraft Launcherに **1.21.11 / Fabric Loader 0.19.5** の専用インストールを作り、
 ゲームディレクトリを新しい `MC-UE-Test` フォルダに設定してください。その `mods/` に
 本MODと **Fabric API 0.141.6+1.21.11** を配置します。新しいシングルプレイ・クリエイティブ
@@ -131,7 +138,7 @@ TNTを置くだけでは発火しません。レッドストーン・連鎖爆�
 - 接続の基準位置はMCワールド入場時とUE PlayerStart。両方再起動すると基準を揃え直せます。
 - 壁破壊は `BridgeWall` タグ付きGeometry Collectionのみ。床や既存シーン全体を対象にしません。
 - 自動地形同期は8ブロック単位。新モードは初期転送完了後にUEの地形を保護し、MCから上書きしない。
-  固定範囲/Play中の保持まで。地上モブの基本動作とUE体力を実装し、リアル水・モブ固有AI・ディスク永続化は未実装。
+  0.11.0はUE位置に追従する範囲と同じセッションの編集保持に対応。地上モブの基本動作とUE体力を実装し、リアル水・モブ固有AI・ディスク永続化は未実装。
 - 視点はMinecraftの実際の設定値を送信。F5固定ではなく、マウスボタンに割り当てた切り替えも使用可能。
 - 音はUEの結果をACK/再送してMinecraftのSoundManagerで再生。既存のリソースパックの音を使用。
 - 粒子はローカルに取り込んだブロックのparticleテクスチャでUE内に描画。バニラの20Hzの粒子値を使い、照明と衝突はUEが計算。

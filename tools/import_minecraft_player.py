@@ -83,8 +83,8 @@ def import_minecraft_player(filename):
     if len(receivers) != 1:
         raise RuntimeError("The current saved level must have exactly one BridgeReceiver")
     effects_script = project / "setup_vanilla_effects.py"
-    if not effects_script.is_file():
-        raise RuntimeError("Copy setup_vanilla_effects.py next to UEBridge.uproject before importing your skin")
+    if not effects_script.is_file() or not (project / 'bridge_lighting_materials.py').is_file():
+        raise RuntimeError("Copy setup_vanilla_effects.py and bridge_lighting_materials.py next to UEBridge.uproject before importing your skin")
     assets, tools = unreal.EditorAssetLibrary, unreal.AssetToolsHelpers.get_asset_tools()
     editing = unreal.MaterialEditingLibrary
     root = "/Game/Bridge/Minecraft/Player"
@@ -126,7 +126,12 @@ def import_minecraft_player(filename):
         raise RuntimeError("Cannot create skin texture parameter")
     sample.set_editor_property("parameter_name", "SkinTexture")
     sample.set_editor_property("texture", texture)
-    if not editing.connect_material_property(sample, "RGB", unreal.MaterialProperty.MP_BASE_COLOR) or not editing.connect_material_property(sample, "A", unreal.MaterialProperty.MP_OPACITY_MASK):
+    import runpy
+    helper = project / 'bridge_lighting_materials.py'
+    if not helper.is_file():
+        raise RuntimeError('Copy bridge_lighting_materials.py next to UEBridge.uproject first')
+    runpy.run_path(str(helper))['wire_vanilla_lighting'](unreal, editing, parent, sample, use_vertex=False)
+    if not editing.connect_material_property(sample, "A", unreal.MaterialProperty.MP_OPACITY_MASK):
         raise RuntimeError("Cannot connect skin color/outer-layer alpha")
     roughness = editing.create_material_expression(parent, unreal.MaterialExpressionConstant, -250, 180)
     roughness.set_editor_property("r", 0.85)
@@ -192,8 +197,10 @@ def setup_minecraft_visuals(game_dir):
     textures_script = project / "import_minecraft_textures.py"
     effects_script = project / "setup_vanilla_effects.py"
     rendering_script = project / "setup_bridge_rendering.py"
-    if not textures_script.is_file() or not effects_script.is_file() or not rendering_script.is_file():
-        raise RuntimeError("Copy all Python helpers from UEBridge-update-0.10.0.zip next to UEBridge.uproject first")
+    lighting_script = project / 'bridge_lighting_materials.py'
+    atlas_script = project / 'import_minecraft_atlas.py'
+    if not all(p.is_file() for p in (textures_script, effects_script, rendering_script, lighting_script, atlas_script)):
+        raise RuntimeError("Copy all Python helpers from UEBridge-update-0.11.0.zip next to UEBridge.uproject first")
     textures_manifest = _latest_export(game_dir, "textures", "/uebridge textures export")
     player_manifest = _latest_export(game_dir, "player", "/uebridge player export")
     textures_functions = runpy.run_path(str(textures_script))

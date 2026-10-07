@@ -20,7 +20,23 @@ ABridgeMobCharacter::ABridgeMobCharacter() {
 }
 
 bool ABridgeMobCharacter::Initialize(const FBridgeMobSnapshot& Snapshot,const FBridgeMobAppearance& Appearance,ABridgeMobWorld* OwnerWorld) {
-    if(!Appearance.Material || Appearance.Parts.IsEmpty() || Appearance.Parts.Num()>256) return false;
+    auto Invalid=[&](const FString& Reason){InitializationReason=Reason;return false;};
+    VertexCount=0;
+    if(!Appearance.Material) return Invalid(TEXT("material_missing"));
+    if(Appearance.Parts.IsEmpty() || Appearance.Parts.Num()>256) return Invalid(TEXT("part_count"));
+    if(Appearance.RenderScale.ContainsNaN() || Appearance.RenderScale.GetMin()<=0 || Appearance.RenderOffset.ContainsNaN()) return Invalid(TEXT("renderer_transform"));
+    // Validate the complete hierarchy before creating components. Root/anchor parts may have no cuboids.
+    for(int32 Index=0;Index<Appearance.Parts.Num();Index++) {
+        const FBridgeMobPart& Part=Appearance.Parts[Index];
+        if(Part.Parent>=Index || Part.Parent< -1) return Invalid(FString::Printf(TEXT("parent index %d->%d"),Index,Part.Parent));
+        if(Part.Rest.ContainsNaN()) return Invalid(FString::Printf(TEXT("rest transform part %d"),Index));
+        if(Part.Vertices.Num()!=Part.Texcoords.Num() || Part.Vertices.Num()%4 || Part.Vertices.Num()>16384) return Invalid(FString::Printf(TEXT("quad/UV count part %d"),Index));
+        for(const FVector& Vertex:Part.Vertices) if(Vertex.ContainsNaN()) return Invalid(FString::Printf(TEXT("vertex part %d"),Index));
+        for(const FVector2D& UV:Part.Texcoords) if(UV.ContainsNaN()) return Invalid(FString::Printf(TEXT("UV part %d"),Index));
+        for(const FTransform& Pose:Part.WalkFrames) if(Pose.ContainsNaN()) return Invalid(FString::Printf(TEXT("walk transform part %d"),Index));
+        VertexCount+=Part.Vertices.Num();
+    }
+    if(VertexCount==0) return Invalid(TEXT("no_visible_model_cuboids"));
     MinecraftId=Snapshot.Id;MinecraftType=Snapshot.Type;Health=Snapshot.Health;MaxHealth=Snapshot.MaxHealth;
     Hostile=Snapshot.Hostile;Damage=Snapshot.Damage;WorldOwner=OwnerWorld;
     float HalfHeight=FMath::Clamp(Snapshot.Height*50.f,10.f,1000.f);
@@ -37,7 +53,6 @@ bool ABridgeMobCharacter::Initialize(const FBridgeMobSnapshot& Snapshot,const FB
     Poses=Appearance.Parts;
     for(int32 Index=0;Index<Poses.Num();Index++) {
         const FBridgeMobPart& Part=Poses[Index];
-        if(Part.Parent>=Index || Part.Parent< -1 || Part.Vertices.Num()!=Part.Texcoords.Num() || Part.Vertices.Num()%4 || Part.Vertices.Num()>16384) return false;
         UProceduralMeshComponent* MobPartComponent=NewObject<UProceduralMeshComponent>(this,FName(*FString::Printf(TEXT("MobPart_%d"),Index)));
         AddInstanceComponent(MobPartComponent);MobPartComponent->SetupAttachment(Part.Parent<0 ? VisualRoot.Get() : Parts[Part.Parent].Get());
         MobPartComponent->SetRelativeTransform(Part.Rest);MobPartComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -51,10 +66,10 @@ bool ABridgeMobCharacter::Initialize(const FBridgeMobSnapshot& Snapshot,const FB
             FVector Normal=FVector::CrossProduct(Part.Vertices[Vertex+2]-Part.Vertices[Vertex],Part.Vertices[Vertex+1]-Part.Vertices[Vertex]).GetSafeNormal();
             for(int32 Offset=0;Offset<4;Offset++) Normals[Vertex+Offset]=Normal;
         }
-        MobPartComponent->CreateMeshSection_LinearColor(0,Part.Vertices,Triangles,Normals,Part.Texcoords,Colors,Tangents,false);
+        if(!Part.Vertices.IsEmpty()) MobPartComponent->CreateMeshSection_LinearColor(0,Part.Vertices,Triangles,Normals,Part.Texcoords,Colors,Tangents,false);
         MobPartComponent->SetMaterial(0,Appearance.Material);
     }
-    LastPosition=GetActorLocation();GetCharacterMovement()->SetMovementMode(MOVE_None);return true;
+    LastPosition=GetActorLocation();GetCharacterMovement()->SetMovementMode(MOVE_None);InitializationReason=TEXT("ready");return true;
 }
 
 void ABridgeMobCharacter::SetAuthority(bool Active,ACharacter* NewTarget) {
@@ -99,6 +114,11 @@ void ABridgeMobCharacter::Tick(float DeltaSeconds) {
         Direction=Wander;
     }
     if(!Direction.IsNearlyZero()) {
+        const FVector Feet=GetActorLocation()-FVector(0,0,GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+        const FVector NextFeet=Feet+Direction*GetCharacterMovement()->MaxWalkSpeed*Dt;
+        if(WorldOwner.IsValid() && WorldOwner->SpawnAllowed && !WorldOwner->SpawnAllowed(NextFeet)) {
+            GetCharacterMovement()->StopMovementImmediately();Wander=-Wander;Decision=.5f;Animate(Dt);return;
+        }
         AddMovementInput(Direction,Hostile ? 1.f : .35f,true);
         if(FVector::DistSquared2D(GetActorLocation(),LastPosition)<1.f && GetCharacterMovement()->IsMovingOnGround()) Stuck+=Dt;else Stuck=0;
         if(Stuck>.35f) { Jump();Stuck=0;if(!Hostile) { Wander=-Wander;Decision=.5f; } }

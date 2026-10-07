@@ -2,9 +2,10 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Async/Future.h"
+#include "BridgeVideoCadence.h"
 #include "BridgeVideo.generated.h"
 
-/** Loopback JPEG stream, independent from the input/event UDP socket. */
+/** Loopback video; optional leased D3D11 GPU sharing, with JPEG compatibility fallback. */
 UCLASS(ClassGroup=(Bridge), meta=(BlueprintSpawnableComponent))
 class UEBRIDGE_API UBridgeVideo : public UActorComponent {
     GENERATED_BODY()
@@ -19,6 +20,11 @@ public:
     int32 GetMaskPixels() const {return LastMaskPixels;}
     int32 GetMaskForegroundPixels() const {return LastMaskForeground;}
     int32 GetMaskTranslucentPixels() const {return LastMaskTranslucent;}
+    bool AreMaskCountsAvailable() const {return LastMaskForeground>=0 && LastMaskTranslucent>=0;}
+    FString GetTransportName() const;
+    FString GetGpuDiagnostic() const;
+    float GetCaptureMs() const {return LastCaptureMs;}
+    int32 GetDroppedFrames() const {return DroppedFrames;}
     virtual void TickComponent(float DeltaTime,ELevelTick TickType,FActorComponentTickFunction* ThisTickFunction) override;
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Video",meta=(ClampMin="160",ClampMax="1920")) int32 Width=960;
@@ -37,10 +43,14 @@ private:
     class FSocket* Client=nullptr;
     UPROPERTY() TObjectPtr<class USceneCaptureComponent2D> Capture;
     UPROPERTY() TObjectPtr<class UTextureRenderTarget2D> Target;
-    UPROPERTY() TObjectPtr<class USceneCaptureComponent2D> MaskCapture;
-    UPROPERTY() TObjectPtr<class UTextureRenderTarget2D> MaskTarget;
     FVector MCOrigin=FVector::ZeroVector,Anchor=FVector::ZeroVector;
-    bool LightingEnabled=true,VanillaSkyEnabled=false,ClientV3=false;
+    bool LightingEnabled=true,VanillaSkyEnabled=false,ClientV3=false,ClientGpu=false;
+    TSharedPtr<struct FBridgeSharedTransport,ESPMode::ThreadSafe> SharedGpu;
+    TArray<uint8> Acknowledgements;
+    float LastCaptureMs=0;
+    int32 DroppedFrames=0;
+    TWeakObjectPtr<class UGameViewportClient> StandaloneViewport;
+    bool SavedViewportDisabled=false;
     uint32 ModeRevision=0,EncodeRevision=0;
     double LastSkyScan=-1;
     int32 LastMaskPixels=0,LastMaskForeground=0,LastMaskTranslucent=0;
@@ -49,9 +59,13 @@ private:
     TArray<uint8> Hello, Output;
     int32 Sent=0;
     uint32 Sequence=0;
-    double AcceptedAt=0, LastCapture=-1, LastProgress=0;
+    double AcceptedAt=0, LastProgress=0;
+    BridgeVideoCadence::Scheduler CaptureSchedule;
     void DropClient();
     void Flush();
     void ConfigureCapture(class USceneCaptureComponent2D* Component,bool Mask);
     void RefreshHiddenSky();
+    void ResetSharedGpu();
+    void ReadGpuAcknowledgements();
+    void UpdateStandaloneViewport(bool CaptureOnly);
 };

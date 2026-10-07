@@ -29,8 +29,11 @@ import org.joml.Vector3f;
  * resource-pack models, layer tints and each hand's display transform. Local assets only. */
 public final class ItemModelExport {
     private static final ItemDisplayContext[] CONTEXTS={ItemDisplayContext.FIRST_PERSON_RIGHT_HAND,ItemDisplayContext.FIRST_PERSON_LEFT_HAND,
-        ItemDisplayContext.THIRD_PERSON_RIGHT_HAND,ItemDisplayContext.THIRD_PERSON_LEFT_HAND};
+        ItemDisplayContext.THIRD_PERSON_RIGHT_HAND,ItemDisplayContext.THIRD_PERSON_LEFT_HAND,ItemDisplayContext.GROUND};
     private ItemModelExport() {}
+    static Set<String> exportedContexts() {
+        Set<String> names=new HashSet<>();for(ItemDisplayContext context:CONTEXTS) names.add(context.asString());return Set.copyOf(names);
+    }
     public static Path export(MinecraftClient client,Path root) throws IOException {
         if(!client.isOnThread() || client.player==null || client.world==null) throw new IOException("Enter a world first");
         Files.createDirectories(root);

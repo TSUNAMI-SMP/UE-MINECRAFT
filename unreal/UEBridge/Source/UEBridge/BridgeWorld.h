@@ -10,6 +10,8 @@ struct FBridgeWorldStage {
     int32 Total=0;
     double Deadline=0;
     TMap<int32,TArray<FBridgeBlock>> Batches;
+    TArray<uint8> SkyTop;
+    bool Compact=false;
 };
 
 /** Session-local terrain: imported cells, UE collision, aiming and authoritative edits. */
@@ -44,6 +46,17 @@ public:
     bool UseBlock(const FIntVector& Block,bool TimedRelease=false);
     int32 CellCount() const { return Cells.Num(); }
     int32 ShapeCount() const { return Shapes; }
+    void UpdateCollisionCenter(const FVector& UEFeet);
+    void UpdateCollisionCenters(const FVector& UEFeet,const TArray<FVector>& ExtraFeet);
+    class FBridgeLightingService* GetLighting() const {return Lighting.Get();}
+    int32 RenderedFaceCount() const;
+    int32 RenderSectionCount() const;
+    int32 RebuildPending() const {return RebuildQueue.Num()+LightQueue.Num();}
+    bool ContainsUEPosition(const FVector& UEPosition) const;
+    bool IsMovementReady(const FVector& UEFeet,const FVector& Velocity=FVector::ZeroVector) const;
+    bool EnsureCollisionForPosition(const FVector& UEPosition);
+    bool IsOpaqueVoxel(const FIntVector& Block) const;
+    FString GetSurfaceReason() const {return SurfaceReason;}
 private:
     UPROPERTY() TMap<FIntVector,TObjectPtr<class ABridgeBlockPreview>> Cells;
     TMap<FIntVector,int32> Counts;
@@ -62,10 +75,38 @@ private:
     UPROPERTY() TArray<TObjectPtr<class UBoxComponent>> Boundary;
     TMap<FIntVector,double> ButtonRelease;
     FString LastModelError;
+    mutable FString SurfaceReason=TEXT("not_sampled");
+    TSharedPtr<class FBridgeLightingService> Lighting;
+    TSharedPtr<class FBridgeLightingService> PendingLighting;
+    TArray<FIntVector> LightSeedCells;
+    int32 LightSeedCursor=0;
+    bool PendingLightInitialized=false;
+    FIntVector LightingCenter=FIntVector::ZeroValue,PendingLightingCenter=FIntVector::ZeroValue;
+    int32 LightingRadius=0,LightingHeight=0,PendingLightingRadius=0,PendingLightingHeight=0;
+    struct FOpaqueCell {uint64 Words[8]={};};
+    TMap<FIntVector,FOpaqueCell> OpaqueCells;
+    TSet<FIntVector> RebuildQueue,LightQueue;
+    FIntVector CollisionCenter=FIntVector::ZeroValue;
+    bool HasCollisionCenter=false;
+    TSet<FIntVector> PhysicsCells;
+    TArray<FVector> AdditionalCollisionPositions;
+    FVector PrimaryCollisionPosition=FVector::ZeroVector;
+    TMap<FIntVector,TArray<FBridgeBlock>> EditedBlocks;
+    TMap<FIntVector,TSet<FIntVector>> EditedCellOwners;
+    TSet<FIntVector> RemovedBlocks;
+    TMap<FIntVector,TArray<uint8>> SkyTops;
     void BuildBoundary();
     bool Inside(const FIntVector& C) const;
     FIntVector OwnerOf(const FBridgeBlock& Block) const;
     void RebuildCell(const FIntVector& Cell);
+    void QueueNeighbors(const FIntVector& Cell);
+    void RefreshLogicalCell(const FIntVector& Cell);
+    void MarkEdited(const FIntVector& Block);
+    bool NearCollision(const FIntVector& Cell) const;
+    void ClearOpaqueVoxel(const FIntVector& Voxel);
+    void SeedLightingCell(const FIntVector& Cell,class FBridgeLightingService* Service) const;
+    void BeginLightingRecenter();
+    bool SupportingLogical(const FVector& Feet,FIntVector& Voxel,FString& BlockId,FColor& Tint,FVector& Point) const;
     bool AppendState(const FIntVector& Block,const FString& BlockId,int32 Color,const FString& StateKey,TArray<FBridgeBlock>& Out) const;
     const FBridgeBlock* FindVisual(const FIntVector& Block) const;
     void UpdateConnections(const FIntVector& Block);

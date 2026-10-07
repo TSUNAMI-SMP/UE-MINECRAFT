@@ -21,7 +21,10 @@ public abstract class ControllerPlayerMixin {
     }
     @Inject(method="dropSelectedItem",at=@At("HEAD"),cancellable=true)
     private void bridgeNoVanillaDrop(boolean entireStack,CallbackInfoReturnable<Boolean> ci) {
-        if(MinecraftBridgeClient.controllerMode()) ci.setReturnValue(false);
+        if(MinecraftBridgeClient.controllerMode()) {
+            MinecraftBridgeClient.dropSelectedItem(entireStack);
+            ci.setReturnValue(false);
+        }
     }
     @Inject(method="dropCreativeStack",at=@At("HEAD"),cancellable=true)
     private void bridgeNoCreativeDrop(ItemStack stack,CallbackInfo ci) {

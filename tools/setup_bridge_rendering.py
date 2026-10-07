@@ -1,4 +1,4 @@
-"""Repair generated diffuse materials and assign an illumination-independent outline."""
+"""Restore generated UE lighting, migrate vanilla lightmap, preserve user level/assets."""
 import pathlib
 import unreal
 
@@ -11,6 +11,16 @@ def setup_bridge_rendering():
     receivers = [a for a in unreal.get_editor_subsystem(unreal.EditorActorSubsystem).get_all_level_actors() if isinstance(a, unreal.BridgeReceiver)]
     if len(receivers) != 1:
         raise RuntimeError('The saved level needs exactly one BridgeReceiver')
+    import runpy
+    helper = project / 'bridge_lighting_materials.py'
+    if not helper.is_file():
+        raise RuntimeError('Copy bridge_lighting_materials.py next to UEBridge.uproject first')
+    dust_helper = project / 'setup_vanilla_effects.py'
+    if not dust_helper.is_file():
+        raise RuntimeError('Copy setup_vanilla_effects.py next to UEBridge.uproject first')
+    lighting = runpy.run_path(str(helper))
+    dust = runpy.run_path(str(dust_helper))
+    lighting['ensure_lighting_collection'](unreal)
     assets, tools, editing = unreal.EditorAssetLibrary, unreal.AssetToolsHelpers.get_asset_tools(), unreal.MaterialEditingLibrary
     names = ('M_MinecraftModel_Masked_v2', 'M_MinecraftModel_Translucent_v2', 'M_MinecraftFaces_v4', 'M_PlayerSkin_v1', 'M_MinecraftMob_v1', 'M_MinecraftDust_v1')
     for path in assets.list_assets('/Game/Bridge/Minecraft', True, False):
@@ -19,14 +29,26 @@ def setup_bridge_rendering():
         material = unreal.load_asset(path)
         if not isinstance(material, unreal.Material):
             continue
-        if 'BridgeSpecular' not in {str(v) for v in editing.get_scalar_parameter_names(material)}:
-            node = editing.create_material_expression(material, unreal.MaterialExpressionScalarParameter, -250, 300)
-            node.set_editor_property('parameter_name', 'BridgeSpecular'); node.set_editor_property('default_value', 0.0)
-            if not editing.connect_material_property(node, '', unreal.MaterialProperty.MP_SPECULAR):
-                raise RuntimeError('Cannot repair generated material specular: ' + path)
+        if 'BridgeUseVertexLight' not in {str(v) for v in editing.get_scalar_parameter_names(material)}:
+            if path.split('/')[-1].split('.')[0] == 'M_MinecraftDust_v1':
+                # Dust carries light in instance channels 2/3/4, not the actor
+                # BridgeLight uniform shared by a complete texture group.
+                dust['setup_vanilla_effects']()
+                continue
+            pixel = editing.get_material_property_input_node(material, unreal.MaterialProperty.MP_BASE_COLOR)
+            if pixel is None:
+                raise RuntimeError('Generated material lacks a colour graph. Re-import visuals: ' + path)
+            if isinstance(pixel, unreal.MaterialExpressionLinearInterpolate):
+                # 0.9/0.10 model masters: BaseColor=lerp(texture*tint,0,BridgeUnlit).
+                sources = editing.get_inputs_for_material_expression(material, pixel)
+                if not sources:
+                    raise RuntimeError('Cannot recover generated colour graph: ' + path)
+                pixel = sources[0]
+            lighting['wire_vanilla_lighting'](unreal, editing, material, pixel,
+                use_vertex='Model_' in path and '/Items/' not in path)
             editing.recompile_material(material)
             if not assets.save_loaded_asset(material, False):
-                raise RuntimeError('Cannot save repaired material: ' + path)
+                raise RuntimeError('Cannot save generated lighting migration: ' + path)
     path = '/Game/Bridge/Minecraft/M_BlockOutline_v1'
     material = unreal.load_asset(path) if assets.does_asset_exist(path) else None
     if material is None:
@@ -49,4 +71,4 @@ def setup_bridge_rendering():
         if not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level():
             raise RuntimeError('Cannot save the current level')
         unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)
-    unreal.log('Diffuse materials and black native-shape outline ready. Play then compare /uebridge lighting on and off.')
+    unreal.log('UE-lit ON and native lightmap OFF materials, black native outline and shared lighting environment ready. Play then compare day/night and torch placement.')

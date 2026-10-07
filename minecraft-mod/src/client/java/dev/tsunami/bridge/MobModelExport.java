@@ -40,19 +40,14 @@ public final class MobModelExport {
         Files.createDirectory(directory);
         JsonObject manifest = new JsonObject(); manifest.addProperty("kind", "mobs"); manifest.addProperty("version", 1);
         JsonObject appearances = new JsonObject(); JsonArray skipped = new JsonArray(); JsonObject entities = new JsonObject();
-        Map<UUID,String> next = new HashMap<>(); int count = 0;
-        for (var entity : client.world.getEntities()) {
-            if (!(entity instanceof MobEntity mob) || !mob.isAlive() || mob.squaredDistanceTo(client.player) > 64 * 64) continue;
-            if (++count > MAX_MOBS) { skipped.add("nearby_mob_limit_128"); break; }
-            try {
-                String key=exportAppearance(client,mob,directory,appearances);
-                entities.addProperty(mob.getUuidAsString(),key);next.put(mob.getUuid(),key);
-            } catch (IOException | RuntimeException error) {
-                skipped.add(Registries.ENTITY_TYPE.getId(mob.getType()) + " / " + mob.getUuidAsString() + " / " + error.getMessage());
-            }
-        }
         JsonObject templates=new JsonObject();
-        for(var egg:net.minecraft.item.SpawnEggItem.getAll()) {
+        var eggs=new ArrayList<net.minecraft.item.SpawnEggItem>();net.minecraft.item.SpawnEggItem.getAll().forEach(eggs::add);
+        eggs.sort(Comparator.comparingInt(egg -> {
+            String type=Registries.ENTITY_TYPE.getId(egg.getEntityType(egg.getDefaultStack())).toString();
+            return type.equals("minecraft:zombie") ? 0 : type.equals("minecraft:villager") ? 1 : 2;
+        }));
+        // Reserve the species defaults before nearby appearance variants can consume the budget.
+        for(var egg:eggs) {
             var type=egg.getEntityType(egg.getDefaultStack());String id=Registries.ENTITY_TYPE.getId(type).toString();
             if(MobBridge.unsupportedMovement(id)) {skipped.add(id+" / flight or water gameplay excluded");continue;}
             if(templates.has(id)) continue;
@@ -63,6 +58,17 @@ public final class MobModelExport {
                 mob.setPosition(client.player.getX(),client.player.getY(),client.player.getZ());
                 String key=exportAppearance(client,mob,directory,appearances);templates.addProperty(id,key);
             } catch(IOException | RuntimeException error) {skipped.add(id+" / template: "+error.getMessage());}
+        }
+        Map<UUID,String> next = new HashMap<>(); int count = 0;
+        for (var entity : client.world.getEntities()) {
+            if (!(entity instanceof MobEntity mob) || !mob.isAlive() || mob.squaredDistanceTo(client.player) > 64 * 64) continue;
+            if (++count > MAX_MOBS) { skipped.add("nearby_mob_limit_128"); break; }
+            try {
+                String key=exportAppearance(client,mob,directory,appearances);
+                entities.addProperty(mob.getUuidAsString(),key);next.put(mob.getUuid(),key);
+            } catch (IOException | RuntimeException error) {
+                skipped.add(Registries.ENTITY_TYPE.getId(mob.getType()) + " / " + mob.getUuidAsString() + " / " + error.getMessage());
+            }
         }
         manifest.add("templates",templates);
         if(appearances.isEmpty()) throw new IOException("No exportable ground-mob templates or nearby mobs. See exclusions for unsupported models.");
@@ -116,6 +122,7 @@ public final class MobModelExport {
         model.setAngles(state);
         JsonArray parts=new JsonArray();List<ModelPart> nodes=new ArrayList<>();
         capturePart(root,"root",-1,parts,nodes,true);
+        if(parts.asList().stream().allMatch(part -> part.getAsJsonObject().getAsJsonArray("quads").isEmpty())) throw new IOException("Native model has no visible cuboids");
         JsonArray frames=new JsonArray();
         for(int i=0;i<WALK_FRAMES;i++) {
             state.limbSwingAmplitude=0.8f;state.limbSwingAnimationProgress=(float)(i*Math.PI*2/WALK_FRAMES / 0.6662);

@@ -8,6 +8,14 @@ import net.minecraft.client.util.math.Vector2f;
 import org.junit.Test;
 import static org.junit.Assert.*;
 public class NativeItemApiTest {
+    @Test public void dropExportsNativeGroundDisplayWithExistingHands() {
+        assertEquals(java.util.Set.of("firstperson_righthand","firstperson_lefthand","thirdperson_righthand","thirdperson_lefthand","ground"),ItemModelExport.exportedContexts());
+    }
+    @Test public void escrowSerializationHooksExistOnActualServerPlayer() throws Exception {
+        Class<?> player=Class.forName("net.minecraft.server.network.ServerPlayerEntity",false,getClass().getClassLoader());
+        assertEquals(void.class,player.getDeclaredMethod("writeCustomData",net.minecraft.storage.WriteView.class).getReturnType());
+        assertEquals(void.class,player.getDeclaredMethod("readCustomData",net.minecraft.storage.ReadView.class).getReturnType());
+    }
     @Test public void requiredMixinFieldsExistInActualMinecraft12111Classes() throws Exception {
         for(String[] field:new String[][]{{"net.minecraft.block.FenceGateBlock","type","net.minecraft.block.WoodType"},
             {"net.minecraft.block.TrapdoorBlock","blockSetType","net.minecraft.block.BlockSetType"},

@@ -61,7 +61,7 @@ public final class BlockGeometryCapture {
             // Vanilla offset blocks with solid hulls (bamboo/pointed dripstone)
             // apply the same offset to collision as to their outline/rendered model.
             states.add(new TextureExport.State(properties(state),boxes(state.getCollisionShape(mc.world,pos).getBoundingBoxes(),offset),
-                boxes(state.getOutlineShape(mc.world,pos).getBoundingBoxes(),offset),List.copyOf(solidFaces),Block.cannotConnect(state)));
+                boxes(state.getOutlineShape(mc.world,pos).getBoundingBoxes(),offset),List.copyOf(solidFaces),Block.cannotConnect(state),state.isOpaqueFullCube(),state.getLuminance(),state.getOpacity()));
         }
         var zeroOffset=defaults.getModelOffset(BlockPos.ORIGIN);
         return new TextureExport.Block(id,props,color,List.copyOf(states),"",Math.abs(zeroOffset.x),Math.abs(zeroOffset.y));

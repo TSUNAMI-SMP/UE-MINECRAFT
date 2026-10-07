@@ -432,9 +432,13 @@ def import_minecraft_textures(filename):
             z.set_editor_property("r", False); z.set_editor_property("g", False)
             z.set_editor_property("b", True); z.set_editor_property("a", False)
             wire(normal, z)
-            top = node(unreal.MaterialExpressionClamp); wire(z, top, "Input")
+            # UE5.8's Python wrapper does not expose a stable Clamp input pin
+            # name.  Max(value, 0) is equivalent to saturating the normal
+            # component here and compiles consistently across SM5 targets.
+            zero = node(unreal.MaterialExpressionConstant); zero.set_editor_property("r", 0.0)
+            top = node(unreal.MaterialExpressionMax); wire(z, top, "A"); wire(zero, top, "B")
             negative = node(unreal.MaterialExpressionMultiply); negative.set_editor_property("const_b", -1.0); wire(z, negative, "A")
-            bottom = node(unreal.MaterialExpressionClamp); wire(negative, bottom, "Input")
+            bottom = node(unreal.MaterialExpressionMax); wire(negative, bottom, "A"); wire(zero, bottom, "B")
             first = node(unreal.MaterialExpressionLinearInterpolate)
             wire(channels["Side"], first, "A"); wire(channels["Top"], first, "B"); wire(top, first, "Alpha")
             result = node(unreal.MaterialExpressionLinearInterpolate)

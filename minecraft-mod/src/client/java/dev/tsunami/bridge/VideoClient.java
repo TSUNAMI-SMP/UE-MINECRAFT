@@ -49,6 +49,19 @@ public final class VideoClient implements AutoCloseable {
                     backend=frame.gpu()==null ? "JPEG" : "GPU共有";
                     width=frame.width();height=frame.height();timing.received(lastFrame);
                 }
+            } catch (EOFException e) {
+                // UE can close the GPU-share stream while the editor is still running
+                // (for example after a shared-texture lease/adapter reset).  Retrying
+                // UEB5 forever leaves Minecraft black.  Downgrade the next handshake
+                // to the TCP-JPEG path; this keeps the session playable and lets the
+                // user diagnose/recover the GPU path without restarting Minecraft.
+                if (gpuAllowed) {
+                    gpuAllowed = false;
+                    gpuDiagnostic = "GPU共有切断→JPEGへ切替 (EOFException)";
+                    message = gpuDiagnostic;
+                } else {
+                    message = "UE映像待ち: EOFException";
+                }
             } catch (IOException | RuntimeException e) {
                 message = "UE映像待ち: " + e.getClass().getSimpleName();
             } finally { socket = null;acknowledgements=null;latest.set(null); }

@@ -11,6 +11,7 @@
 ## ダウンロード
 
 - [MOD 0.11.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/minecraft-ue-bridge-0.11.0.jar)
+- `UE映像待ち: EOFException` が出る場合は、[映像再接続修正MOD 0.11.6](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/minecraft-ue-bridge-0.11.0-video-reconnect-fix.jar)を優先して使用します（[手順](VIDEO_RECONNECT_FIX_0.11.6.md)）。
 - [使用中UEプロジェクト用の更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/UEBridge-update-0.11.0.zip)
 - [ソース＋MOD一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/UE-Minecraft-MVP-0.11.0.zip)（新規導入用）
 

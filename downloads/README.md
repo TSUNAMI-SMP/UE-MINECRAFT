@@ -2,6 +2,8 @@
 
 ## 更新版0.11.0
 
+`UE映像待ち: EOFException` でMinecraftが黒画面になり、UE側は描画を続けている場合は、[映像再接続修正MOD 0.11.6](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/minecraft-ue-bridge-0.11.0-video-reconnect-fix.jar)へ差し替えます。GPU共有の切断を検出すると、次の接続をJPEGへ自動降格します。[差し替え手順](../docs/VIDEO_RECONNECT_FIX_0.11.6.md)。既存の0.11.0 JARと配布ZIPは保持します。
+
 `control ue`でメモリ不足になった場合は[UEメモリ修正パッチ0.11.5](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/UEBridge-memory-fix-0.11.5.zip)を適用します。[2ファイルの上書き・再ビルド手順](../docs/MEMORY_FIX_0.11.5.md)。
 
 素材取り込みには[Python修正パッチ0.11.4](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-bridge-0.11.0/downloads/UEBridge-lighting-import-fix-0.11.4.zip)を適用します。[3ファイルの上書き・再取り込み手順](../docs/LIGHTING_IMPORT_FIX_0.11.4.md)。

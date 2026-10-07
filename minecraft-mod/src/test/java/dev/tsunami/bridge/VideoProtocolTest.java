@@ -194,5 +194,22 @@ public class VideoProtocolTest {
             }
         }
     }
+    @Test public void gpuEofFallsBackToJpegOnTheNextReconnect() throws Exception {
+        String session="01234567-1234-1234-1234-0123456789ab";
+        try(var server=new ServerSocket(0,1,InetAddress.getByName("127.0.0.1"));var client=new VideoClient(server.getLocalPort(),session,true,true)) {
+            // Closing the first peer simulates UE dropping a shared-texture stream
+            // during an adapter/lease reset. The next hello must be UEB3, not UEB5.
+            server.setSoTimeout(5000);
+            try(var first=server.accept()) {
+                first.setSoTimeout(2000);
+                assertEquals("UEB5"+session,new String(first.getInputStream().readNBytes(40),StandardCharsets.US_ASCII));
+            }
+            try(var second=server.accept()) {
+                second.setSoTimeout(2000);
+                assertEquals("UEB3"+session,new String(second.getInputStream().readNBytes(40),StandardCharsets.US_ASCII));
+                assertTrue(client.gpuDiagnostic().contains("JPEG"));
+            }
+        }
+    }
 
 }

@@ -2,6 +2,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "ProceduralMeshComponent.h"
+#include "BridgeMovementMath.h"
 #include "BridgeCharacter.generated.h"
 
 UCLASS()
@@ -25,6 +26,8 @@ public:
     /** Minecraft feet are on the floor; UE keeps the physical capsule slightly above it. */
     FVector GetMinecraftFeetPosition() const;
     bool IsAuthoritySprinting() const;
+    float GetMinecraftFallDistance() const {return NativeFallDistanceCm/100.f;}
+    void ApplyNativeAttackSlowdown();
     void SetMinecraftFov(float VerticalFov);
     void ConfigureNativeViewOptions(bool BobView,float FovEffectScale);
     void SetInteractionWorld(class ABridgeWorld* Imported);
@@ -93,6 +96,10 @@ private:
     float NativeFovEffectScale=1;
     float BlockOutlineReachCm=500;
     bool SprintRequested=false,BodyYawInitialized=false;
+    float NativeSprintResumeTime=0;
+    BridgeMovementMath::Eye NativeCameraEye;
+    float NativeFallDistanceCm=0,NativeFallPeakZ=0;
+    bool NativeWasFalling=false;
     int32 CameraPerspective=0,PlayerSkinLayers=127;
     float PlayerSwing=0,PlayerEquip=1,PlayerUseProgress=0,RemoteEyeHeight=162;
     bool NativePresentation=false,NativeEquipLowering=false;

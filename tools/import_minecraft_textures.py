@@ -235,6 +235,16 @@ def load_texture_manifest(filename):
         _identifier(name, 128)
         if not isinstance(entry, dict):
             raise ValueError("Invalid block entry")
+        for key in ("renderTints", "tintSources"):
+            data = entry.get(key)
+            if data is not None and (not isinstance(data, dict) or len(data) > 256
+                    or any(not isinstance(index, str) or not re.fullmatch(r"0|[1-9][0-9]{0,2}", index)
+                           or int(index) > 255 for index in data)):
+                raise ValueError("Invalid native render tint table")
+        if any(type(color) is not int or not 0 <= color <= 0xffffff for color in entry.get("renderTints", {}).values()):
+            raise ValueError("Invalid native render tint color")
+        if any(source not in ("none", "grass", "foliage", "dry_foliage", "constant") for source in entry.get("tintSources", {}).values()):
+            raise ValueError("Invalid native render tint source")
         for face in ("top", "side", "bottom"):
             item = entry.get(face)
             if not isinstance(item, dict) or item.get("texture") not in textures or type(item.get("tint")) is not bool:
@@ -263,7 +273,7 @@ def _lighting_functions(unreal):
 def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mode):
     """Rebuild our generated master only, retaining existing texture instances."""
     translucent = alpha_mode == 'translucent'
-    name = 'M_MinecraftModel_' + ('Translucent' if translucent else 'Masked') + '_v2'
+    name = 'M_MinecraftModel_' + ('Translucent' if translucent else 'Masked') + '_v3'
     path = root + '/' + name
     parent = unreal.load_asset(path) if assets.does_asset_exist(path) else None
     if parent is None:
@@ -273,7 +283,7 @@ def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mo
     scalar_names = {str(value) for value in editing.get_scalar_parameter_names(parent)}
     texture_names = {str(value) for value in editing.get_texture_parameter_names(parent)}
     use_vertex = not root.endswith('/Items')
-    required_scalars = {'FaceTint', 'BridgeUnlit', 'BridgeSpecular'}
+    required_scalars = {'FaceTint', 'BridgeUnlit', 'BridgeSpecular', 'BridgeLightingRevision_v4'}
     if use_vertex:
         required_scalars.add('BridgeUseVertexLight')
     if required_scalars.issubset(scalar_names) and 'FaceTexture' in texture_names:
@@ -283,8 +293,11 @@ def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mo
     # This graph migration repairs both the ON branch and old fixed-brightness OFF.
     editing.delete_all_material_expressions(parent)
     parent.set_editor_property('blend_mode', unreal.BlendMode.BLEND_TRANSLUCENT if translucent else unreal.BlendMode.BLEND_MASKED)
-    parent.set_editor_property('opacity_mask_clip_value', 0.1)
-    parent.set_editor_property('two_sided', True)
+    # RenderPipelines CUTOUT_TERRAIN uses 0.5; entity/item cutouts use 0.1.
+    # Native block models already provide reversed faces for crosses. Rendering
+    # every face from both sides adds coincident duplicate fragments and flicker.
+    parent.set_editor_property('opacity_mask_clip_value', 0.5 if use_vertex else 0.1)
+    parent.set_editor_property('two_sided', not use_vertex)
     if translucent:
         parent.set_editor_property('translucency_lighting_mode', unreal.TranslucencyLightingMode.TLM_SURFACE)
     def expression(cls):
@@ -305,9 +318,10 @@ def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mo
     blend = expression(unreal.MaterialExpressionLinearInterpolate)
     connect(white, blend, 'A'); connect(color, blend, 'B'); connect(tint, blend, 'Alpha')
     colored = expression(unreal.MaterialExpressionMultiply)
-    connect(sample, colored, 'A', 'RGB'); connect(blend, colored, 'B')
+    display_sample = lighting['texture_display_rgb'](unreal, editing, parent, sample)
+    connect(display_sample, colored, 'A'); connect(blend, colored, 'B')
     lighting['wire_vanilla_lighting'](unreal, editing, parent, colored,
-        use_vertex=use_vertex)
+        use_vertex=use_vertex, pixel_display=True)
     alpha_target = unreal.MaterialProperty.MP_OPACITY if translucent else unreal.MaterialProperty.MP_OPACITY_MASK
     if not editing.connect_material_property(sample, 'A', alpha_target):
         raise RuntimeError('Cannot connect model-face alpha')
@@ -446,7 +460,7 @@ def import_minecraft_textures(filename, asset_root="/Game/Bridge/Minecraft"):
             editing.delete_all_material_expressions(parent)
             parent.set_editor_property("used_with_instanced_static_meshes", True)
             parent.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED)
-            parent.set_editor_property("opacity_mask_clip_value", 0.1)
+            parent.set_editor_property("opacity_mask_clip_value", 0.5)
 
             def node(cls):
                 result = editing.create_material_expression(parent, cls, 0, 0)
@@ -464,6 +478,7 @@ def import_minecraft_textures(filename, asset_root="/Game/Bridge/Minecraft"):
             white = node(unreal.MaterialExpressionConstant3Vector)
             white.set_editor_property("constant", unreal.LinearColor(1, 1, 1, 1))
             channels, alpha_channels = {}, {}
+            lighting = _lighting_functions(unreal)
             for face in ("Top", "Side", "Bottom"):
                 sample = node(unreal.MaterialExpressionTextureSampleParameter2D)
                 sample.set_editor_property("parameter_name", face + "Texture")
@@ -474,7 +489,8 @@ def import_minecraft_textures(filename, asset_root="/Game/Bridge/Minecraft"):
                 blend = node(unreal.MaterialExpressionLinearInterpolate)
                 wire(white, blend, "A"); wire(color, blend, "B"); wire(tint, blend, "Alpha")
                 product = node(unreal.MaterialExpressionMultiply)
-                wire(sample, product, "A", "RGB"); wire(blend, product, "B")
+                display_sample = lighting['texture_display_rgb'](unreal, editing, parent, sample)
+                wire(display_sample, product, "A"); wire(blend, product, "B")
                 channels[face] = product
                 alpha_channels[face] = sample
             normal = node(unreal.MaterialExpressionPixelNormalWS)
@@ -501,7 +517,7 @@ def import_minecraft_textures(filename, asset_root="/Game/Bridge/Minecraft"):
             wire(opacity_first, opacity, "A"); wire(alpha_channels["Bottom"], opacity, "B", "A"); wire(bottom, opacity, "Alpha")
             if not editing.connect_material_property(opacity, "", unreal.MaterialProperty.MP_OPACITY_MASK):
                 raise RuntimeError("Cannot connect cube alpha mask")
-            _lighting_functions(unreal)['wire_vanilla_lighting'](unreal, editing, parent, result, use_vertex=False)
+            lighting['wire_vanilla_lighting'](unreal, editing, parent, result, use_vertex=False, pixel_display=True)
             roughness = node(unreal.MaterialExpressionConstant); roughness.set_editor_property("r", 0.85)
             editing.connect_material_property(roughness, "", unreal.MaterialProperty.MP_ROUGHNESS)
             editing.recompile_material(parent)

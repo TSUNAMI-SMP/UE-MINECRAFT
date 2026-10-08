@@ -163,6 +163,12 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
                 R.Mob.Width=float(W);R.Mob.Height=float(H);R.Mob.Health=float(HP);R.Mob.MaxHealth=float(MaxHP);
                 double Resistance=0;if(P->HasField(TEXT("knockbackResistance")) && !Number(P,TEXT("knockbackResistance"),0,1,Resistance)) return false;
                 R.Mob.KnockbackResistance=float(Resistance);R.Mob.Speed=float(Speed);R.Mob.Damage=float(Damage);
+                double Armor=(R.Mob.Type==TEXT("minecraft:zombie") || R.Mob.Type==TEXT("minecraft:husk")
+                    || R.Mob.Type==TEXT("minecraft:drowned") || R.Mob.Type==TEXT("minecraft:zombie_villager")) ? 2 : 0;
+                double Toughness=0;
+                if((P->HasField(TEXT("armor")) && !Number(P,TEXT("armor"),0,100,Armor))
+                    || (P->HasField(TEXT("armorToughness")) && !Number(P,TEXT("armorToughness"),0,100,Toughness))) return false;
+                R.Mob.Armor=float(Armor);R.Mob.ArmorToughness=float(Toughness);
             }
         }
         else if(Event==TEXT("block_action")) {

@@ -196,4 +196,84 @@ bool FNativeInventoryProfileReuse::RunTest(const FString&) {
     TestEqual(TEXT("Repeated initialization of same profile preserves live edits"), Contents->GetSlots()[7].Count, 8);
     return true;
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNativeCreativeClicks, "UEBridge.Native.Inventory.VanillaCreativeClicks", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FNativeCreativeClicks::RunTest(const FString&) {
+    auto* Contents=NewObject<UBridgeNativeInventory>(); Contents->Initialize(nullptr,TEXT("creative-clicks"),false);
+    TestTrue(TEXT("Normal creative pickup takes one"),Contents->ClickCatalogue(TEXT("minecraft:stone"),false));
+    TestEqual(TEXT("Creative entry count is one"),Contents->GetCursor().Count,1);
+    Contents->ClickCatalogue(TEXT("minecraft:stone"),false);
+    TestEqual(TEXT("Left click same catalogue increments"),Contents->GetCursor().Count,2);
+    Contents->ClickCatalogue(TEXT("minecraft:stone"),true);
+    TestEqual(TEXT("Right click same catalogue decrements"),Contents->GetCursor().Count,1);
+    Contents->ClickCatalogue(TEXT("minecraft:stone"),false,true);
+    TestEqual(TEXT("Shift same catalogue fills stack"),Contents->GetCursor().Count,64);
+    Contents->ClickCatalogue(TEXT("minecraft:dirt"),false);
+    TestTrue(TEXT("Clicking a different catalogue item with carried stack deletes it"),Contents->GetCursor().IsEmpty());
+    TestEqual(TEXT("Delete does not secretly insert old cursor into storage"),Contents->GetItemCount(TEXT("minecraft:stone")),0);
+    Contents->ClickCatalogue(TEXT("minecraft:dirt"),false,true);
+    TestEqual(TEXT("Shift pickup fills maximum"),Contents->GetCursor().Count,64);
+    Contents->ClickCatalogue(FString(),true);
+    TestEqual(TEXT("Right click empty catalogue discards one"),Contents->GetCursor().Count,63);
+    TestTrue(TEXT("Trash clears cursor"),Contents->DeleteCreative());
+    Contents->AssignHotbar(TEXT("minecraft:stone"),0,12);
+    Contents->ClickCatalogue(TEXT("minecraft:dirt"),false);
+    Contents->DeleteCreative(true);
+    TestTrue(TEXT("Shift trash clears inventory"),Contents->Selected().IsEmpty());
+    TestEqual(TEXT("Shift trash preserves cursor like CreativeInventoryScreen"),Contents->GetCursor().Count,1);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNativeCreativeOrder, "UEBridge.Native.Inventory.ExportedCreativeOrder", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FNativeCreativeOrder::RunTest(const FString&) {
+    auto* Palette=NewObject<UBridgeNativeUiPalette>();
+    FBridgeNativeUiItem Stone;Stone.ItemId=TEXT("minecraft:stone");Stone.DisplayName=TEXT("Stone");Palette->Items.Add(Stone);
+    FBridgeNativeUiItem Dirt;Dirt.ItemId=TEXT("minecraft:dirt");Dirt.DisplayName=TEXT("Dirt");Palette->Items.Add(Dirt);
+    auto* Contents=NewObject<UBridgeNativeInventory>();Contents->Initialize(Palette,TEXT("creative-order"),false);
+    FBridgeNativeUiGroup Group;Group.Items={Dirt.ItemId,Stone.ItemId};
+    const auto Ordered=Contents->FilterCatalogue(FString(),&Group);
+    TestEqual(TEXT("Group size"),Ordered.Num(),2);
+    TestEqual(TEXT("Minecraft group order wins over registry order"),Ordered[0].ItemId,Dirt.ItemId);
+    const auto Filtered=Contents->FilterCatalogue(TEXT("Stone"),&Group);
+    TestEqual(TEXT("Search filters exported group"),Filtered.Num(),1);
+    TestEqual(TEXT("Search result"),Filtered[0].ItemId,Stone.ItemId);
+    return true;
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNativeCursorDistribution, "UEBridge.Native.Inventory.VanillaCursorDistribution", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FNativeCursorDistribution::RunTest(const FString&) {
+    auto* Contents=NewObject<UBridgeNativeInventory>();Contents->Initialize(nullptr,TEXT("distribution"),false);
+    auto Empty=MakeShared<FJsonObject>();TArray<TSharedPtr<FJsonValue>> None;Empty->SetArrayField(TEXT("inventory"),None);Contents->ImportInitialSettings(Empty);
+    Contents->AssignHotbar(TEXT("minecraft:stone"),0,10);Contents->ClickSlot(0,false);
+    TestTrue(TEXT("Left drag evenly distributes"),Contents->DistributeCursor({9,10,11},0,false));
+    TestEqual(TEXT("First amount"),Contents->GetStack(9).Count,3);TestEqual(TEXT("Second amount"),Contents->GetStack(10).Count,3);
+    TestEqual(TEXT("Third amount"),Contents->GetStack(11).Count,3);TestEqual(TEXT("Remainder kept"),Contents->GetCursor().Count,1);
+    Contents->ClickSlot(12,false);Contents->ClickSlot(9,false);
+    TestTrue(TEXT("Right drag places one per unique compatible slot"),Contents->DistributeCursor({10,10,11},1,false));
+    TestEqual(TEXT("Duplicate slot not counted twice"),Contents->GetStack(10).Count,4);TestEqual(TEXT("Second target"),Contents->GetStack(11).Count,4);
+    TestEqual(TEXT("Right-drag remainder"),Contents->GetCursor().Count,1);
+    TestFalse(TEXT("Survival rejects creative fill"),Contents->DistributeCursor({13,14},2,false));
+    TestEqual(TEXT("Rejected fill does not consume cursor"),Contents->GetCursor().Count,1);
+    return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FNativeArmorTransfers, "UEBridge.Native.Inventory.EquipmentTransfersAndSnapshot", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FNativeArmorTransfers::RunTest(const FString&) {
+    auto* Palette=NewObject<UBridgeNativeUiPalette>();FBridgeNativeUiItem Helmet;Helmet.ItemId=TEXT("minecraft:diamond_helmet");Helmet.MaxCount=1;Helmet.EquipmentSlot=1;Helmet.Armor=3;Helmet.ArmorToughness=2;Palette->Items.Add(Helmet);
+    FBridgeNativeUiItem Boots;Boots.ItemId=TEXT("minecraft:netherite_boots");Boots.MaxCount=1;Boots.EquipmentSlot=4;Boots.Armor=3;Boots.ArmorToughness=3;Boots.ArmorKnockbackResistance=.1f;Palette->Items.Add(Boots);
+    FBridgeNativeUiItem Stone;Stone.ItemId=TEXT("minecraft:stone");Palette->Items.Add(Stone);
+    auto* Contents=NewObject<UBridgeNativeInventory>();Contents->Initialize(Palette,TEXT("equipment"),false);
+    Contents->AssignHotbar(Helmet.ItemId,0,1);TestTrue(TEXT("Shift equips correct empty armor slot"),Contents->ClickSlot(0,false,true));
+    TestEqual(TEXT("Head equipped"),Contents->GetStack(UBridgeNativeInventory::ArmorBegin).ItemId,Helmet.ItemId);
+    Contents->TakeCatalogue(Boots.ItemId);TestFalse(TEXT("Boots cannot enter chest slot"),Contents->ClickSlot(UBridgeNativeInventory::ArmorBegin+1,false));
+    TestTrue(TEXT("Boots enter feet slot"),Contents->ClickSlot(UBridgeNativeInventory::ArmorBegin+3,false));
+    TestEqual(TEXT("Combined armor"),Contents->GetArmorPoints(),6.f);TestEqual(TEXT("Combined toughness"),Contents->GetArmorToughness(),5.f);
+    TestEqual(TEXT("Actual exported resistance"),Contents->GetArmorKnockbackResistance(),.1f);
+    Contents->TakeCatalogue(Stone.ItemId);TestFalse(TEXT("Non-equipment cannot swap into helmet slot"),Contents->ClickSlot(UBridgeNativeInventory::ArmorBegin,false));
+    Contents->ReturnCursor();const auto Snapshot=Contents->ExportRuntimeState();
+    auto* Restored=NewObject<UBridgeNativeInventory>();Restored->Initialize(Palette,TEXT("equipment-restore"),false);
+    TestTrue(TEXT("Equipment snapshot restores atomically"),Restored->ImportRuntimeState(Snapshot));TestEqual(TEXT("Equipment attributes restored"),Restored->GetArmorPoints(),6.f);
+    auto Equipment=Snapshot->GetArrayField(TEXT("equipment"));auto Wrong=MakeShared<FJsonObject>();Wrong->SetStringField(TEXT("item"),Stone.ItemId);Wrong->SetNumberField(TEXT("count"),1);Equipment[3]=MakeShared<FJsonValueObject>(Wrong);Snapshot->SetArrayField(TEXT("equipment"),Equipment);
+    const uint64 Revision=Restored->GetRevision();TestFalse(TEXT("Wrong-slot equipment rejects snapshot"),Restored->ImportRuntimeState(Snapshot));TestEqual(TEXT("Failed restore preserves armor"),Restored->GetArmorPoints(),6.f);TestEqual(TEXT("Failed restore preserves revision"),Restored->GetRevision(),Revision);
+    Snapshot->RemoveField(TEXT("equipment"));TestTrue(TEXT("Old36-slot snapshots still restore"),Restored->ImportRuntimeState(Snapshot));TestEqual(TEXT("Old snapshot has no equipped armor"),Restored->GetArmorPoints(),0.f);
+    return true;
+}
 #endif

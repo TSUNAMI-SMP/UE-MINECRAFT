@@ -2,8 +2,13 @@
 #include "BridgeMobCharacter.h"
 #include "BridgeProtocol.h"
 #include "BridgeMobSpawnMath.h"
+#include "BridgeMobAIMath.h"
+#include "BridgeCombatMath.h"
+#include "BridgeNativePlayerController.h"
+#include "BridgeNativeInventory.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Engine/World.h"
 #include "Dom/JsonValue.h"
 #include "Dom/JsonObject.h"
@@ -33,27 +38,15 @@ bool ABridgeMobWorld::Import(const FBridgeMobSnapshot& Snapshot,const FVector& A
     const bool PlayerBlocked=Player.IsValid() && BridgeMobSpawnMath::CapsulesOverlap(PlayerDelta.SizeSquared2D(),PlayerDelta.Z,Radius,Half,Player->GetSimpleCollisionRadius(),Player->GetSimpleCollisionHalfHeight());
     if(PlayerBlocked || GetWorld()->OverlapBlockingTestByChannel(CapsuleCenter,FQuat::Identity,ECC_Pawn,FCollisionShape::MakeCapsule(Radius,Half),Query)) {
         FVector SafeFeet;FString Reason;
-        if(Snapshot.Type==TEXT("minecraft:bat")) {
-            bool Found=false;
-            // Resolve ceiling contact locally in open air, without requiring a
-            // floor or moving through it. Keep model/data errors fatal.
-            for(float Drop=2;Drop<=50;Drop+=2) {
-                const FVector Candidate=Feet-FVector(0,0,Drop),Center=Candidate+FVector(0,0,Half);
-                FHitResult Barrier;
-                if(GetWorld()->LineTraceSingleByChannel(Barrier,Feet,Candidate,ECC_Visibility,Query)) break;
-                if(SpawnAllowed && !SpawnAllowed(Candidate)) continue;
-                if(GetWorld()->OverlapBlockingTestByChannel(Center,FQuat::Identity,ECC_Pawn,FCollisionShape::MakeCapsule(Radius,Half),Query)) continue;
-                if(Player.IsValid()) {
-                    const FVector Delta=Center-Player->GetActorLocation();
-                    if(BridgeMobSpawnMath::CapsulesOverlap(Delta.SizeSquared2D(),Delta.Z,Radius,Half,Player->GetSimpleCollisionRadius(),Player->GetSimpleCollisionHalfHeight())) continue;
-                }
-                SafeFeet=Candidate;Found=true;break;
-            }
-            if(!Found) return Reject(TEXT("bat restore blocked: no clear air below ceiling within 0.5 blocks"),Snapshot.Type,Snapshot.Id);
+        const auto Kind=BridgeMobAIMath::profile(TCHAR_TO_UTF8(*Snapshot.Type)).locomotion;
+        if(Kind==BridgeMobAIMath::Locomotion::Bat || Kind==BridgeMobAIMath::Locomotion::Flying) {
+            if(!FindAirFeet(Feet,Radius,Half,SafeFeet,Reason)) return Reject(Reason,Snapshot.Type,Snapshot.Id);
+        } else if((Kind==BridgeMobAIMath::Locomotion::Fish || Kind==BridgeMobAIMath::Locomotion::Squid) && WaterAt && WaterAt(CapsuleCenter)) {
+            if(!FindAirFeet(Feet,Radius,Half,SafeFeet,Reason,true)) return Reject(Reason,Snapshot.Type,Snapshot.Id);
         } else if(!FindSpawnFeet(Feet,Radius,Half,SafeFeet,Reason)) return Reject(Reason,Snapshot.Type,Snapshot.Id);
         Feet=SafeFeet;
     }
-    FVector Position=Feet+FVector(0,0,Snapshot.Height*50.f);
+    FVector Position=Feet+FVector(0,0,Half);
     FActorSpawnParameters Params;Params.Owner=this;Params.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
     ABridgeMobCharacter* Mob=GetWorld()->SpawnActor<ABridgeMobCharacter>(Position,BridgeProtocol::ToRotation(Snapshot.Yaw,0),Params);
     if(!Mob) return Reject(TEXT("actor_spawn_failed"),Snapshot.Type,Snapshot.Id);
@@ -77,10 +70,13 @@ FString ABridgeMobWorld::SpawnEgg(const FString& Type,const FVector& Feet,const 
     if(PrepareSpawnCollision) PrepareSpawnCollision(Feet);
     FBridgeMobSnapshot Snapshot;Snapshot.Id=Id;Snapshot.Type=Type;Snapshot.Appearance=Key;
     Snapshot.Width=Appearance->Width;Snapshot.Height=Appearance->Height;Snapshot.MaxHealth=Appearance->MaxHealth;Snapshot.Health=Snapshot.MaxHealth;
-    Snapshot.KnockbackResistance=Appearance->KnockbackResistance;Snapshot.Speed=Appearance->Speed;Snapshot.Damage=Appearance->Damage;Snapshot.Hostile=Appearance->Hostile;Snapshot.Baby=Appearance->Baby;
+    Snapshot.Armor=Appearance->Armor;Snapshot.ArmorToughness=Appearance->ArmorToughness;Snapshot.KnockbackResistance=Appearance->KnockbackResistance;Snapshot.Speed=Appearance->Speed;Snapshot.Damage=Appearance->Damage;Snapshot.Hostile=Appearance->Hostile;Snapshot.Baby=Appearance->Baby;
     const float Half=FMath::Clamp(Snapshot.Height*50.f,10.f,1000.f),Radius=FMath::Clamp(Snapshot.Width*50.f,5.f,Half);
     FVector SafeFeet;FString Reason;
-    if(!FindSpawnFeet(Feet,Radius,Half,SafeFeet,Reason)) return Fail(Reason);
+    const auto Kind=BridgeMobAIMath::profile(TCHAR_TO_UTF8(*Type)).locomotion;
+    if(Kind==BridgeMobAIMath::Locomotion::Bat || Kind==BridgeMobAIMath::Locomotion::Flying) {
+        if(!FindAirFeet(Feet,Radius,Half,SafeFeet,Reason)) return Fail(Reason);
+    } else if(!FindSpawnFeet(Feet,Radius,Half,SafeFeet,Reason)) return Fail(Reason);
     const FVector Relative=(SafeFeet-Anchor)/100;Snapshot.Position=FVector(-Relative.Y,Relative.Z,Relative.X);
     if(!Import(Snapshot,Anchor)) return LastReason;
     LastReason=TEXT("mob spawned: ")+Type;return LastReason;
@@ -130,6 +126,30 @@ bool ABridgeMobWorld::FindSpawnFeet(const FVector& Requested,float Radius,float 
     return false;
 }
 
+bool ABridgeMobWorld::FindAirFeet(const FVector& Requested,float Radius,float HalfHeight,FVector& Feet,FString& Reason,bool RequireWater) const {
+    if(!GetWorld()) {Reason=TEXT("mob world unavailable");return false;}
+    FCollisionQueryParams Query(SCENE_QUERY_STAT(BridgeAirSpawn),false,this);
+    if(Player.IsValid()) Query.AddIgnoredActor(Player.Get());
+    const float Drops[]={0,2,10,20,40,80,160,-10,-40,-80};
+    // Search nearby free volume rather than a ground plane. Tightened test
+    // shape tolerates exact exported ceiling contact without raising the bat.
+    for(const auto& Offset:BridgeMobSpawnMath::Candidates(Radius)) for(float Drop:Drops) {
+        const FVector Candidate=Requested+FVector(Offset[0],Offset[1],-Drop),Center=Candidate+FVector(0,0,HalfHeight);
+        if(SpawnAllowed && !SpawnAllowed(Candidate)) continue;
+        if(RequireWater && (!WaterAt || !WaterAt(Center))) continue;
+        if(PrepareSpawnCollision) PrepareSpawnCollision(Candidate);
+        if(GetWorld()->OverlapBlockingTestByChannel(Center,FQuat::Identity,ECC_Pawn,FCollisionShape::MakeCapsule(FMath::Max(1.f,Radius-.5f),FMath::Max(1.f,HalfHeight-.5f)),Query)) continue;
+        FHitResult Wall;
+        if(GetWorld()->LineTraceSingleByChannel(Wall,Requested+FVector(0,0,HalfHeight),Center,ECC_Visibility,Query)) continue;
+        if(Player.IsValid()) {
+            const FVector Delta=Center-Player->GetActorLocation();
+            if(BridgeMobSpawnMath::CapsulesOverlap(Delta.SizeSquared2D(),Delta.Z,Radius,HalfHeight,Player->GetSimpleCollisionRadius(),Player->GetSimpleCollisionHalfHeight())) continue;
+        }
+        Feet=Candidate;return true;
+    }
+    Reason=RequireWater ? TEXT("water restore blocked: no nearby free fluid volume") : TEXT("air restore blocked: no nearby free air volume");return false;
+}
+
 void ABridgeMobWorld::SetAuthority(bool Active,ACharacter* NewPlayer) {
     Authority=Active;Player=NewPlayer;
     if(Active && !PendingRestores.IsEmpty() && GetWorld() && GetWorld()->GetTimeSeconds()>=NextRestoreRetry) {
@@ -157,13 +177,36 @@ void ABridgeMobWorld::Clear() {
 }
 void ABridgeMobWorld::EndPlay(const EEndPlayReason::Type Reason) { Clear();Super::EndPlay(Reason); }
 
-bool ABridgeMobWorld::Attack(const FVector& Eye,const FVector& Direction,float Reach,float Damage) {
+bool ABridgeMobWorld::Attack(const FVector& Eye,const FVector& Direction,float Reach,float Damage,bool* DamageAccepted,float AdditionalKnockback,bool Sweeping) {
+    if(DamageAccepted) *DamageAccepted=false;
     if(!Authority || PlayerHealth<=0 || !GetWorld()) return false;
     FCollisionQueryParams Query(SCENE_QUERY_STAT(BridgeMobAttack),false,Player.Get());
     FHitResult Hit;
     if(!GetWorld()->LineTraceSingleByChannel(Hit,Eye,Eye+Direction.GetSafeNormal()*FMath::Clamp(Reach,0.f,600.f),ECC_Visibility,Query)) return false;
     ABridgeMobCharacter* Mob=Cast<ABridgeMobCharacter>(Hit.GetActor());
-    if(!Mob) return false;Mob->Hit(Damage,Direction);return true; // Consume aim even during the hurt window; never mine through a mob.
+    if(!Mob || !Mob->Alive()) return false;
+    // Base knockback comes from damage-source position, not camera pitch.
+    const FVector Away=Player.IsValid() ? Mob->GetActorLocation()-Player->GetActorLocation() : Direction;
+    const bool Accepted=Mob->Hit(Damage,Away);
+    if(DamageAccepted) *DamageAccepted=Accepted;
+    if(Accepted && AdditionalKnockback>0) Mob->ApplyNativeKnockback(AdditionalKnockback,Direction);
+    if(Accepted && Sweeping && Player.IsValid()) {
+        // PlayerEntity#doSweepingAttack expands the primary target AABB by
+        // (1, .25, 1) blocks and also requires player distance squared < 9.
+        const auto* PrimaryCapsule=Mob->GetCapsuleComponent();
+        const FVector Extent(PrimaryCapsule->GetScaledCapsuleRadius()+100,PrimaryCapsule->GetScaledCapsuleRadius()+100,PrimaryCapsule->GetScaledCapsuleHalfHeight()+25);
+        const FBox SweepBounds(Mob->GetActorLocation()-Extent,Mob->GetActorLocation()+Extent);
+        const FVector PlayerFeet=Player->GetActorLocation()-FVector(0,0,Player->GetSimpleCollisionHalfHeight());
+        for(ABridgeMobCharacter* Other:Mobs) if(IsValid(Other) && Other!=Mob && Other->Alive()) {
+            const auto* Capsule=Other->GetCapsuleComponent();
+            const FVector OtherFeet=Other->GetActorLocation()-FVector(0,0,Capsule->GetScaledCapsuleHalfHeight());
+            const FVector OtherExtent(Capsule->GetScaledCapsuleRadius(),Capsule->GetScaledCapsuleRadius(),Capsule->GetScaledCapsuleHalfHeight());
+            const FBox OtherBounds(Other->GetActorLocation()-OtherExtent,Other->GetActorLocation()+OtherExtent);
+            if(FVector::DistSquared(PlayerFeet,OtherFeet)>=90000 || !SweepBounds.Intersect(OtherBounds)) continue;
+            if(Other->Hit(1.f,Other->GetActorLocation()-Player->GetActorLocation())) Other->ApplyNativeKnockback(.4f,Direction);
+        }
+    }
+    return true; // Consume aim even during hurt immunity; never mine through a mob.
 }
 bool ABridgeMobWorld::ReceiveArrow(const FVector& From,const FVector& To,float Damage) {
     if(!Authority || !GetWorld()) return false;
@@ -171,15 +214,44 @@ bool ABridgeMobWorld::ReceiveArrow(const FVector& From,const FVector& To,float D
     if(!GetWorld()->LineTraceSingleByChannel(Hit,From,To,ECC_Visibility,Query)) return false;
     ABridgeMobCharacter* Mob=Cast<ABridgeMobCharacter>(Hit.GetActor());return Mob && Mob->Hit(Damage,To-From);
 }
-void ABridgeMobWorld::NotifyMobSound(const FString& Type,const FString& Suffix,const FVector& Location) {
+void ABridgeMobWorld::NotifyMobSound(const FString& Type,const FString& Suffix,const FVector& Location,bool Baby,float Size) {
     FString Species=Type;Species.RemoveFromStart(TEXT("minecraft:"));
-    if(Sound) Sound(FString::Printf(TEXT("minecraft:entity.%s.%s"),*Species,*Suffix),Location);
+    FString SoundSuffix=Suffix;
+    if((Type==TEXT("minecraft:slime") || Type==TEXT("minecraft:magma_cube")) && Size<=1) SoundSuffix+=TEXT("_small");
+    const FString Id=FString::Printf(TEXT("minecraft:entity.%s.%s"),*Species,*SoundSuffix);
+    float Volume=Type==TEXT("minecraft:bat") ? .1f : Type==TEXT("minecraft:wolf") ? .4f
+        : Type==TEXT("minecraft:slime") || Type==TEXT("minecraft:magma_cube") ? .4f*FMath::Max(1.f,Size) : 1.f;
+    float Pitch=float(BridgeCombatMath::soundPitch(FMath::FRand(),FMath::FRand(),Baby));
+    if(Type==TEXT("minecraft:bat")) Pitch*=.95f;
+    bool Hostile=Type==TEXT("minecraft:zombie") || Type==TEXT("minecraft:skeleton") || Type==TEXT("minecraft:creeper")
+        || Type==TEXT("minecraft:spider") || Type==TEXT("minecraft:enderman") || Type==TEXT("minecraft:slime") || Type==TEXT("minecraft:magma_cube");
+    FString TemplateKey;if(const auto* Appearance=ResolveTemplate(Type,TemplateKey)) Hostile=Appearance->Hostile;
+    const FString Category=Hostile ? TEXT("hostile") : TEXT("neutral");
+    if(NativeSound) NativeSound(Id,Location,Volume,Pitch,Category);
+    else if(Sound) Sound(Id,Location);
 }
 void ABridgeMobWorld::HitPlayer(float Damage,const FVector& Location) {
-    if(!Authority || Creative || PlayerHealth<=0 || !GetWorld()) return;
-    double Now=GetWorld()->GetTimeSeconds();if(LastPlayerDamage>=0 && Now-LastPlayerDamage<.5) return;
-    LastPlayerDamage=Now;PlayerHealth=FMath::Max(0.f,PlayerHealth-Damage);
-    if(Sound) Sound(PlayerHealth>0 ? TEXT("minecraft:entity.player.hurt") : TEXT("minecraft:entity.player.death"),Location);
+    if(!Authority || Creative || PlayerHealth<=0 || !GetWorld() || !FMath::IsFinite(Damage) || Damage<=0) return;
+    const double Now=GetWorld()->GetTimeSeconds();
+    const bool Full=LastPlayerDamage<0 || BridgeCombatMath::fullHit(Now-LastPlayerDamage);
+    const float Accepted=Full ? Damage : float(BridgeCombatMath::acceptedDamage(Damage,Now-LastPlayerDamage,PreviousPlayerDamage));
+    if(Accepted<=0) return;
+    PreviousPlayerDamage=Damage;if(Full) LastPlayerDamage=Now;
+    const auto* NativeController=Player.IsValid() ? Cast<ABridgeNativePlayerController>(Player->GetController()) : nullptr;
+    const auto* Inventory=NativeController ? NativeController->GetNativeInventory() : nullptr;
+    const float Applied=Inventory ? float(BridgeCombatMath::armorDamage(Accepted,Inventory->GetArmorPoints(),Inventory->GetArmorToughness())) : Accepted;
+    PlayerHealth=FMath::Max(0.f,PlayerHealth-Applied);
+    if(Full && Player.IsValid()) {
+        const FVector Old=Player->GetVelocity();FVector Away=Player->GetActorLocation()-Location;
+        while(Away.SizeSquared2D()<.1) Away=FVector(FMath::FRand()-FMath::FRand(),FMath::FRand()-FMath::FRand(),0);
+        const auto Velocity=BridgeCombatMath::knockbackVelocity({Old.X,Old.Y,Old.Z},.4,Inventory ? Inventory->GetArmorKnockbackResistance() : 0,Away.X,Away.Y,Player->GetCharacterMovement()->IsMovingOnGround());
+        Player->LaunchCharacter(FVector(Velocity.x,Velocity.y,Velocity.z),true,true);
+    }
+    if(Full) {
+        const FString Id=PlayerHealth>0 ? TEXT("minecraft:entity.player.hurt") : TEXT("minecraft:entity.player.death");
+        const FVector Position=Player.IsValid() ? Player->GetActorLocation() : Location;
+        if(NativeSound) NativeSound(Id,Position,1,1,TEXT("player"));else if(Sound) Sound(Id,Position);
+    }
 }
 int32 ABridgeMobWorld::AliveCount() const { int32 Count=0;for(const ABridgeMobCharacter* Mob:Mobs) if(IsValid(Mob) && Mob->Alive()) Count++;return Count; }
 TArray<FVector> ABridgeMobWorld::CollisionAnchors() const {
@@ -205,6 +277,7 @@ TArray<TSharedPtr<FJsonValue>> ABridgeMobWorld::ExportNativeSnapshots(const FVec
         Json->SetNumberField(TEXT("yaw"),Snapshot.Yaw);Json->SetNumberField(TEXT("pitch"),Mob->GetNativeViewPitch());
         Json->SetNumberField(TEXT("width"),Snapshot.Width);Json->SetNumberField(TEXT("height"),Snapshot.Height);
         Json->SetNumberField(TEXT("health"),Snapshot.Health);Json->SetNumberField(TEXT("maxHealth"),Snapshot.MaxHealth);
+        Json->SetNumberField(TEXT("armor"),Snapshot.Armor);Json->SetNumberField(TEXT("armorToughness"),Snapshot.ArmorToughness);
         Json->SetNumberField(TEXT("knockbackResistance"),Snapshot.KnockbackResistance);Json->SetNumberField(TEXT("speed"),Snapshot.Speed);Json->SetNumberField(TEXT("damage"),Snapshot.Damage);
         Json->SetBoolField(TEXT("hostile"),Snapshot.Hostile);Json->SetBoolField(TEXT("baby"),Snapshot.Baby);
         Result.Add(MakeShared<FJsonValueObject>(Json));
@@ -244,6 +317,7 @@ bool ABridgeMobWorld::ImportNativeSnapshots(const TArray<TSharedPtr<FJsonValue>>
         auto DefaultNumber=[&](const TCHAR* Key,double Default) {if(!Packet->HasField(Key)) Packet->SetNumberField(Key,Default);};
         DefaultNumber(TEXT("width"),Appearance->Width);DefaultNumber(TEXT("height"),Appearance->Height);
         DefaultNumber(TEXT("maxHealth"),Appearance->MaxHealth);DefaultNumber(TEXT("health"),Appearance->MaxHealth);
+        DefaultNumber(TEXT("armor"),Appearance->Armor);DefaultNumber(TEXT("armorToughness"),Appearance->ArmorToughness);
         DefaultNumber(TEXT("knockbackResistance"),Appearance->KnockbackResistance);DefaultNumber(TEXT("speed"),Appearance->Speed);DefaultNumber(TEXT("damage"),Appearance->Damage);DefaultNumber(TEXT("yaw"),0);
         if(!Packet->HasField(TEXT("hostile"))) Packet->SetBoolField(TEXT("hostile"),Appearance->Hostile);
         if(!Packet->HasField(TEXT("baby"))) Packet->SetBoolField(TEXT("baby"),Appearance->Baby);
@@ -261,7 +335,8 @@ bool ABridgeMobWorld::ImportNativeSnapshots(const TArray<TSharedPtr<FJsonValue>>
     bool Complete=true;
     for(int32 I=0;I<Parsed.Num();++I) {
         if(!Import(Parsed[I],Anchor)) {
-            if(Parsed[I].Type==TEXT("minecraft:bat") && LastReason.StartsWith(TEXT("bat restore blocked:"))) {
+            if(LastReason.StartsWith(TEXT("air restore blocked:")) || LastReason.StartsWith(TEXT("water restore blocked:"))
+                || LastReason.StartsWith(TEXT("mob spawn blocked:")) || LastReason==TEXT("mob_position_outside_loaded_terrain")) {
                 FPendingRestore Pending;Pending.Snapshot=Parsed[I];Pending.Anchor=Anchor;Pending.Pitch=Pitch[I];Pending.SavedValue=Snapshots[I];
                 PendingRestores.Add(MoveTemp(Pending));
                 UE_LOG(LogTemp,Warning,TEXT("Bridge native mob deferred: id=%s type=%s position=%s retained in save; retry every 5 seconds"),*Parsed[I].Id,*Parsed[I].Type,*Parsed[I].Position.ToString());

@@ -52,6 +52,8 @@ class Expression(PropertyObject):
         # that observed API contract strict so the helper cannot regress.
         if type(self).__name__ == "PerInstanceCustomData" and name != "data_index":
             raise AttributeError("PerInstanceCustomData has no editor property: " + name)
+        if type(self).__name__ == 'ScreenPosition':
+            raise AttributeError('ScreenPosition exposes ViewportUV as an output, not an editor mapping property')
         super().set_editor_property(name, value)
 
 
@@ -90,13 +92,16 @@ class Editor:
             save_loaded_asset=self.save_asset, list_assets=lambda *args: list(self.assets))
         api.AssetToolsHelpers = types.SimpleNamespace(get_asset_tools=lambda: types.SimpleNamespace(create_asset=self.create_asset))
         api.ScopedEditorTransaction = lambda name: contextlib.nullcontext()
-        api.BlendMode = types.SimpleNamespace(BLEND_MASKED="masked", BLEND_OPAQUE="opaque", BLEND_TRANSLUCENT="translucent")
+        api.BlendMode = types.SimpleNamespace(BLEND_MASKED="masked", BLEND_OPAQUE="opaque", BLEND_TRANSLUCENT="translucent", BLEND_ADDITIVE="additive")
+        api.MaterialDomain=types.SimpleNamespace(MD_POST_PROCESS='postprocess')
+        api.BlendableLocation=types.SimpleNamespace(BL_SCENE_COLOR_AFTER_TONEMAPPING='aftertonemapping')
+        api.SceneTextureId=types.SimpleNamespace(PPI_POST_PROCESS_INPUT0='postprocessinput0')
         api.MaterialProperty = types.SimpleNamespace(MP_BASE_COLOR="base", MP_OPACITY_MASK="mask", MP_OPACITY="opacity", MP_ROUGHNESS="roughness", MP_SPECULAR="specular", MP_EMISSIVE_COLOR="emissive")
         api.LinearColor = lambda *values: values
         api.log = lambda text: None
         for name in ("TextureCoordinate", "Constant2Vector", "Multiply", "PerInstanceCustomData", "Add",
                      "AppendVector", "VertexInterpolator", "TextureSampleParameter2D", "VectorParameter", "Constant",
-                     "ScalarParameter", "CollectionParameter", "VertexNormalWS", "PixelNormalWS", "Custom", "VertexColor", "LinearInterpolate", "Constant3Vector", "ComponentMask"):
+                     "ScalarParameter", "CollectionParameter", "VertexNormalWS", "PixelNormalWS", "Custom", "VertexColor", "LinearInterpolate", "Constant3Vector", "ComponentMask", "SceneTexture", "ScreenPosition", "ViewSize", "TextureObjectParameter"):
             setattr(api, "MaterialExpression" + name, type(name, (Expression,), {}))
         api.MaterialEditingLibrary = types.SimpleNamespace(delete_all_material_expressions=self.clear,
             create_material_expression=self.create_expression, connect_material_expressions=self.connect,
@@ -134,6 +139,8 @@ class Editor:
             return False  # These expressions have no combined RG or RGBA output pin.
         if type(source).__name__ == "VertexInterpolator" and output:
             return False  # UE interpolators expose an unnamed output, not VertexColor's RGB pin.
+        if type(source).__name__ == 'ScreenPosition' and output not in ('ViewportUV','PixelPosition'):
+            return False
         if type(target).__name__ == "TextureSampleParameter2D":
             # Texture sample inputs expose UVs, not the C++ field Coordinates.
             # MaterialEditingLibrary accepts an empty name for the first input.
@@ -280,8 +287,9 @@ class VanillaEffectsSetupTest(unittest.TestCase):
         count = len(material.nodes)
         self.assertIs(material, self.editor.run())
         self.assertEqual(count, len(material.nodes))
-        self.assertEqual(2, len(self.editor.assets))
+        self.assertEqual(3, len(self.editor.assets))
         self.assertIs(material, self.editor.receivers[0].properties["vanilla_particle_material"])
+        self.assertIsNotNone(self.editor.receivers[0].properties["vanilla_death_poof_material"])
         self.assertEqual(2, self.editor.level_saves)
 
     def test_play_and_unsaved_level_block_changes(self):

@@ -2,6 +2,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
 #include "InputCoreTypes.h"
+#include "BridgeNativeLookMath.h"
 #include "BridgeNativePlayerController.generated.h"
 
 /** Direct UE input. Fabric remains available for imports and legacy bridge mode. */
@@ -32,6 +33,7 @@ public:
     bool MatchesBinding(const FString& Action, const FKey& Key) const;
     bool IsNativeLeftHanded() const {return LeftHanded;}
     float GetNativeSensitivity() const {return MouseSensitivity;}
+    int32 GetNativeAttackIndicator() const {return AttackIndicator;}
     void SetNativeSensitivity(float Value);
     void CycleNativePerspective();
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Native") int32 NativePerspective=0;
@@ -47,6 +49,9 @@ private:
     bool bFlightApplied=false,bBowHeld=false;
     bool ToggleCrouchOption=false,ToggleSprintOption=false,InvertMouse=false,InvertMouseX=false,LeftHanded=false,SlimArms=false;
     bool BobView=true;
+    bool SmoothCamera=false;
+    int32 AttackIndicator=1;
+    BridgeNativeLookMath::Smoother LookXSmoother,LookYSmoother;
     int32 SkinLayers=127,GuiScale=0;
     bool ForceUnicode=false;
     bool bSavedInventoryRejected=false;

@@ -169,6 +169,26 @@ def validate_cell(cell, header):
             raise NativeWorldError("Invalid sky boundary")
         for value in cell["skyTop"]:
             _number(value, 0, 15, "sky boundary", True)
+    if "water" in cell:
+        water = cell["water"]
+        if not isinstance(water, list) or len(water) > 512:
+            raise NativeWorldError("Invalid water occupancy")
+        indices = [_number(value, 0, 511, "water voxel", True) for value in water]
+        if len(set(indices)) != len(indices):
+            raise NativeWorldError("Duplicate water voxel")
+    if "biomeTints" in cell:
+        tint = cell["biomeTints"]
+        if not isinstance(tint, dict) or not isinstance(tint.get("palette"), list) or not 1 <= len(tint["palette"]) <= 512:
+            raise NativeWorldError("Invalid biome tint palette")
+        for colors in tint["palette"]:
+            if not isinstance(colors, list) or len(colors) != 3:
+                raise NativeWorldError("Invalid biome tint triple")
+            for value in colors:
+                _number(value, 0, 0xFFFFFF, "biome tint color", True)
+        if not isinstance(tint.get("indices"), list) or len(tint["indices"]) != 512:
+            raise NativeWorldError("Biome tint field must contain all 512 voxels")
+        for value in tint["indices"]:
+            _number(value, 0, len(tint["palette"]) - 1, "biome tint index", True)
     return tuple(position), len(blocks)
 
 

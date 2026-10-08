@@ -83,6 +83,10 @@ def load_item_manifest(filename):
             for face in faces:
                 if not isinstance(face, dict) or not isinstance(face.get('texture'), str) or face.get('texture') not in textures or type(face.get('color')) is not int or not 0 <= face['color'] <= 0xffffff:
                     raise ValueError('Invalid native item face texture/tint')
+                if face.get('alphaMode', 'masked') not in ('masked', 'translucent'):
+                    raise ValueError('Invalid native item alpha mode')
+                if 'normal' in face:
+                    vector(face['normal'], 3)
                 for name, size in (('vertices', 3), ('uv', 2)):
                     values = face.get(name)
                     if not isinstance(values, list) or len(values) != 4:
@@ -94,6 +98,14 @@ def load_item_manifest(filename):
 
 def ground_model_count(manifest):
     return sum('ground' in contexts for contexts in manifest['items'].values())
+
+def item_render_modes(manifest):
+    modes = {key: {'masked'} for key in manifest['textures']}
+    for contexts in manifest['items'].values():
+        for faces in contexts.values():
+            for face in faces:
+                modes[face['texture']].add(face.get('alphaMode', 'masked'))
+    return modes
 
 
 def import_minecraft_items(filename, asset_root="/Game/Bridge/Minecraft/Items"):
@@ -126,7 +138,7 @@ def import_minecraft_items(filename, asset_root="/Game/Bridge/Minecraft/Items"):
     models = {key: json.dumps(value, separators=(',', ':'), allow_nan=False) for key, value in manifest['items'].items()}
     assets, tools, editing = unreal.EditorAssetLibrary, unreal.AssetToolsHelpers.get_asset_tools(), unreal.MaterialEditingLibrary
     helper = runpy.run_path(str(helper_path))
-    root = asset_root; materials = {}
+    root = asset_root; materials = {}; render_modes = item_render_modes(manifest)
     with unreal.ScopedSlowTask(len(manifest['textures']), 'Import Minecraft item textures') as progress:
         progress.make_dialog(True)
         for key, entry in manifest['textures'].items():
@@ -146,24 +158,25 @@ def import_minecraft_items(filename, asset_root="/Game/Bridge/Minecraft/Items"):
             texture.set_editor_property('mip_gen_settings', unreal.TextureMipGenSettings.TMGS_NO_MIPMAPS)
             if not assets.save_loaded_asset(texture, False):
                 raise RuntimeError('Cannot save item texture')
-            parent = helper['_model_parent'](unreal, assets, tools, editing, root, texture, 'masked')
-            name = 'MI_Item_' + key[:24]; target = root + '/' + name
-            material = unreal.load_asset(target) if assets.does_asset_exist(target) else None
-            if material is None:
-                material = tools.create_asset(name, root, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
-            if not isinstance(material, unreal.MaterialInstanceConstant):
-                raise RuntimeError('Cannot create item material')
-            editing.set_material_instance_parent(material, parent)
-            # UE 5.8's parameter setters can fail their lookup while returning
-            # False. Explicit overrides use the same contract as block faces.
-            material.set_editor_property('texture_parameter_values', [unreal.TextureParameterValue(
-                parameter_info=unreal.MaterialParameterInfo(name='FaceTexture'), parameter_value=texture)])
-            material.set_editor_property('scalar_parameter_values', [unreal.ScalarParameterValue(
-                parameter_info=unreal.MaterialParameterInfo(name='FaceTint'), parameter_value=1.0)])
-            editing.update_material_instance(material)
-            if editing.get_material_instance_texture_parameter_value(material, 'FaceTexture') != texture or not assets.save_loaded_asset(material, False):
-                raise RuntimeError('Cannot save/read back item material: ' + key)
-            materials[key] = material
+            for alpha_mode in sorted(render_modes[key]):
+                parent = helper['_model_parent'](unreal, assets, tools, editing, root, texture, alpha_mode)
+                name = 'MI_Item_' + key[:24] + ('_Translucent' if alpha_mode == 'translucent' else ''); target = root + '/' + name
+                material = unreal.load_asset(target) if assets.does_asset_exist(target) else None
+                if material is None:
+                    material = tools.create_asset(name, root, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
+                if not isinstance(material, unreal.MaterialInstanceConstant):
+                    raise RuntimeError('Cannot create item material')
+                editing.set_material_instance_parent(material, parent)
+                # UE 5.8's parameter setters can fail their lookup while returning
+                # False. Explicit overrides use the same contract as block faces.
+                material.set_editor_property('texture_parameter_values', [unreal.TextureParameterValue(
+                    parameter_info=unreal.MaterialParameterInfo(name='FaceTexture'), parameter_value=texture)])
+                material.set_editor_property('scalar_parameter_values', [unreal.ScalarParameterValue(
+                    parameter_info=unreal.MaterialParameterInfo(name='FaceTint'), parameter_value=1.0)])
+                editing.update_material_instance(material)
+                if editing.get_material_instance_texture_parameter_value(material, 'FaceTexture') != texture or not assets.save_loaded_asset(material, False):
+                    raise RuntimeError('Cannot save/read back item material: ' + key)
+                materials[key + ('#translucent' if alpha_mode == 'translucent' else '')] = material
     try:
         with unreal.ScopedEditorTransaction('Assign native Minecraft item models'):
             palette.set_editor_property('item_models', models)

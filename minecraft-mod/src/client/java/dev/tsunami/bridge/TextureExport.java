@@ -13,12 +13,14 @@ import javax.imageio.stream.MemoryCacheImageInputStream;
 public final class TextureExport {
     private static final class Unsupported extends IOException { Unsupported(String message) { super(message); } Unsupported(String message, Throwable cause) { super(message,cause); } }
     public interface Resources { byte[] read(String resourceId) throws IOException; }
-    /** Particle colour is sampled from the active world's vanilla BlockColors before the worker starts. */
+    /** Render colours are sampled from the active world's vanilla BlockColors before the worker starts.
+     * Particle tint is independent: grass dust deliberately uses untinted dirt. */
     public record State(Map<String,String> properties,List<double[]> collision,List<double[]> outline,List<String> solidFaces,boolean cannotConnect,Boolean opaqueFullCube,int emission,int opacity) {
         public State(Map<String,String> properties,List<double[]> collision,List<double[]> outline,List<String> solidFaces,boolean cannotConnect) {this(properties,collision,outline,solidFaces,cannotConnect,null,0,15);}
         public State(Map<String,String> properties,List<double[]> collision,List<double[]> outline) { this(properties,collision,outline,null,false); }
     }
-    public record Block(String id, Map<String,String> properties, int particleColor,List<State> states,String excludedReason,double horizontalOffset,double verticalOffset) {
+    public record Block(String id, Map<String,String> properties, int particleColor,List<State> states,String excludedReason,double horizontalOffset,double verticalOffset,Map<Integer,Integer> renderTints) {
+        public Block(String id,Map<String,String> properties,int color,List<State> states,String reason,double horizontal,double vertical) {this(id,properties,color,states,reason,horizontal,vertical,Map.of(0,color));}
         public Block(String id,Map<String,String> properties,int color,List<State> states,String reason) { this(id,properties,color,states,reason,0,0); }
         public Block(String id,Map<String,String> properties,int color) { this(id,properties,color,List.of(),""); }
         public Block(String id,Map<String,String> properties) { this(id,properties,0xffffff); }
@@ -150,6 +152,19 @@ public final class TextureExport {
         return properties.entrySet().stream().sorted(Map.Entry.comparingByKey())
             .map(e->e.getKey()+"="+e.getValue()).collect(java.util.stream.Collectors.joining(","));
     }
+    /** BlockColors#create: these providers read a positional biome resolver. */
+    public static String tintSource(String blockId,int tintIndex) {
+        if(tintIndex<0) return "none";
+        return switch(blockId) {
+            case "minecraft:grass_block", "minecraft:fern", "minecraft:short_grass", "minecraft:potted_fern",
+                 "minecraft:bush", "minecraft:large_fern", "minecraft:tall_grass", "minecraft:sugar_cane" -> "grass";
+            case "minecraft:pink_petals", "minecraft:wildflowers" -> tintIndex==0 ? "none" : "grass";
+            case "minecraft:oak_leaves", "minecraft:jungle_leaves", "minecraft:acacia_leaves", "minecraft:dark_oak_leaves",
+                 "minecraft:vine", "minecraft:mangrove_leaves" -> "foliage";
+            case "minecraft:leaf_litter" -> "dry_foliage";
+            default -> "constant";
+        };
+    }
     private void bakeReferenced(JsonElement entry) throws IOException {
         if(entry.isJsonArray()) { for(JsonElement e:entry.getAsJsonArray()) bakeReferenced(e); return; }
         JsonObject ref=entry.getAsJsonObject(); String name=id(ref.get("model").getAsString());
@@ -232,6 +247,14 @@ public final class TextureExport {
             JsonObject particle=faceJson(faces.particle);
             particle.addProperty("color",faces.particle.tint ? block.particleColor & 0xffffff : 0xffffff);
             p.add("particle",particle);
+            JsonObject renderTints=new JsonObject(),tintSources=new JsonObject();
+            for(var tint:block.renderTints.entrySet()) {
+                if(tint.getKey()<0 || tint.getKey()>255 || tint.getValue()<0 || tint.getValue()>0xffffff)
+                    throw new Unsupported("Invalid native render tint");
+                renderTints.addProperty(Integer.toString(tint.getKey()),tint.getValue());
+                tintSources.addProperty(Integer.toString(tint.getKey()),tintSource(id(block.id),tint.getKey()));
+            }
+            p.add("renderTints",renderTints);p.add("tintSources",tintSources);
             p.addProperty("defaultState",stateKey(block.properties));
             JsonArray offset=new JsonArray();offset.add(block.horizontalOffset);offset.add(block.verticalOffset);p.add("modelOffset",offset);
             JsonObject states=new JsonObject();

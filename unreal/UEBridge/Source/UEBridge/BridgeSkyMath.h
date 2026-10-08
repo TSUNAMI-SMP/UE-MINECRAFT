@@ -2,6 +2,8 @@
 #include <array>
 #include <cmath>
 #include <string_view>
+#include <cstdint>
+#include <vector>
 
 namespace BridgeSkyMath {
 constexpr double Pi=3.14159265358979323846;
@@ -56,13 +58,53 @@ inline bool HasCelestialBodies(std::string_view Dimension,bool HasSkyLight,std::
 
 inline std::array<double,3> Direction(double AngleDegrees) {
     const double Angle=PositiveRemainder(AngleDegrees,360.)*Pi/180.;
-    // Minecraft rotates the vertical quad toward west; MC x/y/z maps to UE x/z/y.
-    return {-std::sin(Angle),0.,std::cos(Angle)};
+    // SkyRendering rotates Y(-90) then X(angle). BridgeProtocol maps
+    // Minecraft x/y/z to Unreal z/-x/y: west (-MC x) is therefore +UE y.
+    return {0.,std::sin(Angle),std::cos(Angle)};
 }
 
 inline double PlaneScale(bool Moon) {
     // Vanilla's quad widths are 60 (sun) and 40 (moon) at radius 100.
     // UE's basic plane is 100 units wide; preserve their apparent angular sizes.
     return CelestialRadius*(Moon?.4:.6)/100.;
+}
+
+struct StarQuad { std::array<std::array<double,3>,4> vertices; };
+/** SkyRendering.createStars: same CheckedRandom seed, draws and rejected points.
+ * Coordinates remain Minecraft x/y/z until the rendering adapter maps axes.
+ */
+inline std::vector<StarQuad> Stars() {
+    uint64_t seed=(10842ULL^0x5deece66dULL)&((1ULL<<48)-1);
+    auto bits=[&](int count) {seed=(seed*0x5deece66dULL+0xbULL)&((1ULL<<48)-1);return uint32_t(seed>>(48-count));};
+    auto nextFloat=[&]() {return float(bits(24))/float(1<<24);};
+    auto nextDouble=[&]() {const uint64_t high=bits(26),low=bits(27);return double((high<<27)+low)/double(1ULL<<53);};
+    std::vector<StarQuad> result;
+    for(int index=0;index<1500;++index) {
+        const float x=nextFloat()*2-1,y=nextFloat()*2-1,z=nextFloat()*2-1;
+        const float halfWidth=.15f+nextFloat()*.1f;
+        const float length=std::sqrt(x*x+y*y+z*z);
+        if(length<=.010000001f || length>=1.f) continue;
+        const std::array<double,3> center{x/length*100.,y/length*100.,z/length*100.};
+        const double angle=float(nextDouble()*float(Pi)*2.);
+        const double tangentLength=std::sqrt(double(x)*x+double(z)*z);
+        const std::array<double,3> right{-z/tangentLength,0,x/tangentLength};
+        const std::array<double,3> towards{-x/length,-y/length,-z/length};
+        const std::array<double,3> up{towards[1]*right[2],towards[2]*right[0]-towards[0]*right[2],-towards[1]*right[0]};
+        StarQuad quad;
+        constexpr int signs[4][2]={{1,-1},{1,1},{-1,1},{-1,-1}};
+        for(int vertex=0;vertex<4;++vertex) {
+            const double a=halfWidth*signs[vertex][0],b=halfWidth*signs[vertex][1];
+            const double rotatedX=std::cos(angle)*a+std::sin(angle)*b,rotatedY=-std::sin(angle)*a+std::cos(angle)*b;
+            for(int axis=0;axis<3;++axis) quad.vertices[vertex][axis]=center[axis]+right[axis]*rotatedX+up[axis]*rotatedY;
+        }
+        result.push_back(quad);
+    }
+    return result;
+}
+
+inline std::array<double,3> RotateCelestial(const std::array<double,3>& Point,double AngleDegrees) {
+    // SkyRendering first applies Y(-90deg), then X(angle) to MC coordinates.
+    const double angle=AngleDegrees*Pi/180.,y=Point[1]*std::cos(angle)-Point[2]*std::sin(angle),z=Point[1]*std::sin(angle)+Point[2]*std::cos(angle);
+    return {Point[0],z,y}; // After Y(-90), then bridge z/-x/y mapping.
 }
 }

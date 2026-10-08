@@ -20,6 +20,8 @@ public:
     void RestoreNativeRenderMode();
     void SetNativeSkyPalette(class UBridgeNativeUiPalette* Palette);
     void SetNativeSkyEnvironment(const TSharedPtr<class FJsonObject>& Values,const FString& Dimension=TEXT("minecraft:overworld"));
+    /** Native CROSSHAIR inverse blend. Three independently cropped GUI sprites. */
+    bool SetNativeInverseSprite(int32 Slot,class UTexture2D* Texture,const FVector4& PixelRect,const FVector4& UVRect,bool Enabled);
     bool IsNativeRenderModeActive() const {return SavedNativeFlags.IsValid();}
     FString GetDiagnosticSummary() const;
     void SetMinecraftOrigin(const FVector& MinecraftOrigin,const FVector& UEAnchor) {MCOrigin=MinecraftOrigin;Anchor=UEAnchor;}
@@ -65,10 +67,16 @@ private:
     UPROPERTY() TObjectPtr<class UStaticMeshComponent> NativeSkySphere;
     UPROPERTY() TObjectPtr<class UStaticMeshComponent> NativeSun;
     UPROPERTY() TObjectPtr<class UStaticMeshComponent> NativeMoon;
+    UPROPERTY() TObjectPtr<class UProceduralMeshComponent> NativeStars;
+    UPROPERTY() TObjectPtr<class UProceduralMeshComponent> NativeSunrise;
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> NativeSunMaterial;
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> NativeMoonMaterial;
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> NativeSkyMaterial;
+    UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> NativeStarsMaterial;
+    UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> NativeSunriseMaterial;
     UPROPERTY() TObjectPtr<class UBridgeNativeUiPalette> NativeSkyPalette;
+    UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> NativeInverseHudMaterial;
+    TWeakObjectPtr<class UCameraComponent> NativeInverseHudCamera;
     TMap<TWeakObjectPtr<class UPrimitiveComponent>,bool> NativeHiddenSky;
     TMap<TWeakObjectPtr<class ULightComponent>,bool> NativeHiddenLights;
     UPROPERTY() TObjectPtr<class AActor> NativeLightRig;
@@ -76,6 +84,10 @@ private:
     UPROPERTY() TObjectPtr<class UDirectionalLightComponent> NativeMoonLight;
     float NativeSkyFactor=1;
     double NativeSunAngle=0,NativeMoonAngle=180;
+    double NativeStarAngle=0;
+    float NativeStarBrightness=0;
+    FLinearColor NativeSunriseColor=FLinearColor::Transparent;
+    bool NativeSunriseGeometryDirty=true;
     int32 NativeMoonPhase=0;
     bool NativeHasCelestials=true;
     float NativeRain=0;

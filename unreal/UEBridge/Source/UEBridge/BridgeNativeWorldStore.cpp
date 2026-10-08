@@ -1,4 +1,5 @@
 #include "BridgeNativeWorldStore.h"
+#include "BridgeBiomeTint.h"
 #include "BridgeWorld.h"
 #include "BridgeBlockPalette.h"
 #include "BridgeLightingService.h"
@@ -246,6 +247,13 @@ bool FBridgeNativeWorldStore::ParseCell(const FString& Text,FBridgePacket& Out,b
         const TArray<TSharedPtr<FJsonValue>>* Top=nullptr;if(!O->TryGetArrayField(TEXT("skyTop"),Top) || Top->Num()!=64) return false;
         for(int32 I=0;I<64;++I) {int32 N;if(!ArrayInt(*Top,I,0,15,N)) return false;Out.SkyTop.Add(uint8(N));}
     }
+    if(!BridgeBiomeTint::Read(O,Out.BiomeTints)) return false;
+    if(O->HasField(TEXT("water"))) {
+        const TArray<TSharedPtr<FJsonValue>>* Fluid=nullptr;
+        if(!O->TryGetArrayField(TEXT("water"),Fluid) || Fluid->Num()>512) return false;
+        TSet<int32> SeenWater;
+        for(int32 I=0;I<Fluid->Num();++I) {int32 Index;if(!ArrayInt(*Fluid,I,0,511,Index) || SeenWater.Contains(Index)) return false;SeenWater.Add(Index);Out.Water.Add(uint16(Index));}
+    }
     Out.TotalBatches=1;Out.BatchIndex=0;Out.CompactTerrain=true;Out.MinecraftOrigin=Metadata.Origin;
     Out.Sequence=Out.SnapshotSequence=PacketSequence++;Out.SnapshotId=ImportId;
     SeenCells.Add(Out.Cell);++ProcessedCells;ProcessedRows+=Out.Blocks.Num();
@@ -299,8 +307,9 @@ bool FBridgeNativeWorldStore::BeginSave(ABridgeWorld* World,const FVector& Feet,
     World->GetNativeCellKeys(SaveCells);Next.Cells=SaveCells.Num();Next.Spawn=Feet;Next.Yaw=Rotation.Yaw;Next.Pitch=FMath::Clamp(-double(Rotation.Pitch),-90.,90.);Next.RuntimeState=RuntimeState;
     SaveSnapshot.Empty();
     for(const auto& Cell:SaveCells) {
-        auto& Snapshot=SaveSnapshot.Add(Cell);
+        auto& Snapshot=SaveSnapshot.Add(Cell);World->GetNativeWaterCell(Cell,Snapshot.Water);
         if(!World->GetNativeCell(Cell,Snapshot.Rows,Snapshot.SkyTop)) {SaveSnapshot.Empty();Error=TEXT("Cannot snapshot offline terrain; previous save preserved");return false;}
+        World->GetNativeBiomeTintCell(Cell,Snapshot.BiomeTints);
     }
     const TArray<TSharedPtr<FJsonValue>>* CurrentMobs=nullptr;
     if(RuntimeState && RuntimeState->TryGetArrayField(TEXT("mobs"),CurrentMobs)) Next.Mobs=*CurrentMobs;
@@ -344,6 +353,12 @@ bool FBridgeNativeWorldStore::SaveNextCell() {
         Blocks.Add(MakeShared<FJsonValueArray>(TArray<TSharedPtr<FJsonValue>>{MakeShared<FJsonValueNumber>(Index),MakeShared<FJsonValueNumber>(Descriptor),MakeShared<FJsonValueNumber>(B.SkyLight),MakeShared<FJsonValueNumber>(B.BlockLight)}));
     }
     O->SetArrayField(TEXT("palette"),Types);O->SetArrayField(TEXT("blocks"),Blocks);
+    if(!Snapshot->BiomeTints.IsEmpty()) {
+        const auto Tints=BridgeBiomeTint::Write(Snapshot->BiomeTints);
+        if(!Tints.IsValid()) {Fail(TEXT("Offline save encountered invalid biome tint data"));return false;}
+        O->SetObjectField(TEXT("biomeTints"),Tints);
+    }
+    TArray<TSharedPtr<FJsonValue>> Water;for(uint16 Index:Snapshot->Water) Water.Add(MakeShared<FJsonValueNumber>(Index));O->SetArrayField(TEXT("water"),Water);
     if(Top.Num()==64) {TArray<TSharedPtr<FJsonValue>> Light;for(uint8 N:Top) Light.Add(MakeShared<FJsonValueNumber>(N));O->SetArrayField(TEXT("skyTop"),Light);}
     ProcessedRows+=Rows.Num();if(ProcessedRows>MaxRows || !WriteLine(O)) {Fail(TEXT("Offline save exceeds its data budget or could not be written"));return false;}return true;
 }

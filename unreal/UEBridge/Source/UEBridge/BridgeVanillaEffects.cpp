@@ -1,6 +1,7 @@
 #include "BridgeVanillaEffects.h"
 #include "BridgeWorld.h"
 #include "BridgeBlockPalette.h"
+#include "BridgeNativeUiPalette.h"
 #include "BridgeCharacter.h"
 #include "BridgeParticleMath.h"
 #include "BridgeProtocol.h"
@@ -10,7 +11,9 @@
 #include "Components/SceneComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture.h"
+#include "Engine/Texture2D.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/Material.h"
@@ -25,6 +28,12 @@ FLinearColor SafeLight(const FLinearColor& Value) {
     auto Channel=[](float V,float Fallback){return FMath::IsFinite(V) ? FMath::Clamp(V,0.f,1.f) : Fallback;};
     return FLinearColor(Channel(Value.R,1),Channel(Value.G,0),Channel(Value.B,1),1);
 }
+double Gaussian() {
+    // Independent standard-normal draws, as LivingEntity.random.nextGaussian.
+    const double U=FMath::Max(double(FMath::FRand()),1.e-12),V=double(FMath::FRand());
+    return FMath::Sqrt(-2*FMath::Loge(U))*FMath::Cos(2*PI*V);
+}
+FVector PoofVector(const BridgeDeathPoofMath::Vector& Value) {return FVector(Value.x,Value.y,Value.z);}
 }
 
 ABridgeVanillaEffects::ABridgeVanillaEffects() {
@@ -33,6 +42,49 @@ ABridgeVanillaEffects::ABridgeVanillaEffects() {
     RootComponent=CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
     static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneAsset(TEXT("/Engine/BasicShapes/Plane.Plane"));
     if(PlaneAsset.Succeeded()) ParticlePlane=PlaneAsset.Object;
+}
+void ABridgeVanillaEffects::ConfigurePoof(UBridgeNativeUiPalette* Resources,UMaterialInterface* Material) {
+    if(PoofResources==Resources && PoofMaterial==Material && PoofSetupReason==TEXT("ready")) return;
+    ClearPoofParticles();PoofResources=Resources;PoofMaterial=Material;
+    UTexture* DefaultTexture=nullptr;
+    if(!IsValid(PoofMaterial)) PoofSetupReason=TEXT("missing_material");
+    else if(!PoofMaterial->GetTextureParameterValue(FMaterialParameterInfo(TEXT("PoofTexture")),DefaultTexture) || !IsValid(DefaultTexture)) PoofSetupReason=TEXT("material_parameters");
+    else if(!PoofMaterial->CheckMaterialUsage_Concurrent(MATUSAGE_InstancedStaticMeshes)) PoofSetupReason=TEXT("material_instancing");
+    else if(!IsValid(PoofResources) || PoofResources->DeathPoofFrames.IsEmpty()) PoofSetupReason=TEXT("missing_active_pack_frames");
+    else if(PoofResources->DeathPoofFrames.Num()>256 || PoofResources->DeathPoofFrames.ContainsByPredicate([](const TObjectPtr<UTexture2D>& Texture){return !IsValid(Texture.Get());})) PoofSetupReason=TEXT("invalid_active_pack_frames");
+    else if(!IsValid(ParticlePlane)) PoofSetupReason=TEXT("missing_plane");
+    else PoofSetupReason=TEXT("ready");
+}
+FString ABridgeVanillaEffects::DeathPoofReason() const {
+    return PoofSetupReason==TEXT("ready") && !ViewCamera.IsValid() ? TEXT("missing_camera") : PoofSetupReason;
+}
+int32 ABridgeVanillaEffects::SpawnDeathPoof(const FVector& FeetPosition,float WidthCm,float HeightCm) {
+    const FString Reason=DeathPoofReason();
+    if(Reason!=TEXT("ready") || FeetPosition.ContainsNaN() || !FMath::IsFinite(WidthCm) || !FMath::IsFinite(HeightCm) || WidthCm<=0 || HeightCm<=0) {
+        UE_LOG(LogTemp,Warning,TEXT("Bridge death poof: %s; re-export active Minecraft resources and re-import the native package for missing POOF frames/material"),*Reason);
+        return 0;
+    }
+    if(PoofParticles.Num()+BridgeDeathPoofMath::Count>4096) {
+        UE_LOG(LogTemp,Warning,TEXT("Bridge death poof: particle_limit (4096)"));return 0;
+    }
+    if(Particles.IsEmpty() && PoofParticles.IsEmpty()) PhysicsClock=0;
+    for(int32 Index=0;Index<BridgeDeathPoofMath::Count;++Index) {
+        FPoofParticle Particle;
+        const double GX=Gaussian(),GY=Gaussian(),GZ=Gaussian();
+        Particle.State.position={FeetPosition.X+BridgeDeathPoofMath::OffsetCm(WidthCm,FMath::FRand(),GX),
+            FeetPosition.Y+BridgeDeathPoofMath::OffsetCm(WidthCm,FMath::FRand(),GY),
+            FeetPosition.Z+BridgeDeathPoofMath::BodyYcm(HeightCm,FMath::FRand(),GZ)};
+        Particle.State.previous=Particle.State.position;
+        Particle.State.velocity={BridgeDeathPoofMath::VelocityCmPerTick(GX,FMath::FRand()),
+            BridgeDeathPoofMath::VelocityCmPerTick(GY,FMath::FRand()),BridgeDeathPoofMath::VelocityCmPerTick(GZ,FMath::FRand())};
+        Particle.Gray=BridgeDeathPoofMath::Gray(FMath::FRand());
+        Particle.Size=BridgeDeathPoofMath::QuadSizeCm(FMath::FRand(),FMath::FRand());
+        Particle.State.lifetime=BridgeDeathPoofMath::LifetimeTicks(FMath::FRand());
+        if(SampleLight) Particle.Light=SafeLight(SampleLight(PoofVector(Particle.State.position)));
+        Particle.Light.B=1; // Opaque particles have lightmap lighting, no face diffuse shade.
+        PoofParticles.Add(MoveTemp(Particle));
+    }
+    return BridgeDeathPoofMath::Count;
 }
 void ABridgeVanillaEffects::Configure(ABridgeWorld* ImportedTerrain,UBridgeBlockPalette* ImportedPalette,UMaterialInterface* Material) {
     const bool Changed=!Configured || Terrain!=ImportedTerrain || Palette!=ImportedPalette || DustMaterial!=Material;
@@ -85,7 +137,83 @@ void ABridgeVanillaEffects::ClearParticles() {
     Particles.Empty(); PhysicsClock=0;
     for(auto& Entry:Groups) if(Entry.Value) Entry.Value->DestroyComponent();
     Groups.Empty();
+    ClearPoofParticles();
 }
+void ABridgeVanillaEffects::ClearPoofParticles() {
+    PoofParticles.Empty();
+    for(auto& Entry:PoofGroups) if(IsValid(Entry.Value)) Entry.Value->DestroyComponent();
+    PoofGroups.Empty();
+}
+
+UInstancedStaticMeshComponent* ABridgeVanillaEffects::FindPoofGroup(int32 Frame) {
+    if(!IsValid(PoofMaterial) || !IsValid(PoofResources) || !PoofResources->DeathPoofFrames.IsValidIndex(Frame)) return nullptr;
+    if(auto* Existing=PoofGroups.Find(Frame)) return IsValid(*Existing) ? Existing->Get() : nullptr;
+    if(PoofGroups.Num()>=256 || !IsValid(ParticlePlane)) return nullptr;
+    UTexture2D* Texture=PoofResources->DeathPoofFrames[Frame].Get();
+    if(!IsValid(Texture)) return nullptr;
+    auto* Group=NewObject<UInstancedStaticMeshComponent>(this);
+    if(!IsValid(Group)) return nullptr;
+    Group->SetupAttachment(RootComponent); Group->SetMobility(EComponentMobility::Movable);
+    Group->SetStaticMesh(ParticlePlane); Group->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    Group->SetCanEverAffectNavigation(false); Group->SetGenerateOverlapEvents(false); Group->SetCastShadow(false);
+    // 0 = grayscale multiplier, 1..3 = captured sky/block/shade light.
+    Group->NumCustomDataFloats=4;
+    auto* Dynamic=UMaterialInstanceDynamic::Create(PoofMaterial,this);
+    if(!IsValid(Dynamic)) {Group->DestroyComponent();return nullptr;}
+    Dynamic->SetTextureParameterValue(TEXT("PoofTexture"),Texture);
+    Dynamic->SetVectorParameterValue(TEXT("PoofColor"),FLinearColor::White);
+    Group->SetMaterial(0,Dynamic); Group->RegisterComponent();
+    if(!Group->IsRegistered()) {Group->DestroyComponent();return nullptr;}
+    PoofGroups.Add(Frame,Group); return Group;
+}
+
+BridgeDeathPoofMath::Vector ABridgeVanillaEffects::ResolvePoofCollision(const BridgeDeathPoofMath::Vector& Position,const BridgeDeathPoofMath::Vector& Movement) const {
+    BridgeDeathPoofMath::Vector Result=Movement;
+    if(!GetWorld() || (std::abs(Movement.x)<.0001 && std::abs(Movement.y)<.0001 && std::abs(Movement.z)<.0001)) return Result;
+    const FVector Start=PoofVector(Position), Delta=PoofVector(Movement);
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(BridgeDeathPoof),false,const_cast<ABridgeVanillaEffects*>(this));
+    FHitResult Hit;
+    // ExplosionSmokeParticle uses a 0.2 block sprite quad.  Keep the collision
+    // box at that size so poof sprites stop on the same terrain surface rather
+    // than sinking into the imported voxel collision.
+    if(GetWorld()->SweepSingleByChannel(Hit,Start,Start+Delta,FQuat::Identity,ECC_Visibility,
+        FCollisionShape::MakeBox(FVector(10,10,10)),Params)) {
+        const FVector Actual=Hit.Location-Start;
+        Result={Actual.X,Actual.Y,Actual.Z};
+    }
+    return Result;
+}
+
+void ABridgeVanillaEffects::RenderPoof(const FQuat& Facing,float Interpolation) {
+    TMap<int32,int32> InstanceCounts;
+    for(const auto& Particle:PoofParticles) {
+        const int32 Frame=BridgeDeathPoofMath::Frame(Particle.State.age,Particle.State.lifetime,PoofResources ? PoofResources->DeathPoofFrames.Num() : 0);
+        auto* Group=FindPoofGroup(Frame);
+        if(!IsValid(Group)) continue;
+        const FVector Previous=PoofVector(Particle.State.previous),Current=PoofVector(Particle.State.position);
+        const FVector Position=FMath::Lerp(Previous,Current,Interpolation);
+        const int32 Instance=InstanceCounts.FindOrAdd(Frame)++;
+        const FTransform Transform(Facing,Position,FVector(Particle.Size*.01f));
+        bool Submitted=Instance<Group->GetInstanceCount()
+            ? Group->UpdateInstanceTransform(Instance,Transform,true,false,true)
+            : Group->AddInstance(Transform,true)==Instance;
+        Submitted=Group->SetCustomDataValue(Instance,0,Particle.Gray,false) && Submitted;
+        Submitted=Group->SetCustomDataValue(Instance,1,Particle.Light.R,false) && Submitted;
+        Submitted=Group->SetCustomDataValue(Instance,2,Particle.Light.G,false) && Submitted;
+        Submitted=Group->SetCustomDataValue(Instance,3,Particle.Light.B,false) && Submitted;
+        if(!Submitted) UE_LOG(LogTemp,Warning,TEXT("Bridge death poof: render_submission"));
+    }
+    for(auto& Entry:PoofGroups) {
+        const int32* Count=InstanceCounts.Find(Entry.Key);
+        if(!Count || !IsValid(Entry.Value)) continue;
+        while(Entry.Value->GetInstanceCount()>*Count) Entry.Value->RemoveInstance(Entry.Value->GetInstanceCount()-1);
+        Entry.Value->UpdateBounds(); Entry.Value->MarkRenderStateDirty();
+    }
+    for(auto It=PoofGroups.CreateIterator();It;++It) if(!InstanceCounts.Contains(It.Key())) {
+        if(IsValid(It.Value())) It.Value()->DestroyComponent(); It.RemoveCurrent();
+    }
+}
+
 void ABridgeVanillaEffects::EndPlay(const EEndPlayReason::Type Reason) { ClearParticles(); Super::EndPlay(Reason); }
 
 bool ABridgeVanillaEffects::ResolveTexture(const FString& BlockId,FColor& Tint,UTexture*& DustTexture) const {
@@ -135,7 +263,7 @@ FString ABridgeVanillaEffects::FindGroup(const FString& BlockId,FColor Tint) {
     auto* Dynamic=UMaterialInstanceDynamic::Create(DustMaterial,this);
     if(!IsValid(Dynamic)) { Group->DestroyComponent(); Reject(Diagnostics.LastRequested,TEXT("material_instance")); return FString(); }
     Dynamic->SetTextureParameterValue(TEXT("ParticleTexture"),DustTexture);
-    Dynamic->SetVectorParameterValue(TEXT("ParticleColor"),FLinearColor::FromSRGBColor(Tint)*.6f);
+    Dynamic->SetVectorParameterValue(TEXT("ParticleColor"),FLinearColor(Tint.R/255.f*.6f,Tint.G/255.f*.6f,Tint.B/255.f*.6f,1));
     Dynamic->SetScalarParameterValue(TEXT("BridgeUseVertexLight"),1.f);
     Group->SetMaterial(0,Dynamic); Group->RegisterComponent();
     if(!Group->IsRegistered()) { Group->DestroyComponent(); Reject(Diagnostics.LastRequested,TEXT("component_registration")); return FString(); }
@@ -234,7 +362,7 @@ void ABridgeVanillaEffects::SampleCharacter(ABridgeCharacter* Character,float De
 }
 void ABridgeVanillaEffects::Tick(float DeltaSeconds) {
     Super::Tick(DeltaSeconds);
-    if(Particles.IsEmpty()) return;
+    if(Particles.IsEmpty() && PoofParticles.IsEmpty()) return;
     PhysicsClock+=FMath::Clamp(DeltaSeconds,0.f,.1f);
     while(PhysicsClock>=.05f) {
         PhysicsClock-=.05f;
@@ -254,6 +382,12 @@ void ABridgeVanillaEffects::Tick(float DeltaSeconds) {
             if(SampleLight) Particle.Light=SafeLight(SampleLight(Particle.Position));
         }
         Particles.RemoveAll([](const FDustParticle& Particle){return Particle.Age>Particle.Lifetime;});
+        for(auto& Particle:PoofParticles) {
+            Particle.State.Tick([this](const BridgeDeathPoofMath::Vector& Position,const BridgeDeathPoofMath::Vector& Motion){return ResolvePoofCollision(Position,Motion);});
+            if(SampleLight) Particle.Light=SafeLight(SampleLight(PoofVector(Particle.State.position)));
+            Particle.Light.B=1;
+        }
+        PoofParticles.RemoveAll([](const FPoofParticle& Particle){return Particle.State.age>Particle.State.lifetime;});
     }
     FQuat Facing=FQuat::Identity;
     if(ViewCamera.IsValid()) {
@@ -261,6 +395,7 @@ void ABridgeVanillaEffects::Tick(float DeltaSeconds) {
         Facing=FRotationMatrix::MakeFromXY(CameraRotation.RotateVector(FVector(0,1,0)),CameraRotation.RotateVector(FVector(0,0,1))).ToQuat();
     }
     const float Interpolation=PhysicsClock/.05f;
+    RenderPoof(Facing,Interpolation);
     TMap<FString,int32> InstanceCounts;
     for(const auto& Particle:Particles) {
         auto* Found=Groups.Find(Particle.Group);

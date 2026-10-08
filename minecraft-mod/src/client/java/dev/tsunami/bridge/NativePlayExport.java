@@ -9,8 +9,10 @@ import java.util.function.Consumer;
 import net.minecraft.block.*;
 import dev.tsunami.bridge.mixin.*;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.color.world.BiomeColors;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.mob.MobEntity;
+import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.player.PlayerModelPart;
 import net.minecraft.entity.player.PlayerSkinType;
 import net.minecraft.item.*;
@@ -36,6 +38,7 @@ public final class NativePlayExport implements AutoCloseable {
     private final List<WorldSnapshot.Cell> cells=new ArrayList<>();private final NativeFontExport.Resources resources;
     private Stage stage=Stage.BLOCKS;private int blockIndex,cellIndex,voxelIndex,rows;private long worldBytes,lastNotice;
     private final List<WorldSnapshot.Shape> voxels=new ArrayList<>();private final int[] skyTop=new int[64];
+    private final int[][] biomeTints=new int[512][3];
     private BufferedWriter worldOutput;private ItemModelExport.Session itemSession;private NativeUiExport ui;
     private volatile Path workerResult;private volatile Throwable workerError;private volatile String workerStatus="";private volatile boolean cancelled;
     private Thread worker;private String status="準備中";
@@ -95,7 +98,7 @@ public final class NativePlayExport implements AutoCloseable {
                     addAsset("mobs",path);ui=new NativeUiExport(client,directory);stage=Stage.UI;}
                 case UI -> {ui.advance(client,deadline);status="HUD・アイコン "+ui.completed()+"/"+ui.total();if(ui.complete()) {stage=Stage.FONT;startWorker(()->ui.finish(client,resources));}}
                 case FONT -> {if(takeWorker("ui")) {stage=Stage.SOUNDS;Set<String> requested=new TreeSet<>();for(var e:blockSounds.entrySet()) for(String key:List.of("break","place","step","hit","fall","open","close","activate","deactivate")) {var entry=e.getValue().getAsJsonObject();if(entry.has(key)) requested.add(entry.get(key).getAsString());}
-                    requested.addAll(List.of("minecraft:ui.button.click","minecraft:entity.player.hurt","minecraft:entity.player.big_fall","minecraft:entity.player.small_fall","minecraft:entity.item.pickup","minecraft:entity.generic.explode","minecraft:entity.tnt.primed","minecraft:block.lever.click","minecraft:entity.arrow.shoot"));
+                    requested.addAll(List.of("minecraft:ui.button.click","minecraft:entity.player.hurt","minecraft:entity.player.big_fall","minecraft:entity.player.small_fall","minecraft:entity.item.pickup","minecraft:entity.generic.explode","minecraft:entity.tnt.primed","minecraft:block.lever.click","minecraft:entity.arrow.shoot","minecraft:entity.player.attack.strong","minecraft:entity.player.attack.weak","minecraft:entity.player.attack.nodamage","minecraft:entity.player.attack.knockback","minecraft:entity.player.attack.crit","minecraft:entity.player.attack.sweep"));
                     var definitions=soundDefinitions(client);for(String sound:definitions.keySet()) if(sound.startsWith("minecraft:entity.") && (sound.endsWith(".ambient") || sound.endsWith(".hurt") || sound.endsWith(".death") || sound.endsWith(".step"))) requested.add(sound);
                     startWorker(()->NativeSoundExport.export(resources,directory,definitions,blockSounds,requested,value->workerStatus=value));}}
                 case SOUNDS -> {if(takeWorker("sounds")) {openWorld(client);stage=Stage.WORLD;}}
@@ -159,6 +162,13 @@ public final class NativePlayExport implements AutoCloseable {
         if(Float.isFinite(sunAngle)) light.addProperty("sunAngle",MathHelper.wrapDegrees(sunAngle));
         if(Float.isFinite(moonAngle)) light.addProperty("moonAngle",MathHelper.wrapDegrees(moonAngle));
         light.addProperty("moonPhase",attributes.getAttributeValue(EnvironmentAttributes.MOON_PHASE_VISUAL,skyPosition).getIndex());
+        float starAngle=attributes.getAttributeValue(EnvironmentAttributes.STAR_ANGLE_VISUAL,skyPosition);
+        float starBrightness=attributes.getAttributeValue(EnvironmentAttributes.STAR_BRIGHTNESS_VISUAL,skyPosition);
+        if(Float.isFinite(starAngle)) light.addProperty("starAngle",MathHelper.wrapDegrees(starAngle));
+        if(Float.isFinite(starBrightness)) light.addProperty("starBrightness",MathHelper.clamp(starBrightness,0,1));
+        // Keep alpha: SkyRendering.renderGlowingSky uses it both for blend
+        // strength and the fan's geometry, unlike the opaque sky RGB attribute.
+        light.addProperty("sunriseAndSunsetColor",Integer.toUnsignedLong(attributes.getAttributeValue(EnvironmentAttributes.SUNRISE_SUNSET_COLOR_VISUAL,skyPosition)));
         light.addProperty("timeOfDay",sourceWorld.getTimeOfDay());light.addProperty("worldTime",sourceWorld.getTime());light.addProperty("rainGradient",sourceWorld.getRainGradient(1));light.addProperty("thunderGradient",sourceWorld.getThunderGradient(1));header.add("vanillaLight",light);
         header.add("mobs",captureMobs(client));worldOutput=Files.newBufferedWriter(directory.resolve("world.ndjson"),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);writeLine(header);
     }
@@ -169,21 +179,29 @@ public final class NativePlayExport implements AutoCloseable {
             JsonObject value=new JsonObject();value.addProperty("id",mob.getUuidAsString());value.addProperty("type",Registries.ENTITY_TYPE.getId(mob.getType()).toString());value.addProperty("appearance",appearance);value.add("position",NativeExportData.array(mob.getX(),mob.getY(),mob.getZ()));value.addProperty("yaw",MathHelper.wrapDegrees(mob.getYaw()));value.addProperty("pitch",mob.getPitch());value.addProperty("health",mob.getHealth());result.add(value);
         }return result;
     }
+    private final JsonArray waterVoxels=new JsonArray();
     private void captureWorld(MinecraftClient client,long deadline) throws IOException {
         int reads=0;do {
             if(cellIndex==cells.size()) {worldOutput.close();worldOutput=null;stage=Stage.FINISH;return;}
             var cell=cells.get(cellIndex);if(!sourceWorld.isChunkLoaded(Math.floorDiv(cell.x(),2),Math.floorDiv(cell.z(),2))) throw new IOException("書き出し中にチャンクが未読込になりました。開始地点で待って再実行してください");
             int cursor=voxelIndex++,x=cell.x()*8+(cursor&7),z=cell.z()*8+((cursor>>3)&7),y=cell.y()*8+(cursor<512?cursor>>6:8);BlockPos pos=new BlockPos(x,y,z);++reads;
+            if(cursor<512) {
+                biomeTints[cursor][0]=BiomeColors.getGrassColor(sourceWorld,pos)&0xffffff;
+                biomeTints[cursor][1]=BiomeColors.getFoliageColor(sourceWorld,pos)&0xffffff;
+                biomeTints[cursor][2]=BiomeColors.getDryFoliageColor(sourceWorld,pos)&0xffffff;
+            }
             if(cursor>=512) skyTop[cursor-512]=Math.max(0,Math.min(15,sourceWorld.getLightLevel(LightType.SKY,pos)));
             else if(!sourceWorld.isOutOfHeightLimit(y)) {
-                var state=sourceWorld.getBlockState(pos);if(!state.isAir()) {
+                var state=sourceWorld.getBlockState(pos);
+                if(state.getFluidState().isIn(net.minecraft.registry.tag.FluidTags.WATER)) waterVoxels.add(cursor);
+                if(!state.isAir()) {
                     if(!BlockGeometryCapture.supported(state)) {String key=Registries.BLOCK.getId(state.getBlock())+" / "+BlockGeometryCapture.exclusion(state);worldExcluded.addProperty(key,worldExcluded.has(key)?worldExcluded.get(key).getAsInt()+1:1);}
                     else {int color=state.getMapColor(sourceWorld,pos).color&0xffffff,tint=client.getBlockColors().getColor(state,sourceWorld,pos,0);if(tint!=-1) color=tint&0xffffff;var offset=state.getModelOffset(pos);
                         voxels.add(new WorldSnapshot.Shape(x+.5+offset.x-origin.x,y+.5+offset.y-origin.y,z+.5+offset.z-origin.z,color,1,1,1,Registries.BLOCK.getId(state.getBlock()).toString(),false,x,y,z,BlockGeometryCapture.stateKey(state),1,
                             Math.max(0,Math.min(15,sourceWorld.getLightLevel(LightType.SKY,pos))),Math.max(0,Math.min(15,sourceWorld.getLightLevel(LightType.BLOCK,pos))),state.getOpacity(),state.getLuminance()));}
                 }
             }
-            if(voxelIndex==576) {rows+=voxels.size();if(rows>NativeExportData.MAX_ROWS) throw new IOException("UE安全上限2097152ブロックを超えました。4チャンクまたは空洞の多い範囲で書き出してください");writeLine(NativeExportData.cell(cell,voxels,skyTop));voxels.clear();voxelIndex=0;++cellIndex;}
+            if(voxelIndex==576) {rows+=voxels.size();if(rows>NativeExportData.MAX_ROWS) throw new IOException("UE安全上限2097152ブロックを超えました。4チャンクまたは空洞の多い範囲で書き出してください");JsonObject cellData=NativeExportData.cell(cell,voxels,skyTop);cellData.add("water",waterVoxels.deepCopy());cellData.add("biomeTints",BiomeTintSnapshot.encode(biomeTints));writeLine(cellData);waterVoxels.asList().clear();voxels.clear();voxelIndex=0;++cellIndex;}
         } while(reads<4096 && System.nanoTime()<deadline);
         status="地形 "+cellIndex+"/"+cells.size()+" セル / "+rows+" ブロック（開始地点でお待ちください）";
     }
@@ -200,6 +218,8 @@ public final class NativePlayExport implements AutoCloseable {
         JsonObject settings=new JsonObject(),keys=new JsonObject();for(var key:client.options.allKeys) keys.addProperty(key.getId(),key.getBoundKeyTranslationKey());settings.add("keyBindings",keys);
         settings.addProperty("mouseSensitivity",client.options.getMouseSensitivity().getValue());settings.addProperty("invertYMouse",client.options.getInvertMouseY().getValue());settings.addProperty("invertXMouse",client.options.getInvertMouseX().getValue());
         settings.addProperty("rawMouseInput",client.options.getRawMouseInput().getValue());settings.addProperty("mouseWheelSensitivity",client.options.getMouseWheelSensitivity().getValue());settings.addProperty("fov",client.options.getFov().getValue());settings.addProperty("fovEffectScale",client.options.getFovEffectScale().getValue());settings.addProperty("guiScale",client.options.getGuiScale().getValue());settings.addProperty("bobView",client.options.getBobView().getValue());settings.addProperty("gamma",client.options.getGamma().getValue());
+        settings.addProperty("smoothCamera",client.options.smoothCameraEnabled);
+        settings.addProperty("attackIndicator",client.options.getAttackIndicator().getValue().name().toLowerCase(java.util.Locale.ROOT));
         settings.addProperty("mainHand",client.options.getMainArm().getValue()==Arm.LEFT?"left":"right");int layers=0;for(PlayerModelPart part:PlayerModelPart.values()) if(client.options.isPlayerModelPartEnabled(part)) layers|=part.getBitFlag();settings.addProperty("skinLayers",layers);settings.addProperty("slimArms",client.player.getSkin().model()==PlayerSkinType.SLIM);
         settings.addProperty("gameMode",client.player.isCreative()?"creative":"survival");settings.addProperty("perspective",client.options.getPerspective().isFirstPerson()?0:client.options.getPerspective().isFrontView()?2:1);settings.addProperty("yaw",MathHelper.wrapDegrees(client.player.getYaw()));settings.addProperty("pitch",client.player.getPitch());
         settings.addProperty("flying",client.player.getAbilities().flying);
@@ -208,6 +228,7 @@ public final class NativePlayExport implements AutoCloseable {
         settings.addProperty("language",client.getLanguageManager().getLanguage());settings.addProperty("selectedSlot",client.player.getInventory().getSelectedSlot());
         JsonArray inventory=new JsonArray(),hotbar=new JsonArray();for(int slot=0;slot<36;slot++) {JsonObject entry=stack(client,client.player.getInventory().getStack(slot));entry.addProperty("slot",slot);inventory.add(entry);if(slot<9) hotbar.add(entry.deepCopy());}settings.add("inventory",inventory);settings.add("hotbar",hotbar);settings.add("offhand",stack(client,client.player.getOffHandStack()));
         settings.addProperty("health",client.player.getHealth());settings.addProperty("food",client.player.getHungerManager().getFoodLevel());settings.addProperty("experienceLevel",client.player.experienceLevel);settings.addProperty("experienceProgress",client.player.experienceProgress);settings.addProperty("armor",client.player.getArmor());
+        JsonArray equipment=new JsonArray();for(EquipmentSlot slot:List.of(EquipmentSlot.HEAD,EquipmentSlot.CHEST,EquipmentSlot.LEGS,EquipmentSlot.FEET)) equipment.add(stack(client,client.player.getEquippedStack(slot)));settings.add("equipment",equipment);
         JsonObject volumes=new JsonObject();for(SoundCategory category:SoundCategory.values()) volumes.addProperty(category.getName(),client.options.getSoundVolumeOption(category).getValue());settings.add("soundVolumes",volumes);settings.addProperty("soundMasterVolume",client.options.getSoundVolumeOption(SoundCategory.MASTER).getValue());return settings;
     }
     private static JsonObject stack(MinecraftClient client,ItemStack stack) {

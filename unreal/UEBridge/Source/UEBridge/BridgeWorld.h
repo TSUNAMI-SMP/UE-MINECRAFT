@@ -11,6 +11,8 @@ struct FBridgeWorldStage {
     double Deadline=0;
     TMap<int32,TArray<FBridgeBlock>> Batches;
     TArray<uint8> SkyTop;
+    TArray<FIntVector> BiomeTints;
+    TArray<uint16> Water;
     bool Compact=false;
 };
 
@@ -53,6 +55,8 @@ public:
     int32 RenderSectionCount() const;
     int32 RebuildPending() const {return RebuildQueue.Num()+LightQueue.Num();}
     bool ContainsUEPosition(const FVector& UEPosition) const;
+    /** Conservative source query; older exports omit free fluid voxels. */
+    bool IsWaterAtUEPosition(const FVector& UEPosition) const;
     bool IsMovementReady(const FVector& UEFeet,const FVector& Velocity=FVector::ZeroVector) const;
     bool EnsureCollisionForPosition(const FVector& UEPosition);
     bool IsOpaqueVoxel(const FIntVector& Block) const;
@@ -60,6 +64,9 @@ public:
     /** Snapshot logical source rows, including UE edits. Rendering/collision proxies are never persisted. */
     void GetNativeCellKeys(TArray<FIntVector>& Out) const;
     bool GetNativeCell(const FIntVector& Cell,TArray<FBridgeBlock>& Rows,TArray<uint8>& SkyTop) const;
+    void GetNativeBiomeTintCell(const FIntVector& Cell,TArray<FIntVector>& Out) const;
+    FColor RenderTintAt(const FIntVector& SourceVoxel,const FString& BlockId,int32 TintIndex=0) const;
+    void GetNativeWaterCell(const FIntVector& Cell,TArray<uint16>& Water) const;
     bool GetNativeScope(FIntVector& OutCenter,int32& OutRadius,int32& OutHalfHeight,FVector& OutOrigin) const;
     uint64 GetMutationSerial() const { return MutationSerial; }
 private:
@@ -105,6 +112,8 @@ private:
     TMap<FIntVector,TSet<FIntVector>> EditedCellOwners;
     TSet<FIntVector> RemovedBlocks;
     TMap<FIntVector,TArray<uint8>> SkyTops;
+    TMap<FIntVector,TArray<FIntVector>> BiomeTintCells;
+    TMap<FIntVector,TArray<uint16>> WaterCells;
     void BuildBoundary();
     bool Inside(const FIntVector& C) const;
     FIntVector OwnerOf(const FBridgeBlock& Block) const;
@@ -118,6 +127,7 @@ private:
     void BeginLightingRecenter();
     bool SupportingLogical(const FVector& Feet,FIntVector& Voxel,FString& BlockId,FColor& Tint,FVector& Point) const;
     bool AppendState(const FIntVector& Block,const FString& BlockId,int32 Color,const FString& StateKey,TArray<FBridgeBlock>& Out) const;
+    int32 PlacementTint(const FIntVector& Block,const FString& BlockId,int32 SuppliedColor) const;
     const FBridgeBlock* FindVisual(const FIntVector& Block) const;
     void UpdateConnections(const FIntVector& Block);
 };

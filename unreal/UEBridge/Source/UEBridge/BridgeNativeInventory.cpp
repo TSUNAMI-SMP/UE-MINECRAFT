@@ -1,5 +1,6 @@
 #include "BridgeNativeInventory.h"
 #include "BridgeNativeFile.h"
+#include "BridgeNativeInventoryMath.h"
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformTime.h"
@@ -27,7 +28,7 @@ void UBridgeNativeInventory::Initialize(UBridgeNativeUiPalette* Resources, const
     if (Initialized && Profile == SafeName && StandaloneProfile == UseStandaloneProfile) return;
     // SetNum alone retains elements when a UObject is reused for another
     // profile. Establish an empty inventory before attempting any profile load.
-    Profile = SafeName; Slots.Empty(36); Slots.SetNum(36); CursorStack.Clear(); OffhandStack.Clear(); SelectedSlot = 0;
+    Profile = SafeName; Slots.Empty(36); Slots.SetNum(36); CursorStack.Clear(); OffhandStack.Clear(); ArmorStacks.Empty(4);ArmorStacks.SetNum(4); SelectedSlot = 0;
     Initialized = true; StandaloneProfile = UseStandaloneProfile; LastSaveAttempt = -1;
     if (!StandaloneProfile) PersistenceError.Reset();
     LoadedExistingProfile = StandaloneProfile && LoadProfile(); PreserveInvalidProfile = StandaloneProfile && !LoadedExistingProfile && FPaths::FileExists(ProfilePath()); InitialSettingsApplied = false;
@@ -57,7 +58,18 @@ void UBridgeNativeInventory::ImportInitialSettings(const TSharedPtr<FJsonObject>
             InitialOffhand.ItemId = ItemId; InitialOffhand.Count = int32(Count);
         }
     }
-    Slots = MoveTemp(Initial); OffhandStack = MoveTemp(InitialOffhand); double Slot = 0;
+    TArray<FBridgeNativeStack> InitialArmor;InitialArmor.SetNum(4);
+    const TArray<TSharedPtr<FJsonValue>>* ArmorValues=nullptr;
+    if(Settings->HasField(TEXT("equipment")) && !Settings->TryGetArrayField(TEXT("equipment"),ArmorValues)) return;
+    if(ArmorValues) {
+        if(ArmorValues->Num()!=4) return;
+        for(int32 I=0;I<4;++I) {
+            const TSharedPtr<FJsonObject>* Entry=nullptr;FString Id;double Count=0;
+            if(!(*ArmorValues)[I].IsValid() || !(*ArmorValues)[I]->TryGetObject(Entry) || !Entry->IsValid() || !(*Entry)->TryGetStringField(TEXT("id"),Id) || !(*Entry)->TryGetNumberField(TEXT("count"),Count) || !FMath::IsFinite(Count) || Count<0 || Count>1 || FMath::FloorToDouble(Count)!=Count) return;
+            if(Count>0 && Id!=TEXT("minecraft:air") && !Id.IsEmpty()) {if(!ValidItemId(Id) || !CanInsertIntoSlot(ArmorBegin+I,Id)) return;InitialArmor[I].ItemId=Id;InitialArmor[I].Count=1;}
+        }
+    }
+    Slots = MoveTemp(Initial); OffhandStack = MoveTemp(InitialOffhand);ArmorStacks=MoveTemp(InitialArmor); double Slot = 0;
     if (Settings->TryGetNumberField(TEXT("selectedSlot"), Slot) && FMath::IsFinite(Slot) && Slot >= 0 && Slot < 9 && FMath::FloorToDouble(Slot) == Slot) SelectedSlot = int32(Slot);
     InitialSettingsApplied = true; Changed();
 }
@@ -72,10 +84,12 @@ void UBridgeNativeInventory::SeedCreativeHotbar() {
 
 const FBridgeNativeStack& UBridgeNativeInventory::Selected() const { return Slots.IsValidIndex(SelectedSlot) ? Slots[SelectedSlot] : EmptyNativeStack; }
 const FBridgeNativeStack& UBridgeNativeInventory::GetStack(int32 Slot) const {
+    if(Slot>=ArmorBegin && Slot<ArmorEnd) return ArmorStacks.IsValidIndex(Slot-ArmorBegin) ? ArmorStacks[Slot-ArmorBegin] : EmptyNativeStack;
     return Slot == OffhandSlot ? OffhandStack : (Slots.IsValidIndex(Slot) ? Slots[Slot] : EmptyNativeStack);
 }
 FBridgeNativeStack* UBridgeNativeInventory::MutableStack(int32 Slot) {
     if (!Initialized) return nullptr;
+    if(Slot>=ArmorBegin && Slot<ArmorEnd) return ArmorStacks.IsValidIndex(Slot-ArmorBegin) ? &ArmorStacks[Slot-ArmorBegin] : nullptr;
     return Slot == OffhandSlot ? &OffhandStack : (Slots.IsValidIndex(Slot) ? &Slots[Slot] : nullptr);
 }
 
@@ -84,15 +98,35 @@ int32 UBridgeNativeInventory::MaxCount(const FString& ItemId) const {
     return FMath::Clamp(Entry ? Entry->MaxCount : 64, 1, 99);
 }
 
+int32 UBridgeNativeInventory::EquipmentSlotFor(const FString& ItemId) const {
+    if(const auto* Entry=Palette ? Palette->FindItem(ItemId) : nullptr) if(Entry->EquipmentSlot>0) return ArmorBegin+Entry->EquipmentSlot-1;
+    // Backwards-compatible vanilla equipment identification for exports before component metadata.
+    if(ItemId.EndsWith(TEXT("_helmet")) || ItemId==TEXT("minecraft:carved_pumpkin")) return ArmorBegin;
+    if(ItemId.EndsWith(TEXT("_chestplate")) || ItemId==TEXT("minecraft:elytra")) return ArmorBegin+1;
+    if(ItemId.EndsWith(TEXT("_leggings"))) return ArmorBegin+2;
+    if(ItemId.EndsWith(TEXT("_boots"))) return ArmorBegin+3;
+    return -1;
+}
+bool UBridgeNativeInventory::CanInsertIntoSlot(int32 Slot,const FString& ItemId) const {
+    if(Slot>=ArmorBegin && Slot<ArmorEnd) return EquipmentSlotFor(ItemId)==Slot;
+    return Slots.IsValidIndex(Slot) || Slot==OffhandSlot;
+}
+int32 UBridgeNativeInventory::SlotCapacity(int32 Slot,const FString& ItemId) const {return CanInsertIntoSlot(Slot,ItemId) ? (Slot>=ArmorBegin ? 1 : MaxCount(ItemId)) : 0;}
+float UBridgeNativeInventory::GetArmorPoints() const {float Total=0;for(const auto& Stack:ArmorStacks) if(!Stack.IsEmpty()) if(const auto* Entry=Palette ? Palette->FindItem(Stack.ItemId) : nullptr) Total+=Entry->Armor;return Total;}
+float UBridgeNativeInventory::GetArmorToughness() const {float Total=0;for(const auto& Stack:ArmorStacks) if(!Stack.IsEmpty()) if(const auto* Entry=Palette ? Palette->FindItem(Stack.ItemId) : nullptr) Total+=Entry->ArmorToughness;return Total;}
+float UBridgeNativeInventory::GetArmorKnockbackResistance() const {float Total=0;for(const auto& Stack:ArmorStacks) if(!Stack.IsEmpty()) if(const auto* Entry=Palette ? Palette->FindItem(Stack.ItemId) : nullptr) Total+=Entry->ArmorKnockbackResistance;return FMath::Clamp(Total,0.f,1.f);}
+
 void UBridgeNativeInventory::Changed() { Dirty = true; ++Revision; }
 
 void UBridgeNativeInventory::SelectHotbar(int32 Slot) { if (Slot >= 0 && Slot < 9 && Slot != SelectedSlot) { SelectedSlot = Slot; Changed(); } }
 void UBridgeNativeInventory::ScrollHotbar(int32 Delta) { SelectHotbar(((SelectedSlot - Delta) % 9 + 9) % 9); }
 
-TArray<FBridgeNativeUiItem> UBridgeNativeInventory::FilterCatalogue(const FString& Search) const {
+TArray<FBridgeNativeUiItem> UBridgeNativeInventory::FilterCatalogue(const FString& Search, const FBridgeNativeUiGroup* Group) const {
     TArray<FBridgeNativeUiItem> Result;
     if (!Palette) return Result;
-    for (const auto& Entry : Palette->Items) if (Search.IsEmpty() || Entry.DisplayName.Contains(Search, ESearchCase::IgnoreCase) || Entry.ItemId.Contains(Search, ESearchCase::IgnoreCase)) Result.Add(Entry);
+    auto Add = [&](const FBridgeNativeUiItem& Entry) { if (Search.IsEmpty() || Entry.DisplayName.Contains(Search, ESearchCase::IgnoreCase) || Entry.ItemId.Contains(Search, ESearchCase::IgnoreCase)) Result.Add(Entry); };
+    if (Group) { for (const FString& Id : Group->Items) if (const auto* Entry = Palette->FindItem(Id)) Add(*Entry); }
+    else { for (const auto& Entry : Palette->Items) Add(Entry); }
     return Result;
 }
 
@@ -132,7 +166,11 @@ bool UBridgeNativeInventory::AddStack(const FString& ItemId, int32 Count) {
 bool UBridgeNativeInventory::QuickMove(int32 Slot) {
     auto* Target = MutableStack(Slot); if (!Target || Target->IsEmpty()) return false;
     auto& Stack = *Target;
-    const int32 Remaining = InsertRange(Stack.ItemId, Stack.Count, Slot < 9 ? 9 : 0, Slot < 9 || Slot == OffhandSlot ? 36 : 9);
+    const int32 Equip=EquipmentSlotFor(Stack.ItemId);
+    if(Slot<ArmorBegin && Equip>=ArmorBegin && GetStack(Equip).IsEmpty()) {
+        if(auto* Armor=MutableStack(Equip)) {Armor->ItemId=Stack.ItemId;Armor->Count=1;if(--Stack.Count<=0) Stack.Clear();Changed();return true;}
+    }
+    const int32 Remaining = InsertRange(Stack.ItemId, Stack.Count, Slot < 9 ? 9 : 0, Slot < 9 || Slot >= OffhandSlot ? 36 : 9);
     if (Remaining == Stack.Count) return false;
     Stack.Count = Remaining; if (!Remaining) Stack.Clear(); Changed(); return true;
 }
@@ -141,18 +179,19 @@ bool UBridgeNativeInventory::ClickSlot(int32 Slot, bool RightClick, bool Shift) 
     auto* Target = MutableStack(Slot); if (!Target) return false;
     if (Shift && CursorStack.IsEmpty()) return QuickMove(Slot);
     auto& Stack = *Target;
+    if(!CursorStack.IsEmpty() && !CanInsertIntoSlot(Slot,CursorStack.ItemId)) return false;
     if (CursorStack.IsEmpty()) {
         if (Stack.IsEmpty()) return false;
         CursorStack.ItemId = Stack.ItemId; CursorStack.Count = RightClick ? (Stack.Count + 1) / 2 : Stack.Count;
         Stack.Count -= CursorStack.Count; if (Stack.Count <= 0) Stack.Clear();
     } else if (Stack.IsEmpty()) {
-        Stack.ItemId = CursorStack.ItemId; Stack.Count = RightClick ? 1 : CursorStack.Count;
+        Stack.ItemId = CursorStack.ItemId; Stack.Count = FMath::Min(RightClick ? 1 : CursorStack.Count,SlotCapacity(Slot,CursorStack.ItemId));
         CursorStack.Count -= Stack.Count; if (CursorStack.Count <= 0) CursorStack.Clear();
     } else if (Stack.ItemId == CursorStack.ItemId) {
-        if (Stack.Count >= MaxCount(Stack.ItemId)) return false;
-        const int32 Transfer = FMath::Min(RightClick ? 1 : CursorStack.Count, MaxCount(Stack.ItemId) - Stack.Count);
+        if (Stack.Count >= SlotCapacity(Slot,Stack.ItemId)) return false;
+        const int32 Transfer = FMath::Min(RightClick ? 1 : CursorStack.Count, SlotCapacity(Slot,Stack.ItemId) - Stack.Count);
         Stack.Count += Transfer; CursorStack.Count -= Transfer; if (CursorStack.Count <= 0) CursorStack.Clear();
-    } else { Swap(Stack, CursorStack); }
+    } else {if(CursorStack.Count>SlotCapacity(Slot,CursorStack.ItemId)) return false;Swap(Stack, CursorStack); }
     Changed(); return true;
 }
 
@@ -160,6 +199,8 @@ bool UBridgeNativeInventory::SwapSlots(int32 First, int32 Second) {
     auto* A = MutableStack(First); auto* B = MutableStack(Second);
     if (!A || !B || First == Second || !CursorStack.IsEmpty()) return false;
     if (A->IsEmpty() && B->IsEmpty()) return false;
+    if(!A->IsEmpty() && (!CanInsertIntoSlot(Second,A->ItemId) || A->Count>SlotCapacity(Second,A->ItemId))) return false;
+    if(!B->IsEmpty() && (!CanInsertIntoSlot(First,B->ItemId) || B->Count>SlotCapacity(First,B->ItemId))) return false;
     Swap(*A, *B); Changed(); return true;
 }
 bool UBridgeNativeInventory::SwapOffhand() { return SwapSlots(SelectedSlot, OffhandSlot); }
@@ -168,6 +209,58 @@ bool UBridgeNativeInventory::TakeCatalogue(const FString& ItemId, bool RightClic
     if (!ValidItemId(ItemId) || (Palette && !Palette->FindItem(ItemId))) return false;
     if (!CursorStack.IsEmpty() && CursorStack.ItemId != ItemId && !ReturnCursor()) return false;
     CursorStack.ItemId = ItemId; CursorStack.Count = RightClick ? 1 : MaxCount(ItemId); Changed(); return true;
+}
+
+bool UBridgeNativeInventory::ClickCatalogue(const FString& ItemId, bool RightClick, bool Shift) {
+    if (!ItemId.IsEmpty() && (!ValidItemId(ItemId) || (Palette && !Palette->FindItem(ItemId)))) return false;
+    if (!CursorStack.IsEmpty() && CursorStack.ItemId == ItemId) {
+        if (RightClick) { if (--CursorStack.Count <= 0) CursorStack.Clear(); }
+        else if (Shift) CursorStack.Count = MaxCount(ItemId);
+        else if (CursorStack.Count < MaxCount(ItemId)) ++CursorStack.Count;
+        else return false;
+    } else if (CursorStack.IsEmpty() && !ItemId.IsEmpty()) {
+        CursorStack.ItemId = ItemId; CursorStack.Count = Shift ? MaxCount(ItemId) : 1;
+    } else if (!RightClick) {
+        if (CursorStack.IsEmpty()) return false;
+        CursorStack.Clear();
+    } else if (!CursorStack.IsEmpty()) { if (--CursorStack.Count <= 0) CursorStack.Clear(); }
+    else return false;
+    Changed(); return true;
+}
+
+bool UBridgeNativeInventory::DeleteCreative(bool ClearInventory) {
+    bool Mutated = false;
+    if (ClearInventory) {
+        for (auto& Stack : Slots) if (!Stack.IsEmpty()) { Stack.Clear(); Mutated = true; }
+        if (!OffhandStack.IsEmpty()) { OffhandStack.Clear(); Mutated = true; }
+        for(auto& Stack:ArmorStacks) if(!Stack.IsEmpty()) {Stack.Clear();Mutated=true;}
+    } else if (!CursorStack.IsEmpty()) { CursorStack.Clear(); Mutated = true; }
+    if (Mutated) Changed();
+    return Mutated;
+}
+
+bool UBridgeNativeInventory::TakeSlot(int32 Slot, int32 Count, FBridgeNativeStack& Out) {
+    auto* Stack=MutableStack(Slot); if(!Stack || Stack->IsEmpty() || Count<=0 || Stack->Count<Count) return false;
+    Out.ItemId=Stack->ItemId;Out.Count=Count;Stack->Count-=Count;if(Stack->Count<=0) Stack->Clear();Changed();return true;
+}
+
+bool UBridgeNativeInventory::DistributeCursor(const TArray<int32>& TargetSlots,int32 Button,bool Creative) {
+    if(CursorStack.IsEmpty() || Button<0 || Button>2 || (Button==2 && !Creative)) return false;
+    TArray<int32> Eligible;std::vector<BridgeNativeInventoryMath::Slot> Counts;
+    for(int32 Slot:TargetSlots) {
+        if(Eligible.Contains(Slot) || (Button!=2 && CursorStack.Count<=Eligible.Num())) continue;
+        const auto* Stack=MutableStack(Slot);if(!Stack || !CanInsertIntoSlot(Slot,CursorStack.ItemId) || (!Stack->IsEmpty() && Stack->ItemId!=CursorStack.ItemId)) continue;
+        Eligible.Add(Slot);Counts.push_back({Stack->IsEmpty() ? 0 : Stack->Count,SlotCapacity(Slot,CursorStack.ItemId)});
+    }
+    if(Eligible.Num()==1) return Button<2 && ClickSlot(Eligible[0],Button==1);
+    const auto Result=BridgeNativeInventoryMath::distribute(CursorStack.Count,Button,Counts);
+    if(Result.counts.size()!=size_t(Eligible.Num()) || Eligible.IsEmpty()) return false;
+    bool Mutated=false;
+    for(int32 I=0;I<Eligible.Num();++I) if(auto* Stack=MutableStack(Eligible[I])) {
+        const int32 Count=Result.counts[I];if(Stack->Count!=Count || Stack->ItemId!=CursorStack.ItemId) {Stack->ItemId=CursorStack.ItemId;Stack->Count=Count;Mutated=true;}
+    }
+    if(CursorStack.Count!=Result.cursor) {CursorStack.Count=Result.cursor;if(CursorStack.Count<=0) CursorStack.Clear();Mutated=true;}
+    if(Mutated) Changed();return Mutated;
 }
 
 bool UBridgeNativeInventory::ReturnCursor() {
@@ -251,7 +344,13 @@ bool UBridgeNativeInventory::ImportRuntimeState(const TSharedPtr<FJsonObject>& J
     // that representation valid, while rejecting a malformed present field.
     const auto OffhandValue = Json->TryGetField(TEXT("offhand"));
     if (OffhandValue.IsValid() && !ReadStack(OffhandValue, LoadedOffhand)) { PersistenceError = TEXT("inventory_invalid_offhand"); return false; }
-    Slots = MoveTemp(Loaded); CursorStack = MoveTemp(LoadedCursor); OffhandStack = MoveTemp(LoadedOffhand); SelectedSlot = int32(SavedSelection);
+    TArray<FBridgeNativeStack> LoadedArmor;LoadedArmor.SetNum(4);
+    if(const auto ArmorValue=Json->TryGetField(TEXT("equipment"));ArmorValue.IsValid()) {
+        const TArray<TSharedPtr<FJsonValue>>* ArmorValues=nullptr;
+        if(!ArmorValue->TryGetArray(ArmorValues) || ArmorValues->Num()!=4) {PersistenceError=TEXT("inventory_invalid_equipment");return false;}
+        for(int32 I=0;I<4;++I) if(!ReadStack((*ArmorValues)[I],LoadedArmor[I]) || (!LoadedArmor[I].IsEmpty() && (LoadedArmor[I].Count!=1 || !CanInsertIntoSlot(ArmorBegin+I,LoadedArmor[I].ItemId)))) {PersistenceError=TEXT("inventory_invalid_equipment");return false;}
+    }
+    Slots = MoveTemp(Loaded); CursorStack = MoveTemp(LoadedCursor); OffhandStack = MoveTemp(LoadedOffhand);ArmorStacks=MoveTemp(LoadedArmor); SelectedSlot = int32(SavedSelection);
     LoadedExistingProfile = true; InitialSettingsApplied = true; Changed(); PersistenceError.Reset(); return true;
 }
 
@@ -261,6 +360,7 @@ TSharedPtr<FJsonObject> UBridgeNativeInventory::ExportRuntimeState() const {
     auto WriteStack = [](const FBridgeNativeStack& Stack) { auto Entry = MakeShared<FJsonObject>(); Entry->SetStringField(TEXT("item"), Stack.IsEmpty() ? FString() : Stack.ItemId); Entry->SetNumberField(TEXT("count"), Stack.IsEmpty() ? 0 : Stack.Count); return MakeShared<FJsonValueObject>(Entry); };
     TArray<TSharedPtr<FJsonValue>> Values; for (const auto& Stack : Slots) Values.Add(WriteStack(Stack)); Json->SetArrayField(TEXT("slots"), Values); Json->SetField(TEXT("cursor"), WriteStack(CursorStack));
     Json->SetField(TEXT("offhand"), WriteStack(OffhandStack));
+    TArray<TSharedPtr<FJsonValue>> Equipment;for(const auto& Stack:ArmorStacks) Equipment.Add(WriteStack(Stack));Json->SetArrayField(TEXT("equipment"),Equipment);
     return Json;
 }
 

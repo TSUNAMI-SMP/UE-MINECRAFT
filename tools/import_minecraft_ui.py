@@ -80,6 +80,12 @@ def load_ui_manifest(filename):
         if "attackDamage" in item or "attackSpeed" in item:
             if not _finite(item.get("attackDamage"), 0, 2048) or not _finite(item.get("attackSpeed"), .01, 1024):
                 raise ValueError("Invalid native UI weapon attributes")
+        if any(field in item for field in ("equipmentSlot", "armor", "armorToughness", "armorKnockbackResistance")):
+            if type(item.get("equipmentSlot")) is not int or not 0 <= item["equipmentSlot"] <= 4:
+                raise ValueError("Invalid native UI equipment slot")
+            for field, upper in (("armor", 1024), ("armorToughness", 1024), ("armorKnockbackResistance", 1)):
+                if not _finite(item.get(field, 0), 0, upper):
+                    raise ValueError("Invalid native UI equipment attributes")
         for field in ("block", "modelKey", "spawnType"):
             value = item.get(field, "")
             if not isinstance(value, str) or len(value) > 512 or ".." in value:
@@ -92,6 +98,34 @@ def load_ui_manifest(filename):
         icon["file"] = item.get("icon")
         _asset_source(path.parent, icon, budget)
         item["source"] = icon["source"]
+    groups = manifest.get("groups", [])
+    if not isinstance(groups, list) or len(groups) > 64:
+        raise ValueError("Invalid native UI creative groups")
+    group_ids, positions = set(), set()
+    for group in groups:
+        if not isinstance(group, dict) or not isinstance(group.get("id"), str) or not RESOURCE_ID.fullmatch(group["id"]) or group["id"] in group_ids:
+            raise ValueError("Invalid/duplicate native UI creative group ID")
+        group_ids.add(group["id"])
+        if not isinstance(group.get("name"), str) or not 1 <= len(group["name"]) <= 512 or group.get("type") not in ("category", "search", "inventory"):
+            raise ValueError("Invalid native UI creative group name/type")
+        if type(group.get("row")) is not int or group["row"] not in (0, 1) or type(group.get("column")) is not int or not 0 <= group["column"] <= 6:
+            raise ValueError("Invalid native UI creative group position")
+        position = (group["row"], group["column"])
+        if position in positions:
+            raise ValueError("Duplicate native UI creative group position")
+        positions.add(position)
+        if any(type(group.get(field)) is not bool for field in ("special", "scrollbar", "renderName")):
+            raise ValueError("Invalid native UI creative group flags")
+        if not isinstance(group.get("icon"), str) or not RESOURCE_ID.fullmatch(group["icon"]) or not isinstance(group.get("texture"), str) or group["texture"] not in sprites:
+            raise ValueError("Missing native UI creative group icon/texture")
+        order = group.get("items")
+        if not isinstance(order, list) or len(order) > 8192 or any(not isinstance(item, str) or item not in seen for item in order) or len(order) != len(set(order)):
+            raise ValueError("Invalid native UI creative group item order")
+    manifest["groups"] = groups
+    poof = manifest.get("deathPoofFrames", [])
+    if not isinstance(poof, list) or len(poof) > 256 or any(not isinstance(key, str) or key not in sprites for key in poof):
+        raise ValueError("Invalid native UI death poof sprite frames")
+    manifest["deathPoofFrames"] = poof
     font = manifest.get("font")
     if font is not None:
         _asset_source(path.parent, font, budget)
@@ -123,7 +157,8 @@ def import_minecraft_ui(filename):
     palette_class = getattr(unreal, "BridgeNativeUiPalette", None)
     item_class = getattr(unreal, "BridgeNativeUiItem", None)
     glyph_class = getattr(unreal, "BridgeNativeGlyph", None)
-    if palette_class is None or item_class is None or glyph_class is None:
+    group_class = getattr(unreal, "BridgeNativeUiGroup", None)
+    if palette_class is None or item_class is None or glyph_class is None or (manifest["groups"] and group_class is None):
         raise RuntimeError("Build the native-play UE source before importing Minecraft UI")
     if unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world() is not None or unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages():
         raise RuntimeError("Stop Play and save the current level before importing Minecraft UI")
@@ -175,7 +210,7 @@ def import_minecraft_ui(filename):
             advance(source["id"])
             icon = dict(source, file=source["icon"])
             entry = item_class()
-            for field, value in dict(item_id=source["id"], display_name=source["name"], icon=texture_for("item_" + source["id"], icon), max_count=source["maxCount"], attack_damage=source.get("attackDamage", 1), attack_speed=source.get("attackSpeed", 0), block_id=source.get("block", ""), model_key=source.get("modelKey", ""), spawn_type=source.get("spawnType", "")).items():
+            for field, value in dict(item_id=source["id"], display_name=source["name"], icon=texture_for("item_" + source["id"], icon), max_count=source["maxCount"], equipment_slot=source.get("equipmentSlot", 0), armor=source.get("armor", 0), armor_toughness=source.get("armorToughness", 0), armor_knockback_resistance=source.get("armorKnockbackResistance", 0), attack_damage=source.get("attackDamage", 1), attack_speed=source.get("attackSpeed", 0), block_id=source.get("block", ""), model_key=source.get("modelKey", ""), spawn_type=source.get("spawnType", "")).items():
                 entry.set_editor_property(field, value)
             items.append(entry)
         font_texture, glyphs = None, []
@@ -190,6 +225,15 @@ def import_minecraft_ui(filename):
                 for field, value in fields.items():
                     glyph.set_editor_property(field, value)
                 glyphs.append(glyph)
+    groups = []
+    for source_group in manifest["groups"]:
+        group = group_class()
+        fields = dict(group_id=source_group["id"], display_name=source_group["name"], type=source_group["type"], icon_item=source_group["icon"],
+                      texture=source_group["texture"], row=source_group["row"], column=source_group["column"], special=source_group["special"],
+                      scrollbar=source_group["scrollbar"], render_name=source_group["renderName"], items=source_group["items"])
+        for field, value in fields.items():
+            group.set_editor_property(field, value)
+        groups.append(group)
     digest = hashlib.sha256(pathlib.Path(manifest["sourceManifest"]).read_bytes()).hexdigest()
     name = "DA_NativeUI_" + digest[:20]
     palette = unreal.load_asset(root + "/" + name)
@@ -199,7 +243,7 @@ def import_minecraft_ui(filename):
         palette = tools.create_asset(name, root, palette_class, factory)
     if not isinstance(palette, palette_class):
         raise RuntimeError("Cannot create Minecraft native UI palette")
-    for field, value in dict(sprites=sprites, items=items, font_atlas=font_texture, glyphs=glyphs, language=manifest.get("language", ""), export_id=manifest.get("exportId", digest[:20])).items():
+    for field, value in dict(sprites=sprites, items=items, groups=groups, death_poof_frames=[sprites[key] for key in manifest["deathPoofFrames"]], font_atlas=font_texture, glyphs=glyphs, language=manifest.get("language", ""), export_id=manifest.get("exportId", digest[:20])).items():
         palette.set_editor_property(field, value)
     if not assets.save_loaded_asset(palette, False):
         raise RuntimeError("Cannot save Minecraft native UI palette")

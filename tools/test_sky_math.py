@@ -40,14 +40,14 @@ int main() {
     // MC noon is up; 90 degrees points west and 270 degrees points east.
     auto Up=Direction(0),West=Direction(90),Down=Direction(180),East=Direction(270);
     Check(Near(Up[0],0) && Near(Up[2],1));
-    Check(Near(West[0],-1) && Near(West[2],0));
+    Check(Near(West[0],0) && Near(West[1],1) && Near(West[2],0));
     Check(Near(Down[0],0) && Near(Down[2],-1));
-    Check(Near(East[0],1) && Near(East[2],0));
-    Check(Near(Direction(-90)[0],East[0]));
+    Check(Near(East[0],0) && Near(East[1],-1) && Near(East[2],0));
+    Check(Near(Direction(-90)[1],East[1]));
     for(int Tick=0;Tick<24000;Tick+=113) {
         const auto Sun=Direction(DefaultSunDegrees(Tick)),Moon=Direction(DefaultSunDegrees(Tick)+180);
-        Check(Near(Sun[0]*Sun[0]+Sun[2]*Sun[2],1));
-        Check(Near(Sun[0]+Moon[0],0) && Near(Sun[2]+Moon[2],0));
+        Check(Near(Sun[0]*Sun[0]+Sun[1]*Sun[1]+Sun[2]*Sun[2],1));
+        Check(Near(Sun[0]+Moon[0],0) && Near(Sun[1]+Moon[1],0) && Near(Sun[2]+Moon[2],0));
         Check(Near(DefaultSunDegrees(Tick),DefaultSunDegrees(Tick+24000)));
     }
     for(int Phase=0;Phase<8;++Phase) {
@@ -79,6 +79,16 @@ int main() {
     Check(HasCelestialBodies("custom:realm",false,"overworld"));
     Check(Near(PlaneScale(false)*100/CelestialRadius,.6));
     Check(Near(PlaneScale(true)*100/CelestialRadius,.4));
+    // Independent java.util.Random/CheckedRandom fixtures for createStars.
+    const auto StarsGeometry=Stars();Check(StarsGeometry.size()==780);
+    const double Centers[3][3]={{-53.246868134,69.925743103,47.698661804},{-96.890884399,-18.466674805,16.466272354},{-98.799293518,9.651536942,12.064331055}};
+    const double Widths[3]={.150184259,.248971671,.197489306};
+    for(int index=0;index<3;++index) {
+        for(int axis=0;axis<3;++axis) {double center=0;for(const auto& vertex:StarsGeometry[index].vertices) center+=vertex[axis]/4.;Check(Near(center,Centers[index][axis],.00002));}
+        double length=0;for(int axis=0;axis<3;++axis) length+=std::pow(StarsGeometry[index].vertices[0][axis]-StarsGeometry[index].vertices[1][axis],2);
+        Check(Near(std::sqrt(length),2*Widths[index],.000002));
+    }
+    const auto CelestialWest=RotateCelestial({0,100,0},90);Check(Near(CelestialWest[0],0)&&Near(CelestialWest[1],100)&&Near(CelestialWest[2],0));
     std::cout << "Sky snapshot math: " << Checks << " checks passed\n";
 }
 '''

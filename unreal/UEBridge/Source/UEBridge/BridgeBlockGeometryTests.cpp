@@ -35,6 +35,19 @@ bool FBridgeBlockModelTest::RunTest(const FString& Parameters) {
     const FVector Origin=Palette->GetModelOffset(TEXT("minecraft:test"),FIntVector::ZeroValue);
     TestTrue(TEXT("Vanilla origin plant offset"),Origin.Equals(FVector(-.25,-.2,-.25),.000001));
     TestTrue(TEXT("Plant offsets depend on x/z and not height"),Palette->GetModelOffset(TEXT("minecraft:test"),FIntVector(5,6,7)).Equals(Palette->GetModelOffset(TEXT("minecraft:test"),FIntVector(5,99,7))));
+    Palette->Models.Add(TEXT("minecraft:block/grass"),TEXT(R"({"elements":[{"from":[0,0,0],"to":[16,16,16],"faces":{"north":{"texture":"minecraft:block/dirt","cullface":"north"}}},{"from":[0,0,0],"to":[16,16,16],"faces":{"north":{"texture":"minecraft:block/grass_overlay","tintindex":0,"cullface":"north"}}}]})"));
+    Palette->BlockstateDefinitions.Add(TEXT("minecraft:grass_block"),TEXT(R"({"variants":{"snowy=false":{"model":"minecraft:block/grass"}}})"));
+    Palette->StateShapes.Add(TEXT("minecraft:grass_block"),TEXT(R"({"defaultState":"snowy=false","renderTints":{"0":9551193},"tintSources":{"0":"grass"},"particle":{"color":16777215,"tint":false}})"));
+    TArray<FBridgeModelFace> Grass;
+    TestTrue(TEXT("Grass base and overlay bake"),Palette->BuildModel(TEXT("minecraft:grass_block"),TEXT("snowy=false"),Grass));
+    if(TestEqual(TEXT("Neither grass layer is discarded"),Grass.Num(),2)) {
+        TestEqual(TEXT("Base remains untinted"),Grass[0].TintIndex,-1);
+        TestEqual(TEXT("Overlay uses native tint index"),Grass[1].TintIndex,0);
+        TestTrue(TEXT("Base geometry stays at native plane"),Grass[0].RenderOffset.IsNearlyZero());
+        TestTrue(TEXT("Overlay only has a render depth bias"),Grass[1].RenderOffset.Equals(FVector(0,0,-.0005),.000001));
+        for(int32 I=0;I<4;++I) TestTrue(TEXT("Light/AO samples retain exact native coincident vertices"),Grass[0].Vertices[I].Equals(Grass[1].Vertices[I]));
+    }
+    TestEqual(TEXT("Grass render tint does not use white dirt dust"),Palette->RenderTint(TEXT("minecraft:grass_block")),FColor(0x91,0xbd,0x59));
     return true;
 }
 #endif

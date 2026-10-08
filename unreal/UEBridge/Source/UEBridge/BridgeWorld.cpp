@@ -20,7 +20,7 @@ void ABridgeWorld::Clear(uint64 Barrier) {
     for(auto& Box:Boundary) if(Box) Box->DestroyComponent(); Boundary.Empty();
     Sealed=false;ImportId.Empty();Stored.Empty();ButtonRelease.Empty();ButtonTimerOwners.Empty();LastModelError.Empty();SurfaceReason=TEXT("not_sampled");
     Cells.Empty(); Counts.Empty(); Revisions.Empty(); Stages.Empty(); Shapes=0; Scoped=false; ScopeSequence=0; ClearBarrier=Barrier;
-    OpaqueCells.Empty();RebuildQueue.Empty();LightQueue.Empty();EditedBlocks.Empty();EditedCellOwners.Empty();RemovedBlocks.Empty();SkyTops.Empty();PhysicsCells.Empty();AdditionalCollisionPositions.Empty();HasCollisionCenter=false;
+    OpaqueCells.Empty();RebuildQueue.Empty();LightQueue.Empty();EditedBlocks.Empty();EditedCellOwners.Empty();RemovedBlocks.Empty();SkyTops.Empty();WaterCells.Empty();BiomeTintCells.Empty();PhysicsCells.Empty();AdditionalCollisionPositions.Empty();HasCollisionCenter=false;
     if(Lighting) Lighting->Clear();Lighting.Reset();PendingLighting.Reset();LightSeedCells.Empty();LightSeedCursor=0;PendingLightInitialized=false;LightingRadius=LightingHeight=0;
 }
 void ABridgeWorld::EndPlay(const EEndPlayReason::Type Reason) { Clear(); Super::EndPlay(Reason); }
@@ -74,7 +74,7 @@ bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterial
         for (auto It=Revisions.CreateIterator();It;++It) if (!Inside(It.Key())) It.RemoveCurrent();
         for(auto It=Stored.CreateIterator();It;++It) if(!Inside(It.Key())) {
             OpaqueCells.Remove(It.Key());for(const auto& Block:It.Value()) {if(Lighting) Lighting->ClearVoxel(OwnerOf(Block));if(PendingLighting) PendingLighting->ClearVoxel(OwnerOf(Block));}
-            Shapes-=Counts.FindRef(It.Key());Counts.Remove(It.Key());SkyTops.Remove(It.Key());It.RemoveCurrent();
+            Shapes-=Counts.FindRef(It.Key());Counts.Remove(It.Key());SkyTops.Remove(It.Key());WaterCells.Remove(It.Key());BiomeTintCells.Remove(It.Key());It.RemoveCurrent();
         }
         if(!HasCollisionCenter) {CollisionCenter=Center;HasCollisionCenter=true;}
         if(!Lighting) {
@@ -87,6 +87,8 @@ bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterial
         Stages.Empty(); if(!ImportId.IsEmpty()) BuildBoundary(); return true;
     }
     if (P.Kind!=EBridgeKind::WorldCell) return false;
+    if(!P.BiomeTints.IsEmpty() && P.BiomeTints.Num()!=512) return false;
+    for(const auto& Tint:P.BiomeTints) if(Tint.GetMin()<0 || Tint.GetMax()>0xffffff) return false;
     if(P.CompactTerrain && !P.MinecraftOrigin.Equals(ImportOrigin,.000001)) return false;
     if (!Inside(P.Cell) || P.SnapshotSequence<ScopeSequence || P.SnapshotSequence<=ClearBarrier
         || P.SnapshotSequence<=Revisions.FindRef(P.Cell)) return true;
@@ -99,6 +101,8 @@ bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterial
     if (P.SnapshotSequence<Stage->Sequence) return true;
     if (Stage->Id!=P.SnapshotId || Stage->Total!=P.TotalBatches || Stage->Compact!=P.CompactTerrain) return false;
     if(P.SkyTop.Num()==64) Stage->SkyTop=P.SkyTop;
+    if(P.BiomeTints.Num()==512) Stage->BiomeTints=P.BiomeTints;
+    Stage->Water=P.Water;
     if (!Stage->Batches.Contains(P.BatchIndex)) Stage->Batches.Add(P.BatchIndex,P.Blocks);
     if (Stage->Batches.Num()!=Stage->Total) return true;
     TArray<FBridgeBlock> Blocks; TSet<int32> Colors; TSet<FString> Groups;
@@ -136,6 +140,8 @@ bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterial
         Stored.Add(P.Cell,Blocks);SavedMaterial=Material;SavedPalette=Palette;RefreshLogicalCell(P.Cell);
         if(Sealed) RefreshButtonTimersForCell(P.Cell);
         if(Stage->SkyTop.Num()==64) SkyTops.Add(P.Cell,Stage->SkyTop);
+        if(Stage->BiomeTints.Num()==512) BiomeTintCells.Add(P.Cell,Stage->BiomeTints);
+        WaterCells.Add(P.Cell,Stage->Water);
         if(const auto* Tops=SkyTops.Find(P.Cell)) if(Tops->Num()==64) {
             for(int32 Z=0;Z<8;++Z) for(int32 X=0;X<8;++X) {if(Lighting && P.Cell.Y==LightingCenter.Y+LightingHeight) Lighting->SetSkyBoundary(P.Cell.X*8+X,P.Cell.Z*8+Z,(*Tops)[X+(Z<<3)]);
                 if(PendingLighting && P.Cell.Y==PendingLightingCenter.Y+PendingLightingHeight) PendingLighting->SetSkyBoundary(P.Cell.X*8+X,P.Cell.Z*8+Z,(*Tops)[X+(Z<<3)]);}
@@ -343,7 +349,8 @@ void ABridgeWorld::RebuildCell(const FIntVector& CellKey) {
     auto& Actor=Cells.FindOrAdd(CellKey);
     if(!IsValid(Actor)) Actor=GetWorld()->SpawnActor<ABridgeBlockPreview>();
     if(Actor) {
-        Actor->Replace(Stored.FindChecked(CellKey),ImportAnchor,SavedMaterial,SavedPalette,NearCollision(CellKey),[this](const FIntVector& P){return IsOpaqueVoxel(P);},Lighting.Get());
+        Actor->Replace(Stored.FindChecked(CellKey),ImportAnchor,SavedMaterial,SavedPalette,NearCollision(CellKey),[this](const FIntVector& P){return IsOpaqueVoxel(P);},Lighting.Get(),true,
+            [this](const FIntVector& Voxel,const FString& Id,int32 Index){return RenderTintAt(Voxel,Id,Index);});
         if(!Actor->HasContent()) {Actor->Clear();Actor->Destroy();Cells.Remove(CellKey);}
     }
     Counts.Add(CellKey,Stored.FindChecked(CellKey).Num());
@@ -497,6 +504,23 @@ bool ABridgeWorld::GetNativeCell(const FIntVector& Cell,TArray<FBridgeBlock>& Ro
     if(const auto* Top=SkyTops.Find(Cell)) SkyTop=*Top;
     return true;
 }
+void ABridgeWorld::GetNativeBiomeTintCell(const FIntVector& Cell,TArray<FIntVector>& Out) const {
+    Out.Empty();if(const auto* Tints=BiomeTintCells.Find(Cell)) Out=*Tints;
+}
+FColor ABridgeWorld::RenderTintAt(const FIntVector& SourceVoxel,const FString& BlockId,int32 TintIndex) const {
+    if(!SavedPalette) return FColor::White;
+    const FString Source=SavedPalette->RenderTintSource(BlockId,TintIndex);
+    if(Source==TEXT("grass") || Source==TEXT("foliage") || Source==TEXT("dry_foliage")) {
+        const FIntVector Cell=CellOf(SourceVoxel),Local=SourceVoxel-Cell*8;
+        const auto* Field=BiomeTintCells.Find(Cell);
+        if(Field && Field->Num()==512) {
+            const FIntVector& Triple=(*Field)[Local.X+Local.Z*8+Local.Y*64];
+            const int32 RGB=Source==TEXT("grass") ? Triple.X : Source==TEXT("foliage") ? Triple.Y : Triple.Z;
+            return FColor((RGB>>16)&255,(RGB>>8)&255,RGB&255);
+        }
+    }
+    return SavedPalette->RenderTint(BlockId,TintIndex);
+}
 bool ABridgeWorld::GetNativeScope(FIntVector& OutCenter,int32& OutRadius,int32& OutHalfHeight,FVector& OutOrigin) const {
     if(!Sealed || !Scoped) return false;
     OutCenter=Center;OutRadius=Radius;OutHalfHeight=HalfHeight;OutOrigin=ImportOrigin;return true;
@@ -539,6 +563,35 @@ bool ABridgeWorld::AppendState(const FIntVector& Block,const FString& BlockId,in
     }
     }
     return true;
+}
+int32 ABridgeWorld::PlacementTint(const FIntVector& Block,const FString& BlockId,int32 SuppliedColor) const {
+    if(!SavedPalette) return SuppliedColor;
+    if(!SavedPalette->RenderTintSource(BlockId).IsEmpty())
+        return int32(RenderTintAt(Block,BlockId).ToPackedARGB()&0xffffffu);
+    // Compatibility for older exports: grass particle tint is intentionally
+    // white. Recover a known source render tint instead of reusing dust color.
+    // New exports sample BiomeColors at every position, including empty voxels;
+    // the compatibility path applies only when that source field is absent.
+    if(BlockId!=TEXT("minecraft:grass_block")) return SuppliedColor;
+    const FIntVector CenterCell=CellOf(Block);double BestDistance=TNumericLimits<double>::Max();int32 Result=SuppliedColor;
+    for(int32 X=-2;X<=2;++X) for(int32 Y=-2;Y<=2;++Y) for(int32 Z=-2;Z<=2;++Z) {
+        const auto* Rows=Stored.Find(CenterCell+FIntVector(X,Y,Z));if(!Rows) continue;
+        for(const auto& Shape:*Rows) if(Shape.BlockId==BlockId && Shape.Color!=0xffffff && Shape.Role<=1) {
+            const FIntVector Difference=OwnerOf(Shape)-Block;const double Distance=FVector(Difference).SizeSquared();
+            if(Distance<BestDistance) {BestDistance=Distance;Result=Shape.Color;}
+        }
+    }
+    return Result;
+}
+bool ABridgeWorld::IsWaterAtUEPosition(const FVector& UEPosition) const {
+    const FVector Relative=(UEPosition-ImportAnchor)/100.;
+    const FVector MC=ImportOrigin+FVector(-Relative.Y,Relative.Z,Relative.X);
+    const FIntVector Voxel(FMath::FloorToInt(MC.X),FMath::FloorToInt(MC.Y),FMath::FloorToInt(MC.Z));
+    const FBridgeBlock* Shape=FindVisual(Voxel);
+    if(Shape) return Shape->BlockId==TEXT("minecraft:water") || StateProperties(Shape->StateKey).FindRef(TEXT("waterlogged"))==TEXT("true");
+    const FIntVector Cell=CellOf(Voxel),Local=Voxel-Cell*8;
+    const uint16 Index=uint16(Local.X+(Local.Z<<3)+(Local.Y<<6));
+    const auto* Water=WaterCells.Find(Cell);return Water && Water->Contains(Index);
 }
 FString ABridgeWorld::PlaceBlock(const FIntVector& Block,const FString& RequestedId,int32 Color,double Yaw,const FVector& Normal,const FVector& HitPoint) {
     const FIntVector CellKey=CellOf(Block);
@@ -600,6 +653,7 @@ FString ABridgeWorld::PlaceBlock(const FIntVector& Block,const FString& Requeste
         if(Props.Contains(TEXT("rotation"))) Props.Add(TEXT("rotation"),FString::FromInt((FMath::RoundToInt((Yaw+180.0)*16.0/360.0)%16+16)%16));
         if(Props.Contains(TEXT("shape")) && BlockId.Contains(TEXT("rail"))) Props.Add(TEXT("shape"),Facing==TEXT("north")||Facing==TEXT("south") ? TEXT("north_south") : TEXT("east_west"));
     }
+    Color=PlacementTint(Block,BlockId,Color);
     Key=StateKey(Props); TArray<FBridgeBlock> NewShapes;
     if(!AppendState(Block,BlockId,Color,Key,NewShapes)) return TEXT("unsupported block state; export/import textures again");
     FIntVector Partner=Block; bool TwoBlocks=Props.FindRef(TEXT("half"))==TEXT("lower");
@@ -739,4 +793,8 @@ bool ABridgeWorld::UseBlock(const FIntVector& Block,bool TimedRelease) {
     if(InteractionSound) InteractionSound(Property==TEXT("open") ? (Props.FindRef(Property)==TEXT("true") ? TEXT("open") : TEXT("close"))
         : (Props.FindRef(Property)==TEXT("true") ? TEXT("activate") : TEXT("deactivate")),Original.BlockId,BlockCenter(Block));
     return true;
+}
+
+void ABridgeWorld::GetNativeWaterCell(const FIntVector& Cell,TArray<uint16>& Water) const {
+    Water.Empty();if(const auto* Found=WaterCells.Find(Cell)) Water=*Found;
 }

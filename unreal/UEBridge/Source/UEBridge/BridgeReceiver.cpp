@@ -8,6 +8,7 @@
 #include "BridgePlayerAppearance.h"
 #include "BridgeVanillaEffects.h"
 #include "BridgeMobWorld.h"
+#include "BridgeMobCharacter.h"
 #include "BridgeItemWorld.h"
 #include "BridgeDroppedItem.h"
 #include "BridgeLightingService.h"
@@ -75,7 +76,7 @@ void ABridgeReceiver::BeginPlay() {
             return SyncedWorld->GetLighting()->Sample(FIntVector(FMath::FloorToInt(Source.X),FMath::FloorToInt(Source.Y),FMath::FloorToInt(Source.Z)));
         };
     }
-    UE_LOG(LogTemp, Display, TEXT("Bridge 0.14.0 listening on 127.0.0.1:%d"), Port);
+    UE_LOG(LogTemp, Display, TEXT("Bridge 0.15.0 listening on 127.0.0.1:%d"), Port);
     Video->Start(VideoPort);
     if (!TargetCharacter) UE_LOG(LogTemp, Warning, TEXT("Bridge: waiting for player Character; will retry every tick"));
     if (!ExplosionSystem) UE_LOG(LogTemp, Warning, TEXT("Bridge: ExplosionSystem is unset; Niagara will not play"));
@@ -152,6 +153,7 @@ void ABridgeReceiver::Tick(float DeltaSeconds) {
         }
         if(IsValid(VanillaEffects)) {
             VanillaEffects->Configure(SyncedWorld,TexturePalette,VanillaParticleMaterial);
+            VanillaEffects->ConfigurePoof(NativeUiPalette,VanillaDeathPoofMaterial);
             VanillaEffects->SetViewCamera(Bridge->BridgeCamera);
             VanillaEffects->AddTickPrerequisiteActor(Bridge);
             VanillaEffects->AddTickPrerequisiteComponent(Bridge->GetCharacterMovement());
@@ -366,7 +368,7 @@ void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
     Reply->SetBoolField(TEXT("cameraReady"), Camera && Camera->IsActive() && TargetCharacter->GetController());
     Reply->SetBoolField(TEXT("vfxReady"), IsValid(ExplosionSystem)); Reply->SetNumberField(TEXT("walls"), Walls);
     Reply->SetNumberField(TEXT("previewBlocks"), PreviewBlocks);
-    Reply->SetStringField(TEXT("build"),TEXT("0.14.0"));
+    Reply->SetStringField(TEXT("build"),TEXT("0.15.0"));
     Reply->SetBoolField(TEXT("blockModelsV2"),true); Reply->SetBoolField(TEXT("videoV3"),true);
     Reply->SetBoolField(TEXT("blockPaletteReady"),IsValid(TexturePalette) && !TexturePalette->BlockstateDefinitions.IsEmpty()
         && !TexturePalette->StateShapes.IsEmpty() && !TexturePalette->FaceMaterials.IsEmpty());
@@ -399,6 +401,8 @@ void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
     Reply->SetBoolField(TEXT("skinReady"),IsValid(PlayerAppearance));
     const auto Dust=IsValid(VanillaEffects) ? VanillaEffects->GetDiagnostics() : FBridgeDustDiagnostics();
     Reply->SetBoolField(TEXT("particlesReady"),IsValid(VanillaEffects) && Dust.Reason==TEXT("ready"));
+    const bool DeathPoofReady=IsValid(VanillaEffects) && VanillaEffects->DeathPoofReason()==TEXT("ready");
+    Reply->SetBoolField(TEXT("deathPoofReady"),DeathPoofReady);
     auto ParticleStatus=MakeShared<FJsonObject>();
     ParticleStatus->SetStringField(TEXT("reason"),IsValid(VanillaEffects) ? Dust.Reason : TEXT("missing_effects"));
     ParticleStatus->SetBoolField(TEXT("materialReady"),Dust.MaterialReady);
@@ -415,6 +419,7 @@ void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
     ParticleStatus->SetNumberField(TEXT("lastRequested"),Dust.LastRequested);
     ParticleStatus->SetNumberField(TEXT("lastSpawned"),Dust.LastSpawned);
     ParticleStatus->SetStringField(TEXT("lastReason"),Dust.LastReason);
+    ParticleStatus->SetStringField(TEXT("deathPoof"),IsValid(VanillaEffects) ? VanillaEffects->DeathPoofReason() : TEXT("missing_effects"));
     Reply->SetObjectField(TEXT("particles"),ParticleStatus);
     Reply->SetStringField(TEXT("lastAction"),LastAction.Left(64));
     Reply->SetBoolField(TEXT("authorityV1"),Cast<ABridgeCharacter>(TargetCharacter)!=nullptr);
@@ -513,7 +518,8 @@ void ABridgeReceiver::BlockAction(const FBridgePacket& P) {
     if(!Character || !UEControl || (!NativePlayActive && (!Connected || Now-LastInput>.25)) || !IsValid(SyncedWorld) || P.ImportId!=SyncedWorld->GetImportId()) {LastAction=TEXT("controller not ready");return;}
     if(IsValid(MobWorld) && MobWorld->PlayerHealth<=0) {LastAction=TEXT("player dead; /uebridge respawn");return;}
     if(LastActionAt>=0 && Now-LastActionAt<.08) {LastAction=TEXT("rate limited");return;}
-    LastActionAt=Now;Character->SwingHand();
+    LastActionAt=Now;
+    if(P.Action==TEXT("break")) Character->SwingHand();
     FVector EyePosition;FRotator EyeRotation;Character->GetEyeAim(EyePosition,EyeRotation);
     const float BlockReach=NativePlayActive && !NativeCreative ? 450.f : 500.f;
     const float AttackReach=NativePlayActive ? (NativeCreative ? 500.f : 300.f) : 500.f;
@@ -548,18 +554,25 @@ void ABridgeReceiver::BlockAction(const FBridgePacket& P) {
         }
         return;
     }
-    if(!P.Sneak && SyncedWorld->UseBlock(Block)) {LastAction=TEXT("block used");return;}
+    if(!P.Sneak && SyncedWorld->UseBlock(Block)) {
+        // Minecraft only plays the hand animation after the interaction is
+        // accepted.  Sending the animation before UseBlock made empty air and
+        // rejected interactions look like a successful right click.
+        Character->SwingHand(); LastAction=TEXT("block used"); return;
+    }
     if(!P.SpawnType.IsEmpty()) {
         if(!EnsureMobWorld()) {LastAction=TEXT("mob world unavailable");return;}
         const FVector Spawn=HitPoint+Normal*(FMath::Abs(Normal.Z)>.5 ? 2.f : 50.f);
-        LastAction=MobWorld->SpawnEgg(P.SpawnType,Spawn,Anchor,P.EventId);return;
+        LastAction=MobWorld->SpawnEgg(P.SpawnType,Spawn,Anchor,P.EventId);
+        if(LastAction.StartsWith(TEXT("mob spawned:"))) Character->SwingHand();
+        return;
     }
     if(P.HeldBlock.IsEmpty()) {LastAction=TEXT("select a supported block or spawn egg");return;}
     FString HitId,HitState;
     if(P.HeldBlock.EndsWith(TEXT("_slab")) && SyncedWorld->GetBlockState(Block,HitId,HitState) && HitId==P.HeldBlock
         && ((HitState.Contains(TEXT("type=bottom")) && Normal.Z>.5) || (HitState.Contains(TEXT("type=top")) && Normal.Z<-.5))) {
         LastAction=SyncedWorld->PlaceBlock(Block,P.HeldBlock,P.HeldColor,P.Yaw,Normal,HitPoint);
-        if(LastAction==TEXT("placed")) QueueFeedback(TEXT("place"),P.HeldBlock,SyncedWorld->BlockCenter(Block));
+        if(LastAction==TEXT("placed")) {Character->SwingHand();QueueFeedback(TEXT("place"),P.HeldBlock,SyncedWorld->BlockCenter(Block));}
         return;
     }
     const FVector MinecraftNormal(-Normal.Y,Normal.Z,Normal.X);
@@ -567,7 +580,7 @@ void ABridgeReceiver::BlockAction(const FBridgePacket& P) {
     if(FMath::Abs(MinecraftNormal.Z)>FMath::Abs(MinecraftNormal[Axis])) Axis=2;
     FIntVector Adjacent=Block;Adjacent[Axis]+=MinecraftNormal[Axis]>=0 ? 1 : -1;
     LastAction=SyncedWorld->PlaceBlock(Adjacent,P.HeldBlock,P.HeldColor,P.Yaw,Normal,HitPoint);
-    if(LastAction==TEXT("placed")) QueueFeedback(TEXT("place"),P.HeldBlock,SyncedWorld->BlockCenter(Adjacent));
+    if(LastAction==TEXT("placed")) {Character->SwingHand();QueueFeedback(TEXT("place"),P.HeldBlock,SyncedWorld->BlockCenter(Adjacent));}
 }
 
 void ABridgeReceiver::QueueFeedback(const FString& Type,const FString& BlockId,const FVector& Position,float FallDistance) {
@@ -662,8 +675,18 @@ bool ABridgeReceiver::EnsureMobWorld() {
         MobWorld=GetWorld()->SpawnActor<ABridgeMobWorld>();
         if(!MobWorld) return false;
         MobWorld->Sound=[this](const FString& Sound,const FVector& Position){QueueMobSound(Sound,Position);};
+        MobWorld->NativeSound=[this](const FString& Id,const FVector& Position,float Volume,float Pitch,const FString& Category){
+            if(NativePlayActive) PlayNativeSound(Id,Position,Volume,Pitch,Category);
+            else QueueMobSound(Id,Position);
+        };
         MobWorld->PrepareSpawnCollision=[this](const FVector& Feet){if(IsValid(SyncedWorld)) SyncedWorld->EnsureCollisionForPosition(Feet);};
         MobWorld->SpawnAllowed=[this](const FVector& Feet){return IsValid(SyncedWorld) && SyncedWorld->ContainsUEPosition(Feet);};
+        MobWorld->WaterAt=[this](const FVector& Point){return IsValid(SyncedWorld) && SyncedWorld->IsWaterAtUEPosition(Point);};
+        MobWorld->NativeDeathPoof=[this](ABridgeMobCharacter* Mob){
+            if(!NativePlayActive || !IsValid(Mob) || !IsValid(VanillaEffects)) return;
+            VanillaEffects->ConfigurePoof(NativeUiPalette,VanillaDeathPoofMaterial);
+            VanillaEffects->SpawnDeathPoof(Mob->GetNativeFeet(),Mob->GetNativeWidthCm(),Mob->GetNativeHeightCm());
+        };
         Video->AddTickPrerequisiteActor(MobWorld);
     }
     MobWorld->Palette=MobPalette;MobWorld->SetCreative(LatestInput.Creative);MobWorld->SetAuthority(UEControl,TargetCharacter);

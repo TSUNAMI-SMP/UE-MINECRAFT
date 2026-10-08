@@ -11,6 +11,7 @@ import javax.imageio.ImageIO;
 import net.minecraft.client.render.entity.model.SheepWoolEntityModel;
 import net.minecraft.client.render.entity.model.EntityModelLayers;
 import net.minecraft.client.render.entity.state.SheepEntityRenderState;
+import net.minecraft.client.render.entity.state.BatEntityRenderState;
 import java.nio.file.*;
 import java.nio.charset.StandardCharsets;
 import java.security.*;
@@ -152,6 +153,9 @@ public final class MobModelExport {
         }
         state.deathTime=0;state.hurt=false;state.relativeHeadYaw=0;state.pitch=0;
         state.limbSwingAmplitude=0;state.limbSwingAnimationProgress=0;state.age=0;
+        // Bat animations run by age, independently of walking speed. Capture
+        // the actual renderer's roost pose and one complete 0.5 s flying loop.
+        if(state instanceof BatEntityRenderState bat) {bat.roosting=true;bat.flyingAnimationState.stop();bat.roostingAnimationState.start(0);}
         model.setAngles(state);
         JsonArray parts=new JsonArray();List<ModelPart> nodes=new ArrayList<>();
         capturePart(root,"root",-1,parts,nodes,true);
@@ -159,9 +163,10 @@ public final class MobModelExport {
         if(wool!=null) {wool.setAngles((SheepEntityRenderState)state);capturePart(wool.getRootPart(),"wool.root",-1,parts,nodes,true);}
         if(parts.asList().stream().allMatch(part -> part.getAsJsonObject().getAsJsonArray("quads").isEmpty())) throw new IOException("Native model has no visible cuboids");
         JsonArray frames=new JsonArray();
+        if(state instanceof BatEntityRenderState bat) {bat.roosting=false;bat.roostingAnimationState.stop();bat.flyingAnimationState.start(0);}
         for(int i=0;i<WALK_FRAMES;i++) {
             state.limbSwingAmplitude=1f;state.limbSwingAnimationProgress=(float)(i*Math.PI*2/WALK_FRAMES / 0.6662);
-            state.age=i*2f;model.setAngles(state);if(wool!=null) wool.setAngles((SheepEntityRenderState)state);JsonArray frame=new JsonArray();
+            state.age=state instanceof BatEntityRenderState ? i*10f/WALK_FRAMES : i*2f;model.setAngles(state);if(wool!=null) wool.setAngles((SheepEntityRenderState)state);JsonArray frame=new JsonArray();
             for(ModelPart node:nodes) frame.add(transform(node));frames.add(frame);
         }
         // Restore the shared renderer model using a freshly sampled actual entity state.
@@ -178,6 +183,8 @@ public final class MobModelExport {
         stats.addProperty("hostile",mob instanceof net.minecraft.entity.mob.HostileEntity);stats.addProperty("baby",mob.isBaby());
         stats.addProperty("speed",mob.getAttributes().hasAttribute(net.minecraft.entity.attribute.EntityAttributes.MOVEMENT_SPEED) ? mob.getAttributeValue(net.minecraft.entity.attribute.EntityAttributes.MOVEMENT_SPEED) : .25);
         stats.addProperty("knockbackResistance",mob.getAttributeValue(net.minecraft.entity.attribute.EntityAttributes.KNOCKBACK_RESISTANCE));
+        stats.addProperty("armor",mob.getAttributeValue(net.minecraft.entity.attribute.EntityAttributes.ARMOR));
+        stats.addProperty("armorToughness",mob.getAttributeValue(net.minecraft.entity.attribute.EntityAttributes.ARMOR_TOUGHNESS));
         stats.addProperty("damage",mob.getAttributes().hasAttribute(net.minecraft.entity.attribute.EntityAttributes.ATTACK_DAMAGE) ? mob.getAttributeValue(net.minecraft.entity.attribute.EntityAttributes.ATTACK_DAMAGE) : 0);
         if(wool!=null) {result.addProperty("woolStart",woolStart);result.addProperty("woolColor",woolColor);}
         result.add("stats",stats);result.add("parts",parts);result.add("walkFrames",frames);return result;

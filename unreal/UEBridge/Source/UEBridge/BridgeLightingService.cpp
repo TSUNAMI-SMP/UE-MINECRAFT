@@ -147,6 +147,12 @@ bool FBridgeLightingService::SetEnvironment(UWorld* World,const TSharedPtr<FJson
         if(!Instance->SetVectorParameterValue(*Pair.Value,FLinearColor(((RGB>>16)&255)/255.f,((RGB>>8)&255)/255.f,(RGB&255)/255.f,1)))
             return Fail(TEXT("lighting_parameter_missing: ")+Pair.Value);
     }
+    const TArray<TSharedPtr<FJsonValue>>* AmbientRGB=nullptr;
+    if(Values->TryGetArrayField(TEXT("ambientColorRGB"),AmbientRGB) && AmbientRGB && AmbientRGB->Num()==3) {
+        double RGB[3]={1,1,1};bool Valid=true;
+        for(int32 Channel=0;Channel<3;++Channel) Valid=(*AmbientRGB)[Channel].IsValid() && (*AmbientRGB)[Channel]->TryGetNumber(RGB[Channel]) && FMath::IsFinite(RGB[Channel]) && RGB[Channel]>=0 && RGB[Channel]<=4 && Valid;
+        if(Valid) Instance->SetVectorParameterValue(TEXT("BridgeAmbientColor"),FLinearColor(RGB[0],RGB[1],RGB[2],1));
+    }
     return true;
 }
 void FBridgeLightingService::ApplyActor(AActor* Actor,const FIntVector& Voxel) const {

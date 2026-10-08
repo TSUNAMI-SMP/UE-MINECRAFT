@@ -1,5 +1,6 @@
 #include "BridgeBlockGeometry.h"
 #include "BridgeBlockPalette.h"
+#include "BridgeMeshingMath.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -91,7 +92,7 @@ bool Bake(const Object& Model,const Object& Application,TArray<FBridgeModelFace>
             const Object FaceObject=Pair.Value->AsObject();if(!FaceObject.IsValid()) return false;
             FBridgeModelFace Face;
             if(!FaceObject->TryGetStringField(TEXT("texture"),Face.TextureId)) return false;
-            double TintIndex=-1;FaceObject->TryGetNumberField(TEXT("tintindex"),TintIndex);Face.bTint=TintIndex>=0;
+            double TintIndex=-1;FaceObject->TryGetNumberField(TEXT("tintindex"),TintIndex);Face.bTint=TintIndex>=0;Face.TintIndex=int32(TintIndex);
             FString CullFace;FaceObject->TryGetStringField(TEXT("cullface"),CullFace);
             const FVector CullNormal=CullFace==TEXT("up") ? FVector(0,1,0) : CullFace==TEXT("down") ? FVector(0,-1,0)
                 : CullFace==TEXT("east") ? FVector(1,0,0) : CullFace==TEXT("west") ? FVector(-1,0,0)
@@ -133,6 +134,18 @@ bool Bake(const Object& Model,const Object& Application,TArray<FBridgeModelFace>
                     Face.UV[I]=FVector2D(.5+FVector::DotProduct(BasisVector,NewU),.5+FVector::DotProduct(BasisVector,NewV));
                 }
             }
+            // Vanilla renders grass's opaque dirt base, then its tinted cutout
+            // overlay on the same plane. UE groups material sections and its
+            // depth prepass cannot preserve that draw order. Retain both quads
+            // and separate only coincident forward-facing layers by 0.05 cm.
+            const FVector FaceNormal=FVector::CrossProduct(Face.Vertices[1]-Face.Vertices[0],Face.Vertices[2]-Face.Vertices[0]).GetSafeNormal();
+            std::array<BridgeMeshingMath::Point,4> Quad;for(int32 I=0;I<4;++I) Quad[I]={Face.Vertices[I].X,Face.Vertices[I].Y,Face.Vertices[I].Z};
+            double LayerDepth=0;
+            for(const auto& Previous:Out) {
+                std::array<BridgeMeshingMath::Point,4> Other;for(int32 I=0;I<4;++I) Other[I]={Previous.Vertices[I].X,Previous.Vertices[I].Y,Previous.Vertices[I].Z};
+                if(BridgeMeshingMath::CoincidentForwardQuads(Quad,Other)) LayerDepth=FMath::Max(LayerDepth,Previous.RenderOffset.Size()+.0005);
+            }
+            Face.RenderOffset=FaceNormal*LayerDepth;
             Out.Add(MoveTemp(Face));if(Out.Num()>4096) return false;
         }
     }
@@ -156,6 +169,17 @@ TSharedPtr<FJsonObject> UBridgeBlockPalette::ReadShapes(const FString& BlockId) 
 FString UBridgeBlockPalette::DefaultState(const FString& BlockId) const {
     const Object Entry=ReadShapes(BlockId);FString Result;
     if(Entry.IsValid()) Entry->TryGetStringField(TEXT("defaultState"),Result);return Result;
+}
+FColor UBridgeBlockPalette::RenderTint(const FString& BlockId,int32 TintIndex) const {
+    const Object Tints=Child(ReadShapes(BlockId),TEXT("renderTints"));double RGB=0xffffff;
+    if(Tints.IsValid()) Tints->TryGetNumberField(FString::FromInt(TintIndex),RGB);
+    if(!FMath::IsFinite(RGB) || RGB<0 || RGB>0xffffff) return FColor::White;
+    const uint32 Value=uint32(RGB);return FColor((Value>>16)&255,(Value>>8)&255,Value&255);
+}
+FString UBridgeBlockPalette::RenderTintSource(const FString& BlockId,int32 TintIndex) const {
+    const Object Sources=Child(ReadShapes(BlockId),TEXT("tintSources"));FString Result;
+    if(Sources.IsValid()) Sources->TryGetStringField(FString::FromInt(TintIndex),Result);
+    return Result;
 }
 FVector UBridgeBlockPalette::GetModelOffset(const FString& BlockId,const FIntVector& SourceBlock) const {
     const Object Entry=ReadShapes(BlockId);const TArray<TSharedPtr<FJsonValue>>* Values=nullptr;
@@ -239,8 +263,20 @@ bool UBridgeBlockPalette::BuildItem(const FString& ItemId,const FString& Context
     for(const auto& Value:*Faces) {
         const Object Data=Value->AsObject();if(!Data) return false;
         const TArray<TSharedPtr<FJsonValue>> *Vertices=nullptr,*UV=nullptr;FBridgeModelFace Face;
-        if(!Data->TryGetStringField(TEXT("texture"),Face.TextureId) || !ItemMaterials.Contains(Face.TextureId)
+        if(!Data->TryGetStringField(TEXT("texture"),Face.TextureId)
             || !Data->TryGetArrayField(TEXT("vertices"),Vertices) || Vertices->Num()!=4 || !Data->TryGetArrayField(TEXT("uv"),UV) || UV->Num()!=4) return false;
+        FString AlphaMode=TEXT("masked");
+        if(Data->HasField(TEXT("alphaMode")) && (!Data->TryGetStringField(TEXT("alphaMode"),AlphaMode)
+            || (AlphaMode!=TEXT("masked") && AlphaMode!=TEXT("translucent")))) return false;
+        if(AlphaMode==TEXT("translucent")) Face.TextureId+=TEXT("#translucent");
+        if(!ItemMaterials.Contains(Face.TextureId)) return false;
+        if(Data->HasField(TEXT("normal"))) {
+            const TArray<TSharedPtr<FJsonValue>>* N=nullptr;double Components[3];
+            if(!Data->TryGetArrayField(TEXT("normal"),N) || N->Num()!=3) return false;
+            for(int32 I=0;I<3;++I) if(!(*N)[I]->TryGetNumber(Components[I]) || !FMath::IsFinite(Components[I]) || FMath::Abs(Components[I])>4096) return false;
+            Face.NativeNormal=FVector(Components[0],Components[1],Components[2]).GetSafeNormal();
+            Face.HasNativeNormal=!Face.NativeNormal.IsNearlyZero();
+        }
         double Color=0xffffff;if(!Data->TryGetNumberField(TEXT("color"),Color) || Color<0 || Color>0xffffff || Color!=double(FMath::FloorToInt(Color))) return false;
         Face.Color=FColor((int32(Color)>>16)&255,(int32(Color)>>8)&255,int32(Color)&255);
         for(int32 I=0;I<4;++I) {

@@ -52,7 +52,11 @@ public final class BlockGeometryCapture {
         BlockPos pos=mc.player==null ? BlockPos.ORIGIN : mc.player.getBlockPos();
         if(mc.world==null) return new TextureExport.Block(id,props,0xffffff,List.of(),"open a local world before exporting state shapes");
         int color=mc.getBlockColors().getColor(defaults,mc.world,pos,0)&0xffffff;
-        if(id.equals("minecraft:grass_block")) color=0xffffff;
+        // BlockColors is a render provider, not the particle provider. Grass top
+        // and side overlay need this biome color even though grass dust is white.
+        Map<Integer,Integer> renderTints=new TreeMap<>();
+        for(int tintIndex=0;tintIndex<16;tintIndex++)
+            renderTints.put(tintIndex,mc.getBlockColors().getColor(defaults,mc.world,pos,tintIndex)&0xffffff);
         List<TextureExport.State> states=new ArrayList<>();
         for(BlockState state:block.getStateManager().getStates()) {
             var offset=state.getModelOffset(pos);
@@ -64,6 +68,6 @@ public final class BlockGeometryCapture {
                 boxes(state.getOutlineShape(mc.world,pos).getBoundingBoxes(),offset),List.copyOf(solidFaces),Block.cannotConnect(state),state.isOpaqueFullCube(),state.getLuminance(),state.getOpacity()));
         }
         var zeroOffset=defaults.getModelOffset(BlockPos.ORIGIN);
-        return new TextureExport.Block(id,props,color,List.copyOf(states),"",Math.abs(zeroOffset.x),Math.abs(zeroOffset.y));
+        return new TextureExport.Block(id,props,color,List.copyOf(states),"",Math.abs(zeroOffset.x),Math.abs(zeroOffset.y),Map.copyOf(renderTints));
     }
 }

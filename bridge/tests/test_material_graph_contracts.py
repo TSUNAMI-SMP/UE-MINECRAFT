@@ -57,9 +57,28 @@ class MaterialGraphContracts(unittest.TestCase):
         self.assertEqual((sample, "A"), alpha.inputs["A"])
         self.assertEqual("CelestialOpacity", alpha.inputs["B"][0].properties["parameter_name"])
         self.assertEqual(1.0, alpha.inputs["B"][0].properties["default_value"])
-        self.assertEqual("translucent", celestial.properties["blend_mode"])
-        self.assertEqual((sample, "RGB"), celestial.outputs["emissive"])
+        self.assertEqual("additive", celestial.properties["blend_mode"])
+        color = celestial.outputs["emissive"][0]
+        self.assertEqual((sample, "RGB"), color.inputs["TextureColor"])
+        self.assertEqual((alpha, ""), color.inputs["Alpha"])
+        self.assertIn('cl-bl', color.properties['code'])
         self.assertEqual("unlit", celestial.properties["shading_model"])
+
+    def test_inverse_hud_keeps_four_rectangle_and_crop_channels(self):
+        material=LIGHTING['ensure_native_inverse_hud_material'](self.editor.api)
+        self.assertEqual('postprocess',material.properties['material_domain'])
+        self.assertEqual('aftertonemapping',material.properties['blendable_location'])
+        output=material.outputs['emissive'][0]
+        self.assertEqual('ViewportUV',output.inputs['UV'][1])
+        self.assertEqual({},output.inputs['UV'][0].properties)
+        self.assertIn('source*(1-destination)+destination*(1-source)',output.properties['code'])
+        for slot in range(3):
+            for name in ('Rect','Crop'):
+                append=output.inputs[name+str(slot)][0]
+                self.assertEqual('AppendVector',type(append).__name__)
+                self.assertEqual('RGB',append.inputs['A'][1])
+                self.assertEqual('A',append.inputs['B'][1])
+            self.assertEqual('TextureObjectParameter',type(output.inputs['Texture'+str(slot)][0]).__name__)
 
     def test_vector_and_vertex_named_outputs_are_strict(self):
         material = Material()
@@ -70,6 +89,22 @@ class MaterialGraphContracts(unittest.TestCase):
                 self.assertFalse(self.editor.connect(source, invalid, target, "A"))
             for output in ("", "RGB", "R", "G", "B", "A"):
                 self.assertTrue(self.editor.connect(source, output, target, "A"))
+
+    def test_entity_overlay_follows_diffuse_and_precedes_lightmap(self):
+        material=Material()
+        sample=self.editor.create_expression(material,self.editor.api.MaterialExpressionTextureSampleParameter2D,0,0)
+        LIGHTING['wire_vanilla_lighting'](self.editor.api,self.editor.api.MaterialEditingLibrary,material,sample,use_vertex=False)
+        hurt=next(n for n in material.nodes if type(n).__name__=='LinearInterpolate' and 'B' in n.inputs and n.inputs['B'][0].properties.get('parameter_name')=='BridgeHurtColor')
+        self.assertEqual(77/255,hurt.inputs['Alpha'][0].properties['const_b'])
+        shade_product=hurt.inputs['A'][0]
+        self.assertEqual('Multiply',type(shade_product).__name__)
+        self.assertEqual(dict(r=False,g=False,b=True,a=False),shade_product.inputs['B'][0].properties)
+        self.assertEqual('Custom',type(shade_product.inputs['A'][0]).__name__)
+        final_decode=material.outputs['emissive'][0].inputs['B'][0]
+        display_product=final_decode.inputs['Color'][0]
+        self.assertIs(hurt,display_product.inputs['A'][0])
+        lightmap=display_product.inputs['B'][0]
+        self.assertIn('floor(saturate(c)*255.0+.5)/255.0',lightmap.properties['code'])
 
     def test_item_master_has_actor_light_and_reuses_without_vertex_requirement(self):
         api = self.editor.api

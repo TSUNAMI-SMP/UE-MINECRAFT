@@ -44,6 +44,9 @@ struct FBridgePacket {
     FBridgeMobSnapshot Mob;
     TSharedPtr<FJsonObject> VanillaLight;
     TArray<uint8> SkyTop;
+    /** Optional offline-only grass, foliage and dry foliage RGB at all 512 source voxels. */
+    TArray<FIntVector> BiomeTints;
+    TArray<uint16> Water;
     FString ItemTx,ItemId,ItemModelKey,ItemEpoch;
     int32 ItemCount=0,ItemMaxCount=64,ItemRevision=0,ItemAccepted=0;
     FVector ItemPosition=FVector::ZeroVector,ItemVelocity=FVector::ZeroVector;

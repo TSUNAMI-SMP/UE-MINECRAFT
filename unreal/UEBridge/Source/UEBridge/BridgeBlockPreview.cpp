@@ -20,7 +20,8 @@ void ABridgeBlockPreview::Clear() {
     Groups.Empty();ModelGroups.Empty();InstanceBlocks.Empty();LightVertices.Empty();RenderedFaces=DrawSections=NativeProxies=0;
 }
 void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVector& Anchor, UMaterialInterface* Material,UBridgeBlockPalette* Palette,bool Physics,
-    const TFunction<bool(const FIntVector&)>& OpaqueAt,FBridgeLightingService* Lighting,bool RebuildVisual) {
+    const TFunction<bool(const FIntVector&)>& OpaqueAt,FBridgeLightingService* Lighting,bool RebuildVisual,
+    const TFunction<FColor(const FIntVector&,const FString&,int32)>& RenderTintAt) {
     for(auto& Group:Groups) if(Group) { Group->ClearInstances(); Group->UnregisterComponent(); Group->DestroyComponent(); }
     Groups.Empty();InstanceBlocks.Empty();NativeProxies=0;
     UProceduralMeshComponent* ReusableMesh=nullptr;
@@ -85,11 +86,16 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
                 const FString* Page=Palette->AtlasPages.Find(Face.TextureId);const FVector4* Rect=Palette->AtlasRects.Find(Face.TextureId);
                 const auto* AtlasMaterial=Page ? Palette->AtlasMaterials.Find(*Page) : nullptr;
                 const bool Atlas=Rect && AtlasMaterial && AtlasMaterial->Get();
-                const int32 FaceColor=Face.bTint ? Block.Color : 0xffffff;
-                const FLinearColor TintColor=FLinearColor::FromSRGBColor(FColor((FaceColor>>16)&255,(FaceColor>>8)&255,FaceColor&255));
+                const FColor NativeTint=Face.bTint && Face.TintIndex!=0 ? (RenderTintAt ? RenderTintAt(Block.SourceBlock,Block.BlockId,Face.TintIndex) : Palette->RenderTint(Block.BlockId,Face.TintIndex))
+                    : Face.bTint ? FColor((Block.Color>>16)&255,(Block.Color>>8)&255,Block.Color&255) : FColor::White;
+                const int32 FaceColor=int32(NativeTint.ToPackedARGB()&0xffffffu);
+                // BlockModelRenderer#renderQuad passes byte/255 directly to the
+                // Minecraft shader. It is a display-space multiplier, not an
+                // sRGB color to decode before multiplying the texture.
+                const FLinearColor TintColor(NativeTint.R/255.f,NativeTint.G/255.f,NativeTint.B/255.f,1);
                 const FString FaceKey=Atlas ? TEXT("atlas#")+*Page : Face.TextureId+FString::Printf(TEXT("#%d#%d"),Face.bTint,FaceColor);
                 FSection& Section=Sections.FindOrAdd(FaceKey);Section.Material=Atlas ? AtlasMaterial->Get() : FaceMaterial;Section.Color=FaceColor;Section.Atlas=Atlas;
-                FVector Vertices[4];for(int32 I=0;I<4;++I) Vertices[I]=BridgeProtocol::ToUnreal(Block.Position+Face.Vertices[I]-FVector(.5),Anchor);
+                FVector Vertices[4];for(int32 I=0;I<4;++I) Vertices[I]=BridgeProtocol::ToUnreal(Block.Position+Face.Vertices[I]+Face.RenderOffset-FVector(.5),Anchor);
                 std::array<BridgeMeshingMath::Point,4> NativeQuad;for(int32 I=0;I<4;++I) NativeQuad[I]={Face.Vertices[I].X,Face.Vertices[I].Y,Face.Vertices[I].Z};
                 const auto Cross=BridgeMeshingMath::NativeNormal(NativeQuad);const FVector MCNormal=FVector(Cross[0],Cross[1],Cross[2]).GetSafeNormal();
                 const FVector Normal=BridgeProtocol::ToDirection(MCNormal).GetSafeNormal();if(Normal.IsNearlyZero()) continue;
@@ -126,7 +132,7 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
             Group->SetCanEverAffectNavigation(false);Group->SetGenerateOverlapEvents(false);
             if(!(NativeCollision || NativeOutline) && (Textured || Material)) {
                 auto* Tint=UMaterialInstanceDynamic::Create(Textured ? Textured : Material,this);
-                Tint->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(FColor((Block.Color>>16)&255,(Block.Color>>8)&255,Block.Color&255)));Group->SetMaterial(0,Tint);
+                Tint->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor(((Block.Color>>16)&255)/255.f,((Block.Color>>8)&255)/255.f,(Block.Color&255)/255.f,1));Group->SetMaterial(0,Tint);
             }
             Group->RegisterComponent();Groups.Add(Group);
         }
@@ -142,7 +148,7 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
         int32 Index=0;for(auto& Pair:Sections) {
             auto& Section=Pair.Value;Mesh->CreateMeshSection_LinearColor(Index,Section.Vertices,Section.Indices,Section.Normals,Section.UV,Section.UV1,Section.UV2,Section.UV3,Section.Colors,Section.Tangents,false,false);
             if(Section.Atlas) Mesh->SetMaterial(Index,Section.Material);
-            else {auto* Tint=UMaterialInstanceDynamic::Create(Section.Material,this);Tint->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(FColor((Section.Color>>16)&255,(Section.Color>>8)&255,Section.Color&255)));Mesh->SetMaterial(Index,Tint);}
+            else {auto* Tint=UMaterialInstanceDynamic::Create(Section.Material,this);Tint->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor(((Section.Color>>16)&255)/255.f,((Section.Color>>8)&255)/255.f,(Section.Color&255)/255.f,1));Mesh->SetMaterial(Index,Tint);}
             LightVertices.Add(Index,MoveTemp(Section.Lighting));++Index;
         }
         DrawSections=Index;

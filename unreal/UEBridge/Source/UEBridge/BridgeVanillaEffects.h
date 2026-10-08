@@ -1,6 +1,7 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "BridgeDeathPoofMath.h"
 #include "BridgeVanillaEffects.generated.h"
 
 /** Local outcome metadata; the Minecraft client selects its active vanilla sound. */
@@ -31,6 +32,10 @@ public:
     virtual void Tick(float DeltaSeconds) override;
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
     void Configure(class ABridgeWorld* ImportedTerrain,class UBridgeBlockPalette* ImportedPalette,class UMaterialInterface* Material);
+    /** Active-pack POOF sequence; independently configured from terrain dust. */
+    void ConfigurePoof(class UBridgeNativeUiPalette* Resources,class UMaterialInterface* Material);
+    int32 SpawnDeathPoof(const FVector& FeetPosition,float WidthCm,float HeightCm);
+    FString DeathPoofReason() const;
     void SetViewCamera(class UCameraComponent* Camera);
     void SampleCharacter(class ABridgeCharacter* Character,float DeltaSeconds,TArray<FBridgeVanillaEvent>& OutEvents);
     void ResetMovement();
@@ -41,7 +46,7 @@ public:
     UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="Bridge|Particles",meta=(ClampMin="0.25",ClampMax="2.0")) float ParticleSizeMultiplier=.75f;
     UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="Bridge|Particles",meta=(ClampMin="0.0",ClampMax="1.0")) float ParticleDensityMultiplier=1.f;
     UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="Bridge|Particles",meta=(ClampMin="0.25",ClampMax="2.0")) float ParticleLifetimeMultiplier=.9f;
-    int32 ParticleCount() const { return Particles.Num(); }
+    int32 ParticleCount() const { return Particles.Num()+PoofParticles.Num(); }
     FBridgeDustDiagnostics GetDiagnostics() const;
 private:
     struct FDustParticle {
@@ -52,20 +57,30 @@ private:
         float Size=10;
         int32 Age=0, Lifetime=10;
     };
+    struct FPoofParticle {
+        BridgeDeathPoofMath::Particle State;
+        FLinearColor Light=FLinearColor(1,0,1,1);
+        float Size=20,Gray=1;
+    };
     UPROPERTY() TObjectPtr<class ABridgeWorld> Terrain;
     UPROPERTY() TObjectPtr<class UBridgeBlockPalette> Palette;
     UPROPERTY() TObjectPtr<class UMaterialInterface> DustMaterial;
     UPROPERTY() TObjectPtr<class UStaticMesh> ParticlePlane;
     UPROPERTY() TMap<FString,TObjectPtr<class UInstancedStaticMeshComponent>> Groups;
+    UPROPERTY() TObjectPtr<class UBridgeNativeUiPalette> PoofResources;
+    UPROPERTY() TObjectPtr<class UMaterialInterface> PoofMaterial;
+    UPROPERTY() TMap<int32,TObjectPtr<class UInstancedStaticMeshComponent>> PoofGroups;
     TWeakObjectPtr<class UCameraComponent> ViewCamera;
     TWeakObjectPtr<class ABridgeCharacter> SampledCharacter;
     TArray<FDustParticle> Particles;
+    TArray<FPoofParticle> PoofParticles;
     bool HaveMovementSample=false, WasGrounded=false;
     FVector PreviousFeet=FVector::ZeroVector;
     float WalkDistance=0, FallPeak=0, SprintClock=0, PhysicsClock=0;
     double SprintDensityAccumulator=0;
     FBridgeDustDiagnostics Diagnostics;
     bool Configured=false;
+    FString PoofSetupReason=TEXT("missing_material");
     double LastFailureLog=-1;
     bool ResolveTexture(const FString& BlockId,FColor& Tint,class UTexture*& Texture) const;
     void BeginRequest(const FString& Type,const FString& BlockId,int32 Count);
@@ -74,4 +89,8 @@ private:
     bool AddParticle(const FVector& Position,const FVector& Velocity,const FString& Group);
     void SpawnSprint(const FVector& Feet,const FVector& Velocity,const FString& BlockId,FColor Tint);
     void ClearParticles();
+    void ClearPoofParticles();
+    class UInstancedStaticMeshComponent* FindPoofGroup(int32 Frame);
+    BridgeDeathPoofMath::Vector ResolvePoofCollision(const BridgeDeathPoofMath::Vector& Position,const BridgeDeathPoofMath::Vector& Movement) const;
+    void RenderPoof(const FQuat& Facing,float Interpolation);
 };

@@ -26,6 +26,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Textures") TObjectPtr<class UBridgeBlockPalette> TexturePalette;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Player") TObjectPtr<class UBridgePlayerAppearance> PlayerAppearance;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Particles") TObjectPtr<class UMaterialInterface> VanillaParticleMaterial;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Particles") TObjectPtr<class UMaterialInterface> VanillaDeathPoofMaterial;
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Mobs") TObjectPtr<class UBridgeMobPalette> MobPalette;
     /** Immutable local export; runtime saves stay under Saved/NativeWorlds. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Native") FString NativeWorldFile;
@@ -112,6 +113,8 @@ private:
     float NativeAttackDamage() const;
 public:
     float GetNativeAttackCharge() const;
+    float GetNativeAttackCooldownTicks() const;
+    bool IsNativeAttackTargetAlive() const;
 private:
     TMap<FString,float> NativeSoundVolumes;
     UPROPERTY() TObjectPtr<class USoundAttenuation> NativeSoundAttenuation;

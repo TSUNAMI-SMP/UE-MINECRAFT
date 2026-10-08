@@ -13,12 +13,14 @@ struct FBridgeNativeStack {
     void Clear() { ItemId.Reset(); Count = 0; }
 };
 
-/** UE-owned inventory. Slots 0..8 are the hotbar, 9..35 storage; slot 36 is the offhand. */
+/** UE-owned inventory. Slots 0..8 are the hotbar, 9..35 storage; slot 36 is offhand;37..40 are head/chest/legs/feet. */
 UCLASS()
 class UEBRIDGE_API UBridgeNativeInventory : public UObject {
     GENERATED_BODY()
 public:
     static constexpr int32 OffhandSlot = 36;
+    static constexpr int32 ArmorBegin = 37;
+    static constexpr int32 ArmorEnd = 41;
     void Initialize(UBridgeNativeUiPalette* Resources, const FString& ProfileName = TEXT("default"),bool UseStandaloneProfile = true);
     bool LoadProfile();
     bool SaveProfile();
@@ -37,19 +39,30 @@ public:
     const FBridgeNativeStack& GetStack(int32 Slot) const;
     uint64 GetRevision() const { return Revision; }
     UBridgeNativeUiPalette* GetPalette() const { return Palette; }
-    TArray<FBridgeNativeUiItem> FilterCatalogue(const FString& Search) const;
+    TArray<FBridgeNativeUiItem> FilterCatalogue(const FString& Search, const FBridgeNativeUiGroup* Group = nullptr) const;
     int32 MaxCount(const FString& ItemId) const;
+    int32 EquipmentSlotFor(const FString& ItemId) const;
+    bool CanInsertIntoSlot(int32 Slot, const FString& ItemId) const;
+    int32 SlotCapacity(int32 Slot, const FString& ItemId) const;
+    float GetArmorPoints() const;
+    float GetArmorToughness() const;
+    float GetArmorKnockbackResistance() const;
+    bool DistributeCursor(const TArray<int32>& TargetSlots, int32 Button, bool Creative);
     bool AssignHotbar(const FString& ItemId, int32 Slot, int32 Count = 64);
     bool ClickSlot(int32 Slot, bool RightClick, bool Shift = false);
     bool SwapSlots(int32 First, int32 Second);
     bool SwapOffhand();
     bool TakeCatalogue(const FString& ItemId, bool RightClick = false);
+    /** CreativeInventoryScreen.onMouseClick: matching entries adjust cursor; other entries discard it. */
+    bool ClickCatalogue(const FString& ItemId, bool RightClick, bool Shift = false);
+    bool DeleteCreative(bool ClearInventory = false);
     bool ReturnCursor();
     bool ConsumeSelected(int32 Count);
     int32 GetItemCount(const FString& ItemId) const;
     /** Consume offhand ammunition first, then storage/hotbar, after verifying the full amount. */
     bool ConsumeItem(const FString& ItemId,int32 Count);
     bool TakeSelected(int32 Count, FBridgeNativeStack& Out);
+    bool TakeSlot(int32 Slot, int32 Count, FBridgeNativeStack& Out);
     bool TakeCursor(int32 Count, FBridgeNativeStack& Out);
     bool AddStack(const FString& ItemId, int32 Count);
     /** Returns the uninserted count, so pickups never silently discard a remainder. */
@@ -60,6 +73,7 @@ private:
     UPROPERTY() TArray<FBridgeNativeStack> Slots;
     UPROPERTY() FBridgeNativeStack CursorStack;
     UPROPERTY() FBridgeNativeStack OffhandStack;
+    UPROPERTY() TArray<FBridgeNativeStack> ArmorStacks;
     int32 SelectedSlot = 0;
     FString Profile, PersistenceError;
     bool Initialized = false, Dirty = false, LoadedExistingProfile = false, PreserveInvalidProfile = false, InitialSettingsApplied = false;

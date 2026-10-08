@@ -95,6 +95,23 @@ class TextureManifestTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.load(manifest)
 
+    def test_native_render_tints_remain_independent_from_particle_color(self):
+        block = self.manifest["blocks"]["minecraft:stone"]
+        block["renderTints"] = {"0": 0x91bd59, "1": 0xffffff}
+        block["tintSources"] = {"0": "grass", "1": "none"}
+        block["particle"] = {"texture": "minecraft:block/stone", "tint": False, "color": 0xffffff}
+        result = self.load()["blocks"]["minecraft:stone"]
+        self.assertEqual(0x91bd59, result["renderTints"]["0"])
+        self.assertEqual(0xffffff, result["particle"]["color"])
+        for key, value in (("renderTints", {"-1": 0}), ("renderTints", {"256": 0}),
+                           ("renderTints", {"00": 0}), ("renderTints", {"0": True}),
+                           ("renderTints", {"0": 0x1000000}), ("tintSources", {"0": "guess"})):
+            with self.subTest(key=key, value=value):
+                invalid = copy.deepcopy(self.manifest)
+                invalid["blocks"]["minecraft:stone"][key] = value
+                with self.assertRaises(ValueError):
+                    self.load(invalid)
+
     def model_manifest(self):
         value = copy.deepcopy(self.manifest)
         value["version"] = 2
@@ -218,7 +235,7 @@ class MaterialGraphTest(unittest.TestCase):
             MaterialParameterCollection=Collection, MaterialParameterCollectionFactoryNew=lambda: None,
             CollectionScalarParameter=Property, CollectionVectorParameter=Property, Guid=lambda *args: args,
             CustomMaterialOutputType=types.SimpleNamespace(CMOT_FLOAT3='float3'), CustomInput=CustomInput)
-        for name in ("TextureSampleParameter2D", "VectorParameter", "ScalarParameter", "Constant3Vector", "LinearInterpolate", "Multiply", "Constant", 'CollectionParameter', 'Add', 'VertexColor', 'Custom', 'PixelNormalWS', 'TextureCoordinate', 'Frac', 'AppendVector'):
+        for name in ("TextureSampleParameter2D", "VectorParameter", "ScalarParameter", "Constant3Vector", "LinearInterpolate", "Multiply", "Constant", 'CollectionParameter', 'Add', 'VertexColor', 'Custom', 'PixelNormalWS', 'TextureCoordinate', 'Frac', 'AppendVector', 'ComponentMask'):
             setattr(self.unreal, "MaterialExpression" + name, type(name, (), {}))
         self.assets = types.SimpleNamespace(does_asset_exist=lambda path: path in self.assets_by_path,
             save_loaded_asset=lambda material, force: self.saved.append(material) is None)
@@ -258,7 +275,14 @@ class MaterialGraphTest(unittest.TestCase):
         self.assertEqual("masked", leaves.properties["blend_mode"])
         self.assertNotIn("opacity", leaves.outputs)
         self.assertEqual("A", leaves.outputs["mask"][1])
-        self.assertTrue(leaves.properties["two_sided"])
+        self.assertFalse(leaves.properties["two_sided"])
+        self.assertEqual(.5, leaves.properties["opacity_mask_clip_value"])
+
+    def test_item_cutout_retains_native_point_one_threshold_and_double_sided_surface(self):
+        item = module._model_parent(self.unreal, self.assets, self.tools, self.editing,
+                                    '/Game/Bridge/Minecraft/Items', object(), 'cutout')
+        self.assertTrue(item.properties['two_sided'])
+        self.assertEqual(.1, item.properties['opacity_mask_clip_value'])
 
     def test_lighting_switch_controls_both_base_and_emissive(self):
         material = self.build('opaque')
@@ -267,7 +291,15 @@ class MaterialGraphTest(unittest.TestCase):
         mode = base.inputs['Alpha'][0].inputs['A'][0]
         self.assertEqual('BridgeVanillaMode', mode.properties['parameter_name'])
         self.assertEqual('CollectionParameter', mode.kind)
-        self.assertIs(base.inputs['A'][0], emissive.inputs['B'][0].inputs['A'][0])
+        # Base colour and emissive each decode once, with native lightmap
+        # multiplication between display-space pixel and final emissive decode.
+        base_decode=base.inputs['A'][0]
+        lit_decode=emissive.inputs['B'][0]
+        display_pixel=base_decode.inputs['Color'][0]
+        display_lit=lit_decode.inputs['Color'][0]
+        self.assertIs(display_pixel,display_lit.inputs['A'][0])
+        self.assertEqual('Bridge native lightmap v1',display_lit.inputs['B'][0].properties['description'])
+        self.assertIn('pow((c+.055)/1.055,2.4)',lit_decode.properties['code'])
         self.assertEqual(0.0, base.inputs['B'][0].properties['r'])
         self.assertIs(emissive.inputs['A'][0].inputs['A'][0], emissive.inputs['B'][0])
         self.assertEqual(.45, emissive.inputs['A'][0].inputs['B'][0].properties['default_value'])
@@ -306,7 +338,9 @@ class MaterialGraphTest(unittest.TestCase):
         self.assertEqual('BridgeLight', blend.inputs['A'][0].inputs['A'][0].properties['parameter_name'])
         actor_shade = blend.inputs['A'][0].inputs['B'][0]
         self.assertEqual('PixelNormalWS', actor_shade.inputs['WorldNormal'][0].kind)
-        self.assertEqual(['WorldNormal'], [entry.get_editor_property('input_name') for entry in actor_shade.properties['inputs']])
+        self.assertEqual(['WorldNormal','Light1Y'], [entry.get_editor_property('input_name') for entry in actor_shade.properties['inputs']])
+        self.assertEqual('BridgeDiffuseLight1Y',actor_shade.inputs['Light1Y'][0].properties['parameter_name'])
+        self.assertIn('.4+.6',actor_shade.properties['code'])
         self.assertEqual('VertexColor', blend.inputs['B'][0].kind)
         self.assertEqual('', blend.inputs['B'][1])
         self.assertEqual(1.0, blend.inputs['Alpha'][0].properties['default_value'])
@@ -326,6 +360,8 @@ class MaterialGraphTest(unittest.TestCase):
                 self.assertEqual((vertex, 'A'), tint.inputs['B'])
                 alpha = 'opacity' if translucent else 'mask'
                 self.assertEqual('A', material.outputs[alpha][1])
+                self.assertFalse(material.properties['two_sided'])
+                self.assertEqual(.5, material.properties['opacity_mask_clip_value'])
 
 
 if __name__ == "__main__":

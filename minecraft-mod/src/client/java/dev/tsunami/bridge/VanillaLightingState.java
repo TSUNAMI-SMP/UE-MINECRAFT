@@ -1,6 +1,7 @@
 package dev.tsunami.bridge;
 
 import com.google.gson.JsonObject;
+import com.google.gson.JsonArray;
 import dev.tsunami.bridge.mixin.LightmapStateAccessor;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
@@ -48,6 +49,9 @@ public final class VanillaLightingState {
         out.addProperty("darkenWorld",finite(client.gameRenderer.getSkyDarkness(tickDelta),0,1));
         out.addProperty("skyColor",attributes.getAttributeValue(EnvironmentAttributes.SKY_LIGHT_COLOR_VISUAL,sourceCameraPosition)&0xffffff);
         out.addProperty("ambientColor",ambientColor);
+        JsonArray ambientRGB=new JsonArray();
+        ambientRGB.add(flash==null?1f:.99f);ambientRGB.add(flash==null?1f:1.12f);ambientRGB.add(1f);
+        out.add("ambientColorRGB",ambientRGB);
         out.addProperty("hasSky",world.getDimension().hasSkyLight());
         packet.add("vanillaLight",out);
     }

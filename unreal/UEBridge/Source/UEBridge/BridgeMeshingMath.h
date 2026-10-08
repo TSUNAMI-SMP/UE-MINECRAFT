@@ -9,6 +9,17 @@ inline Point Cross(const Point& A,const Point& B) {return {A[1]*B[2]-A[2]*B[1],A
 inline Point Subtract(const Point& A,const Point& B) {return {A[0]-B[0],A[1]-B[1],A[2]-B[2]};}
 inline Point MCToUE(const Point& P) {return {P[2],-P[0],P[1]};}
 inline Point NativeNormal(const std::array<Point,4>& Quad) {return Cross(Subtract(Quad[1],Quad[0]),Subtract(Quad[2],Quad[0]));}
+inline bool CoincidentForwardQuads(const std::array<Point,4>& A,const std::array<Point,4>& B) {
+    const Point NA=NativeNormal(A),NB=NativeNormal(B);
+    double Dot=0,LA=0,LB=0;for(int Axis=0;Axis<3;++Axis) {Dot+=NA[Axis]*NB[Axis];LA+=NA[Axis]*NA[Axis];LB+=NB[Axis]*NB[Axis];}
+    if(LA<1.e-16 || LB<1.e-16 || Dot<=0 || Dot*Dot<.9998*LA*LB) return false;
+    for(const auto& P:A) {
+        bool Found=false;
+        for(const auto& Q:B) {const auto D=Subtract(P,Q);Found=Found || (D[0]*D[0]+D[1]*D[1]+D[2]*D[2]<1.e-12);}
+        if(!Found) return false;
+    }
+    return true;
+}
 constexpr int CellSize=8;
 struct Box {int x,y,z,sx,sy,sz;};
 inline int Index(int x,int y,int z) {return x+(z<<3)+(y<<6);}

@@ -5,10 +5,10 @@ material is deleted. Parameter collection values are per UE world at runtime.
 """
 
 COLLECTION_PATH = '/Game/Bridge/Minecraft/MPC_BridgeLighting_v1'
-LIGHTING_REVISION_PARAMETER = 'BridgeLightingRevision_v3'
+LIGHTING_REVISION_PARAMETER = 'BridgeLightingRevision_v4'
 SCALARS = {'BridgeVanillaMode': 0.0, 'BridgeSkyFactor': 1.0, 'BridgeBlockFactor': 1.5,
            'BridgeAmbient': 0.0, 'BridgeGamma': 0.5, 'BridgeNightVision': 0.0,
-           'BridgeDarkness': 0.0, 'BridgeDarkenWorld': 0.0}
+           'BridgeDarkness': 0.0, 'BridgeDarkenWorld': 0.0, 'BridgeDiffuseLight1Y': 1.0}
 
 
 def ensure_lighting_collection(unreal):
@@ -61,14 +61,35 @@ c = saturate(c);
 maximum = max(max(c.r,c.g),max(c.b,.00001));
 float3 bright = c * (1 - pow(1 - maximum,4)) / maximum;
 c = lerp(c,bright,Gamma) * .96 + .03;
-// Native AO/cardinal shade is applied in display space BEFORE the one transfer.
-// A separate pow(shade,2.2) is especially inaccurate near dark lightmap entries.
-c *= saturate(Light.b);
-return lerp(c / 12.92, pow((c + .055) / 1.055, 2.4), step(.04045,c));
+// This is display RGB, just like the 16x16 RGBA8 lightmap sampled by terrain.
+// Face shade precedes the entity overlay; lightmap multiplication follows it.
+// The source lightmap render target is RGBA8, not a float colour multiplier.
+return floor(saturate(c)*255.0+.5)/255.0;
 '''
 
 
-def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None, use_vertex=True, vertex_output=''):
+DISPLAY_TO_LINEAR = 'float3 c=saturate(Color.rgb); return lerp(c/12.92,pow((c+.055)/1.055,2.4),step(.04045,c));'
+LINEAR_TO_DISPLAY = 'float3 c=max(Color.rgb,0); return lerp(c*12.92,1.055*pow(c,1.0/2.4)-.055,step(.0031308,c));'
+
+
+def _color_transfer(unreal, editing, material, source, code, output=''):
+    expression = editing.create_material_expression(material, unreal.MaterialExpressionCustom, 0, 0)
+    if expression is None:
+        raise RuntimeError('Cannot create native colour transfer')
+    expression.set_editor_property('output_type', unreal.CustomMaterialOutputType.CMOT_FLOAT3)
+    entry = unreal.CustomInput(); entry.set_editor_property('input_name', 'Color')
+    expression.set_editor_property('inputs', [entry]); expression.set_editor_property('code', code)
+    if not editing.connect_material_expressions(source, output, expression, 'Color'):
+        raise RuntimeError('Cannot connect native colour transfer')
+    return expression
+
+
+def texture_display_rgb(unreal, editing, material, sample, output='RGB'):
+    """Undo UE's sRGB sample decode before vanilla's display-space tint product."""
+    return _color_transfer(unreal, editing, material, sample, LINEAR_TO_DISPLAY, output)
+
+
+def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None, use_vertex=True, vertex_output='', pixel_display=False):
     """Connect colour outputs; preserves texture alpha and caller's UV/tint graph."""
     collection = ensure_lighting_collection(unreal)
     def node(cls):
@@ -98,18 +119,25 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
         result = unreal.CustomInput()
         result.set_editor_property('input_name', name)
         return result
+    # Minecraft terrain/entity shaders multiply their RGBA8 colours directly;
+    # separately decoding both multipliers is not equivalent near dark pixels.
+    display_pixel = pixel_rgb if pixel_display else texture_display_rgb(unreal, editing, material, pixel_rgb, '')
+    raw_display_pixel=display_pixel
     hurt_color = node(unreal.MaterialExpressionVectorParameter)
     hurt_color.set_editor_property('parameter_name', 'BridgeHurtColor'); hurt_color.set_editor_property('default_value', unreal.LinearColor(1, 0, 0, 1))
-    hurt_alpha = node(unreal.MaterialExpressionMultiply); wire(parameter('BridgeHurt', 0.0), hurt_alpha, 'A'); hurt_alpha.set_editor_property('const_b', .3)
+    # OverlayTexture's red ARGB value is 0xb2ff0000; entity.fsh mixes
+    # red*(1-178/255) + already diffuse-shaded texture*(178/255).
+    hurt_alpha = node(unreal.MaterialExpressionMultiply); wire(parameter('BridgeHurt', 0.0), hurt_alpha, 'A'); hurt_alpha.set_editor_property('const_b', 77/255)
     hurt_pixel = node(unreal.MaterialExpressionLinearInterpolate)
-    wire(pixel_rgb, hurt_pixel, 'A'); wire(hurt_color, hurt_pixel, 'B'); wire(hurt_alpha, hurt_pixel, 'Alpha')
-    pixel_rgb = hurt_pixel
+    wire(display_pixel, hurt_pixel, 'A'); wire(hurt_color, hurt_pixel, 'B'); wire(hurt_alpha, hurt_pixel, 'Alpha')
+    display_pixel = hurt_pixel
+    pixel_rgb = _color_transfer(unreal, editing, material, display_pixel, DISPLAY_TO_LINEAR)
     mode = global_parameter('BridgeVanillaMode')
     # Keep the old public scalar in the generated graph without allowing it to
     # override the shared mode and leave a previous OFF setting stuck on return.
     legacy = parameter('BridgeUnlit', 0.0)
     ignored = node(unreal.MaterialExpressionMultiply); ignored.set_editor_property('const_b', 0.0); wire(legacy, ignored, 'A')
-    revision = parameter(LIGHTING_REVISION_PARAMETER, 3.0)
+    revision = parameter(LIGHTING_REVISION_PARAMETER, 4.0)
     revision_ignored = node(unreal.MaterialExpressionMultiply); revision_ignored.set_editor_property('const_b', 0.0); wire(revision, revision_ignored, 'A')
     zero_compat = node(unreal.MaterialExpressionAdd); wire(ignored, zero_compat, 'A'); wire(revision_ignored, zero_compat, 'B')
     mode_sum = node(unreal.MaterialExpressionAdd); wire(mode, mode_sum, 'A'); wire(zero_compat, mode_sum, 'B')
@@ -121,12 +149,14 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
     normal = node(unreal.MaterialExpressionPixelNormalWS)
     actor_shade = node(unreal.MaterialExpressionCustom)
     actor_shade.set_editor_property('output_type', unreal.CustomMaterialOutputType.CMOT_FLOAT3)
-    actor_shade.set_editor_property('inputs', [custom_input('WorldNormal')])
+    actor_shade.set_editor_property('inputs', [custom_input('WorldNormal'),custom_input('Light1Y')])
     actor_shade.set_editor_property('code',
-        'float3 n = normalize(WorldNormal); float3 a = abs(n); '
-        'float shade = (a.y*.6 + a.x*.8 + a.z*(n.z >= 0 ? 1.0 : .5)) / max(a.x+a.y+a.z,.00001); '
+        'float3 n=normalize(float3(-WorldNormal.y,WorldNormal.z,WorldNormal.x)); '
+        'float3 l0=normalize(float3(.2,1,-.7)),l1=normalize(float3(-.2,Light1Y,.7)); '
+        'float shade=min(1.0,.4+.6*(max(dot(l0,n),0)+max(dot(l1,n),0))); '
         'return float3(1,1,shade);')
     wire(normal, actor_shade, 'WorldNormal')
+    wire(global_parameter('BridgeDiffuseLight1Y'),actor_shade,'Light1Y')
     shaded_actor = node(unreal.MaterialExpressionMultiply); wire(actor, shaded_actor, 'A'); wire(actor_shade, shaded_actor, 'B')
     # VertexColor exposes RGB/R/G/B/A, not RGBA. An empty output name selects
     # its first (RGB) output for sky light, block light and AO/shade.
@@ -137,6 +167,12 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
         wire(shaded_actor, blend, 'A'); wire(vertex, blend, 'B', vertex_output); wire(parameter('BridgeUseVertexLight', 1.0), blend, 'Alpha')
     else:
         blend = shaded_actor
+    shade=node(unreal.MaterialExpressionComponentMask)
+    for channel,enabled in (('r',False),('g',False),('b',True),('a',False)):
+        shade.set_editor_property(channel,enabled)
+    wire(blend,shade)
+    shaded_pixel=node(unreal.MaterialExpressionMultiply);wire(raw_display_pixel,shaded_pixel,'A');wire(shade,shaded_pixel,'B')
+    wire(shaded_pixel,hurt_pixel,'A')
     lightmap = node(unreal.MaterialExpressionCustom)
     lightmap.set_editor_property('output_type', unreal.CustomMaterialOutputType.CMOT_FLOAT3)
     lightmap.set_editor_property('description', 'Bridge native lightmap v1')
@@ -149,7 +185,8 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
     lightmap.set_editor_property('inputs', [custom_input(name) for name, _ in inputs])
     for name, source in inputs:
         wire(source, lightmap, name)
-    vanilla = node(unreal.MaterialExpressionMultiply); wire(pixel_rgb, vanilla, 'A'); wire(lightmap, vanilla, 'B')
+    display_lit = node(unreal.MaterialExpressionMultiply); wire(display_pixel, display_lit, 'A'); wire(lightmap, display_lit, 'B')
+    vanilla = _color_transfer(unreal, editing, material, display_lit, DISPLAY_TO_LINEAR)
     zero = node(unreal.MaterialExpressionConstant); zero.set_editor_property('r', 0.0)
     base = node(unreal.MaterialExpressionLinearInterpolate)
     wire(pixel_rgb, base, 'A'); wire(zero, base, 'B'); wire(mode_sum, base, 'Alpha')
@@ -187,7 +224,10 @@ def ensure_native_sky_materials(unreal, editing=None):
         editing.delete_all_material_expressions(material)
         material.set_editor_property('shading_model', unreal.MaterialShadingModel.MSM_UNLIT)
         material.set_editor_property('two_sided', True)
-        material.set_editor_property('blend_mode', unreal.BlendMode.BLEND_TRANSLUCENT if celestial else unreal.BlendMode.BLEND_OPAQUE)
+        # RenderPipelines.POSITION_TEX_COLOR_CELESTIAL uses OVERLAY (SRC_ALPHA,
+        # ONE), including fully opaque black around the vanilla sun. Ordinary
+        # alpha blending replaces the sky with that black rectangle.
+        material.set_editor_property('blend_mode', unreal.BlendMode.BLEND_ADDITIVE if celestial else unreal.BlendMode.BLEND_OPAQUE)
         if celestial:
             sample = editing.create_material_expression(material, unreal.MaterialExpressionTextureSampleParameter2D, -300, 0)
             sample.set_editor_property('parameter_name', 'CelestialTexture')
@@ -221,7 +261,27 @@ def ensure_native_sky_materials(unreal, editing=None):
                 raise RuntimeError('Cannot wire native celestial weather opacity')
             if not editing.connect_material_property(alpha, '', unreal.MaterialProperty.MP_OPACITY):
                 raise RuntimeError('Cannot connect native celestial opacity')
-            source, output = sample, 'RGB'
+            background = editing.create_material_expression(material, unreal.MaterialExpressionVectorParameter, -300, -100)
+            background.set_editor_property('parameter_name', 'NativeSkyColor')
+            background.set_editor_property('default_value', unreal.LinearColor(.47,.65,1,1))
+            # UE adds in linear scene colour, while Minecraft's OVERLAY adds
+            # display RGB. Supply the linear difference for the same result.
+            source = editing.create_material_expression(material, unreal.MaterialExpressionCustom, -100, 0)
+            source.set_editor_property('output_type', unreal.CustomMaterialOutputType.CMOT_FLOAT3)
+            entries = []
+            for key in ('TextureColor','Background','Alpha'):
+                entry = unreal.CustomInput();entry.set_editor_property('input_name',key);entries.append(entry)
+            source.set_editor_property('inputs',entries)
+            source.set_editor_property('code',
+                'float3 t=max(TextureColor.rgb,0); t=lerp(t*12.92,1.055*pow(t,1.0/2.4)-.055,step(.0031308,t)); '
+                'float3 b=saturate(Background.rgb), c=saturate(b+t*Alpha); '
+                'float3 bl=lerp(b/12.92,pow((b+.055)/1.055,2.4),step(.04045,b)); '
+                'float3 cl=lerp(c/12.92,pow((c+.055)/1.055,2.4),step(.04045,c)); '
+                'return max(cl-bl,0)/max(Alpha,.00001);')
+            for origin,out,pin in ((sample,'RGB','TextureColor'),(background,'','Background'),(alpha,'','Alpha')):
+                if not editing.connect_material_expressions(origin,out,source,pin):
+                    raise RuntimeError('Cannot connect celestial display-space blend')
+            output = ''
         else:
             # Lightmap SKY_LIGHT_COLOR_VISUAL is white at noon; the background
             # must use the distinct SKY_COLOR_VISUAL exported with the world.
@@ -242,7 +302,125 @@ def ensure_native_sky_materials(unreal, editing=None):
         if not assets.save_loaded_asset(material, False):
             raise RuntimeError('Cannot save native sky material: ' + path)
         result[name] = material
+    # Procedural stars and the 16-segment sunrise fan use the same exported
+    # environment attributes as SkyRendering.updateRenderState.
+    for name, stars in (('M_NativeStars_v1',True),('M_NativeSunrise_v1',False)):
+        path='/Game/Bridge/Minecraft/'+name
+        material=unreal.load_asset(path) if assets.does_asset_exist(path) else None
+        if material is None:
+            material=tools.create_asset(name,'/Game/Bridge/Minecraft',unreal.Material,unreal.MaterialFactoryNew())
+        if not isinstance(material,unreal.Material):
+            raise RuntimeError('Generated native sky path is occupied by another asset: '+path)
+        editing.delete_all_material_expressions(material)
+        material.set_editor_property('shading_model',unreal.MaterialShadingModel.MSM_UNLIT)
+        material.set_editor_property('two_sided',True)
+        material.set_editor_property('blend_mode',unreal.BlendMode.BLEND_ADDITIVE if stars else unreal.BlendMode.BLEND_TRANSLUCENT)
+        parameter=editing.create_material_expression(material,unreal.MaterialExpressionScalarParameter if stars else unreal.MaterialExpressionVectorParameter,0,0)
+        parameter.set_editor_property('parameter_name','StarBrightness' if stars else 'SunriseColor')
+        parameter.set_editor_property('default_value',0.0 if stars else unreal.LinearColor(0,0,0,0))
+        if stars:
+            background=editing.create_material_expression(material,unreal.MaterialExpressionVectorParameter,0,0)
+            background.set_editor_property('parameter_name','NativeSkyColor');background.set_editor_property('default_value',unreal.LinearColor(.47,.65,1,1))
+            source=editing.create_material_expression(material,unreal.MaterialExpressionCustom,0,0)
+            source.set_editor_property('output_type',unreal.CustomMaterialOutputType.CMOT_FLOAT3)
+            entries=[]
+            for key in ('Brightness','Background'):
+                entry=unreal.CustomInput();entry.set_editor_property('input_name',key);entries.append(entry)
+            source.set_editor_property('inputs',entries)
+            source.set_editor_property('code','float3 b=saturate(Background.rgb),c=saturate(b+Brightness*Brightness); return lerp(c/12.92,pow((c+.055)/1.055,2.4),step(.04045,c))-lerp(b/12.92,pow((b+.055)/1.055,2.4),step(.04045,b));')
+            editing.connect_material_expressions(parameter,'',source,'Brightness');editing.connect_material_expressions(background,'',source,'Background')
+            opacity=editing.create_material_expression(material,unreal.MaterialExpressionConstant,0,0);opacity.set_editor_property('r',1.)
+        else:
+            source=_color_transfer(unreal,editing,material,parameter,DISPLAY_TO_LINEAR)
+            vertex=editing.create_material_expression(material,unreal.MaterialExpressionVertexColor,0,0)
+            opacity=editing.create_material_expression(material,unreal.MaterialExpressionMultiply,0,0)
+            editing.connect_material_expressions(parameter,'A',opacity,'A');editing.connect_material_expressions(vertex,'A',opacity,'B')
+        if not editing.connect_material_property(source,'',unreal.MaterialProperty.MP_EMISSIVE_COLOR) or not editing.connect_material_property(opacity,'',unreal.MaterialProperty.MP_OPACITY):
+            raise RuntimeError('Cannot connect procedural sky output')
+        editing.recompile_material(material)
+        if not assets.save_loaded_asset(material,False):raise RuntimeError('Cannot save procedural sky: '+path)
+        result[name]=material
     return result
+
+
+def ensure_native_inverse_hud_material(unreal, editing=None):
+    """Minecraft CROSSHAIR/GUI_INVERT composition after scene colour output."""
+    editing = editing or unreal.MaterialEditingLibrary
+    path = '/Game/Bridge/Minecraft/M_NativeInverseHud_v1'
+    assets = unreal.EditorAssetLibrary
+    default_texture = unreal.load_asset('/Engine/EngineResources/DefaultTexture.DefaultTexture')
+    if default_texture is None:
+        raise RuntimeError('Default texture unavailable for inverse HUD material')
+    material = unreal.load_asset(path) if assets.does_asset_exist(path) else None
+    if material is None:
+        material = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+            'M_NativeInverseHud_v1', '/Game/Bridge/Minecraft', unreal.Material, unreal.MaterialFactoryNew())
+    if not isinstance(material, unreal.Material):
+        raise RuntimeError('Generated inverse HUD path is occupied by another asset')
+    editing.delete_all_material_expressions(material)
+    material.set_editor_property('material_domain', unreal.MaterialDomain.MD_POST_PROCESS)
+    location=getattr(unreal.BlendableLocation,'BL_SCENE_COLOR_AFTER_TONEMAPPING',None)
+    if location is None:
+        location=getattr(unreal.BlendableLocation,'BL_AFTER_TONEMAPPING',None)
+    if location is None:
+        raise RuntimeError('This engine exposes no after-tonemapping blendable location')
+    material.set_editor_property('blendable_location', location)
+    def node(cls):
+        value = editing.create_material_expression(material, cls, 0, 0)
+        if value is None:
+            raise RuntimeError('Cannot create inverse HUD expression')
+        return value
+    def wire(source, target, pin, output=''):
+        if not editing.connect_material_expressions(source, output, target, pin):
+            raise RuntimeError('Cannot connect inverse HUD input: ' + pin)
+    scene = node(unreal.MaterialExpressionSceneTexture)
+    scene.set_editor_property('scene_texture_id', unreal.SceneTextureId.PPI_POST_PROCESS_INPUT0)
+    uv = node(unreal.MaterialExpressionScreenPosition)
+    size = node(unreal.MaterialExpressionViewSize)
+    custom = node(unreal.MaterialExpressionCustom)
+    custom.set_editor_property('output_type', unreal.CustomMaterialOutputType.CMOT_FLOAT3)
+    custom.set_editor_property('description', 'Minecraft 1.21.11 inverse crosshair blend')
+    connections = [('Scene', scene, 'Color'), ('UV', uv, 'ViewportUV'), ('ViewportSize', size, '')]
+    code = 'float3 destination=Scene.rgb; float2 pixel=UV.xy*ViewportSize.xy;\n'
+    for slot in range(3):
+        texture = node(unreal.MaterialExpressionTextureObjectParameter)
+        texture.set_editor_property('parameter_name', 'InverseTexture' + str(slot))
+        texture.set_editor_property('texture', default_texture)
+        rect = node(unreal.MaterialExpressionVectorParameter)
+        rect.set_editor_property('parameter_name', 'InverseRect' + str(slot))
+        rect.set_editor_property('default_value', unreal.LinearColor(0, 0, 0, 0))
+        crop = node(unreal.MaterialExpressionVectorParameter)
+        crop.set_editor_property('parameter_name', 'InverseUV' + str(slot))
+        crop.set_editor_property('default_value', unreal.LinearColor(0, 0, 1, 1))
+        # VectorParameter's first output is RGB, not RGBA. Append its alpha
+        # explicitly: the fourth coordinate holds sprite height/UV height.
+        rgba = []
+        for parameter in (rect, crop):
+            append = node(unreal.MaterialExpressionAppendVector)
+            wire(parameter, append, 'A', 'RGB'); wire(parameter, append, 'B', 'A')
+            rgba.append(append)
+        connections.extend([(f'Texture{slot}', texture, ''), (f'Rect{slot}', rgba[0], ''), (f'Crop{slot}', rgba[1], '')])
+        code += f'''if(Rect{slot}.z>0 && Rect{slot}.w>0) {{
+float2 p=(pixel-Rect{slot}.xy)/Rect{slot}.zw;
+if(all(p>=0) && all(p<1)) {{
+float4 texel=Texture2DSample(Texture{slot},Texture{slot}Sampler,Crop{slot}.xy+p*Crop{slot}.zw);
+float3 source=lerp(texel.rgb*12.92,1.055*pow(max(texel.rgb,0),1.0/2.4)-.055,step(.0031308,texel.rgb));
+float3 inverted=source*(1-destination)+destination*(1-source);
+destination=lerp(destination,inverted,texel.a);
+}} }}\n'''
+    custom.set_editor_property('code', code + 'return destination;')
+    inputs = []
+    for name, source, output in connections:
+        entry = unreal.CustomInput(); entry.set_editor_property('input_name', name); inputs.append(entry)
+    custom.set_editor_property('inputs', inputs)
+    for name, source, output in connections:
+        wire(source, custom, name, output)
+    if not editing.connect_material_property(custom, '', unreal.MaterialProperty.MP_EMISSIVE_COLOR):
+        raise RuntimeError('Cannot connect inverse HUD output')
+    editing.recompile_material(material)
+    if not assets.save_loaded_asset(material, False):
+        raise RuntimeError('Cannot save inverse HUD material')
+    return material
 
 
 def load_material_helpers(unreal, namespace=None):

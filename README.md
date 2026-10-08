@@ -4,6 +4,8 @@ Fabric **Minecraft Java 1.21.11 / Java 21** から地形・素材・スキン・
 書き出し、**Unreal Engine 5.8で直接プレイ** する実験用プロジェクトです。
 書き出し後はMinecraftを終了できます。UE映像をMinecraftへ送る従来の接続モードも残しています。
 
+**バニラ参照変換・取り込み修正0.15.0：** Minecraft 1.21.11の実データと参照コードを使い、草ブロックの土面・バイオーム色・水、空と光、ItemGroups順・装備枠、攻撃音／無敵時間／ノックバック／死亡パーティクル、しゃがみ・飛行慣性・感度曲線、モブの20Hz制御を更新しました。元のMinecraftソースやバニラ素材は配布物へコピーしていません。[UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.15.0.zip) / [MOD 0.15.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.15.0.jar) / [一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UE-Minecraft-MVP-0.15.0.zip) / [更新手順](docs/UPGRADE_0.15.0.md) / [検証記録](docs/AUDIT_0.15.0.md)。全変更を反映するには0.15.0で新しいnative exportが必要です。今回のWindows UEコンパイル・描画・統合動作は未確認です。
+
 **操作・描画・戦闘の修正0.14.0：** 報告された14項目の実装修正をまとめました。保存中の停止、感度、インベントリ、F5、飛行慣性、攻撃回復、赤い被ダメージ表示・受付間隔、死亡時の接地、歩行・ノックバック、羊毛・アイコン、照明ONの時刻反映に対応します。[UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.14.0/downloads/UEBridge-update-0.14.0.zip) / [MOD 0.14.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.14.0/downloads/minecraft-ue-bridge-0.14.0.jar) / [更新手順](docs/UPGRADE_0.14.0.md) / [検証記録](docs/AUDIT_0.14.0.md)。全項目を反映するには新しいnative exportが必要です。今回のWindows UEコンパイル・描画・統合動作は未確認です。
 
 **取り込み完了後の終了判定修正0.13.2：** 利用者ログで素材・モブ・UI・音・専用マップの取り込み完了を確認しました。UEが終了ログを書いた後にアクセス違反コードを返した場合、今回の完了マーカー・マップ・ログを検証して保存済みマップを起動します。[UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.13.2/downloads/UEBridge-update-0.13.2.zip) / [保存済みマップの即時起動・更新手順](docs/UPGRADE_0.13.2.md)。描画・ゲーム操作と終了時アクセス違反の内部原因は未確認です。

@@ -60,6 +60,7 @@ def setup_bridge_rendering(asset_root='/Game/Bridge/Minecraft'):
                 raise RuntimeError('Cannot save generated lighting migration: ' + path)
             migrated += 1
     lighting['ensure_native_sky_materials'](unreal, editing)
+    lighting['ensure_native_inverse_hud_material'](unreal, editing)
     path = asset_root + '/M_BlockOutline_v1'
     material = unreal.load_asset(path) if assets.does_asset_exist(path) else None
     if material is None:
@@ -97,4 +98,4 @@ def setup_bridge_rendering(asset_root='/Game/Bridge/Minecraft'):
         raise
     # Every generated material and this level was explicitly saved above. Saving
     # all dirty packages here would also save unrelated user assets.
-    unreal.log('Bridge rendering ready: lighting revision 2, migrated=' + str(migrated) + ', native OFF sky, black outline. Compare day/night, roof and torch placement.')
+    unreal.log('Bridge rendering ready: lighting revision 4, migrated=' + str(migrated) + ', additive native sky, inverse crosshair, black outline. Compare day/night, roof and torch placement.')

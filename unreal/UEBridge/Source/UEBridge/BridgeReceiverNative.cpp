@@ -108,7 +108,7 @@ void ABridgeReceiver::BeginNativePlay() {
     Video->SetNativeSkyEnvironment(LatestInput.VanillaLight,NativeStore->GetMetadata().Dimension);
     NativeSetLighting(NativeLighting);
     NativeStatus=TEXT("Validating offline world...");
-    UE_LOG(LogTemp,Display,TEXT("Bridge 0.14.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
+    UE_LOG(LogTemp,Display,TEXT("Bridge 0.15.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
 }
 
 void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
@@ -207,6 +207,7 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
     if(NativeBowStart>=0) Character->SetNativeUse(true,FMath::Clamp(float(GetWorld()->GetTimeSeconds()-NativeBowStart),0.f,1.f));
     if(VanillaEffects) {
         VanillaEffects->Configure(SyncedWorld,TexturePalette,VanillaParticleMaterial);VanillaEffects->SetViewCamera(Character->BridgeCamera);
+        VanillaEffects->ConfigurePoof(NativeUiPalette,VanillaDeathPoofMaterial);
         VanillaEffects->AddTickPrerequisiteActor(Character);VanillaEffects->AddTickPrerequisiteComponent(Character->GetCharacterMovement());
         if(Running && !GetWorld()->IsPaused()) {
             TArray<FBridgeVanillaEvent> Events;VanillaEffects->SampleCharacter(Character,DeltaSeconds,Events);
@@ -255,7 +256,7 @@ void ABridgeReceiver::NativeSelect(const FString& ItemId) {
     LatestInput.HeldColor=0xffffff;
     if(const auto* Item=NativeUiPalette ? NativeUiPalette->FindItem(ItemId) : nullptr) {
         LatestInput.HeldBlock=Item->BlockId;LatestInput.HeldModelKey=Item->ModelKey;
-        if(TexturePalette && !Item->BlockId.IsEmpty()) LatestInput.HeldColor=TexturePalette->ParticleTint(Item->BlockId).ToPackedARGB() & 0xffffffu;
+        if(TexturePalette && !Item->BlockId.IsEmpty()) LatestInput.HeldColor=TexturePalette->RenderTint(Item->BlockId).ToPackedARGB() & 0xffffffu;
         LatestInput.SpawnType=Item->SpawnType;
     }
 }
@@ -263,6 +264,20 @@ float ABridgeReceiver::GetNativeAttackCharge() const {
     auto Weapon=BridgeCombatMath::weapon(TCHAR_TO_UTF8(*LatestInput.HeldItem));
     if(const auto* Item=NativeUiPalette ? NativeUiPalette->FindItem(LatestInput.HeldItem) : nullptr) if(Item->AttackSpeed>0) Weapon.speed=Item->AttackSpeed;
     return float(BridgeCombatMath::charge(GetWorld()->GetTimeSeconds()-NativeLastAttack,Weapon.speed));
+}
+float ABridgeReceiver::GetNativeAttackCooldownTicks() const {
+    auto Weapon=BridgeCombatMath::weapon(TCHAR_TO_UTF8(*LatestInput.HeldItem));
+    if(const auto* Item=NativeUiPalette ? NativeUiPalette->FindItem(LatestInput.HeldItem) : nullptr) if(Item->AttackSpeed>0) Weapon.speed=Item->AttackSpeed;
+    return float(20/Weapon.speed);
+}
+bool ABridgeReceiver::IsNativeAttackTargetAlive() const {
+    if(!IsNativeReady() || !IsValid(TargetCharacter) || !GetWorld()) return false;
+    const auto* Character=Cast<ABridgeCharacter>(TargetCharacter);if(!Character) return false;
+    FVector Eye;FRotator Aim;Character->GetEyeAim(Eye,Aim);
+    FCollisionQueryParams Query(SCENE_QUERY_STAT(BridgeNativeAttackIndicator),false,Character);FHitResult Hit;
+    const float Reach=NativeCreative ? 500.f : 300.f;
+    if(!GetWorld()->LineTraceSingleByChannel(Hit,Eye,Eye+Aim.Vector()*Reach,ECC_Visibility,Query)) return false;
+    const auto* Mob=Cast<ABridgeMobCharacter>(Hit.GetActor());return Mob && Mob->Alive();
 }
 float ABridgeReceiver::NativeAttackDamage() const {
     auto Weapon=BridgeCombatMath::weapon(TCHAR_TO_UTF8(*LatestInput.HeldItem));
@@ -280,10 +295,11 @@ void ABridgeReceiver::NativeAction(const FString& Action) {
     auto* PC=Controller(this);auto* Inventory=PC ? PC->GetNativeInventory() : nullptr;
     FVector Eye;FRotator Aim;Character->GetEyeAim(Eye,Aim);
     if(Action==TEXT("use_start") && LatestInput.HeldItem==TEXT("minecraft:bow")) {
+        if(!NativeCreative && (!Inventory || Inventory->GetItemCount(TEXT("minecraft:arrow"))<=0)) {LastAction=TEXT("No arrows");return;}
         NativeBowStart=GetWorld()->GetTimeSeconds();Character->SetNativeUse(true,0);return;
     }
     if(Action==TEXT("use_release")) {
-        const float Time=NativeBowStart<0 ? 0 : FMath::Clamp(float(GetWorld()->GetTimeSeconds()-NativeBowStart),0.f,1.f);
+        const float Time=NativeBowStart<0 ? 0 : FMath::Clamp(float(BridgeCombatMath::ticks(GetWorld()->GetTimeSeconds()-NativeBowStart)/20),0.f,1.f);
         NativeBowStart=-1;Character->SetNativeUse(false,0);
         const float Pull=FMath::Min(1.f,(Time*Time+2*Time)/3);
         if(Pull<.1f || LatestInput.HeldItem!=TEXT("minecraft:bow") || !SpawnBowProjectiles || Arrows.Num()>=64) return;
@@ -298,19 +314,47 @@ void ABridgeReceiver::NativeAction(const FString& Action) {
                 if(!WeakThis.IsValid() || !WeakThis->IsNativeReady() || !WeakThis->UEControl) return;
                 if(auto* Mob=Cast<ABridgeMobCharacter>(Actor)) Mob->Hit(Damage,Direction);
             };
-            Arrow->Launch(Aim.Vector(),Pull,Character);Arrows.Add(Arrow);PlayNativeSound(TEXT("minecraft:entity.arrow.shoot"),Eye,1,1,TEXT("player"));
+            Arrow->Launch(Aim.Vector(),Pull,Character);Arrows.Add(Arrow);
+            PlayNativeSound(TEXT("minecraft:entity.arrow.shoot"),Character->GetActorLocation(),1,1.f/(FMath::FRand()*.4f+1.2f)+Pull*.5f,TEXT("player"));
             OnBowFired(Eye,Aim.Vector(),Pull);
         }
         return;
     }
+    if(NativeBowStart>=0 && (Action==TEXT("attack") || Action==TEXT("break"))) return;
     if(Action==TEXT("attack")) {
-        const float Damage=NativeAttackDamage();NativeLastAttack=GetWorld()->GetTimeSeconds();Character->SwingHand();
-        if(MobWorld && MobWorld->Attack(Eye,Aim.Vector(),NativeCreative ? 500.f : 300.f,Damage)) {LastAction=TEXT("mob attacked");return;}
+        // PlayerEntity.attack evaluates charge with a half tick before resetting
+        // the integer attack timer. Block mining does not reset this timer.
+        const float Charge=float(BridgeCombatMath::charge(GetWorld()->GetTimeSeconds()-NativeLastAttack,20/GetNativeAttackCooldownTicks(),.5));
+        const bool Charged=BridgeCombatMath::cooldownPassed(Charge);
+        const auto* Movement=Character->GetCharacterMovement();
+        const bool SprintKnockback=Charged && Character->IsAuthoritySprinting();
+        const bool Critical=Charged && Character->GetMinecraftFallDistance()>0 && Movement->IsFalling()
+            && !Movement->IsSwimming() && !Character->BridgeFlying && !Character->IsAuthoritySprinting();
+        // Native movement is cm/s; Minecraft getMovement() is blocks/tick.
+        const bool Sword=LatestInput.HeldItem.EndsWith(TEXT("_sword"));
+        const bool Sweeping=Sword && BridgeCombatMath::sweepAllowed(Charged,Critical,SprintKnockback,Movement->IsMovingOnGround(),Character->GetVelocity().SizeSquared2D()/4000000.,.1);
+        const float Damage=NativeAttackDamage()*(Critical ? 1.5f : 1.f);
+        Character->SwingHand();
+        if(SprintKnockback && IsNativeAttackTargetAlive()) PlayNativeSound(TEXT("minecraft:entity.player.attack.knockback"),Character->GetActorLocation(),1,1,TEXT("player"));
+        bool Accepted=false;
+        if(MobWorld && MobWorld->Attack(Eye,Aim.Vector(),NativeCreative ? 500.f : 300.f,Damage,&Accepted,SprintKnockback ? .5f : 0.f,Sweeping)) {
+            NativeLastAttack=GetWorld()->GetTimeSeconds();
+            const FString Sound= !Accepted ? TEXT("minecraft:entity.player.attack.nodamage") : Critical ? TEXT("minecraft:entity.player.attack.crit")
+                : Sweeping ? TEXT("minecraft:entity.player.attack.sweep") : Charged ? TEXT("minecraft:entity.player.attack.strong") : TEXT("minecraft:entity.player.attack.weak");
+            PlayNativeSound(Sound,Character->GetActorLocation(),1,1,TEXT("player"));
+            if(Accepted && SprintKnockback) Character->ApplyNativeAttackSlowdown();
+            LastAction=Accepted ? TEXT("mob attacked") : TEXT("mob hurt immunity");return;
+        }
     }
     // Holding attack continues block mining, not repeated melee attacks. A mob
     // still occludes mining while its invulnerability timer is active.
     if(Action==TEXT("break") && MobWorld && MobWorld->Attack(Eye,Aim.Vector(),NativeCreative ? 500.f : 300.f,0)) return;
     FIntVector Voxel;FVector Normal,Hit;const bool Found=SyncedWorld->Aim(Eye,Aim,NativeCreative ? 500.f : 450.f,Voxel,Normal,Character,&Hit);
+    if(Action==TEXT("attack") && !Found) {
+        // MinecraftClient.doAttack MISS swings/resetTicksSince but has no
+        // attack sound; attack.weak/strong are damage-target feedback only.
+        NativeLastAttack=GetWorld()->GetTimeSeconds();LastAction=TEXT("attack missed");return;
+    }
     if(Action==TEXT("pick")) {
         FString Id;FColor Tint;
         if(Found && Inventory && SyncedWorld->GetBlockInfo(Voxel,Id,Tint)) {

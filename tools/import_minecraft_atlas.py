@@ -182,8 +182,8 @@ def _atlas_master(unreal, assets, tools, editing, root, texture, translucent):
     # This generated graph has no user edits. Rebuilding reuses asset references safely.
     editing.delete_all_material_expressions(material)
     material.set_editor_property("blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT if translucent else unreal.BlendMode.BLEND_MASKED)
-    material.set_editor_property("opacity_mask_clip_value", 0.1)
-    material.set_editor_property("two_sided", True)
+    material.set_editor_property("opacity_mask_clip_value", 0.5)
+    material.set_editor_property("two_sided", False)
     if translucent:
         material.set_editor_property("translucency_lighting_mode", unreal.TranslucencyLightingMode.TLM_SURFACE)
     def node(cls):
@@ -206,10 +206,11 @@ def _atlas_master(unreal, assets, tools, editing, root, texture, translucent):
         raise RuntimeError("Cannot connect atlas texture UVs")
     vertex = node(unreal.MaterialExpressionVertexColor)
     tint = node(unreal.MaterialExpressionAppendVector); wire(uv[3], tint, "A"); wire(vertex, tint, "B", "A")
-    colored = node(unreal.MaterialExpressionMultiply); wire(sample, colored, "A", "RGB"); wire(tint, colored, "B")
     import runpy
-    wire_vanilla_lighting = runpy.run_path(str(pathlib.Path(__file__).with_name("bridge_lighting_materials.py")))["wire_vanilla_lighting"]
-    wire_vanilla_lighting(unreal, editing, material, colored, vertex, use_vertex=True, vertex_output="")
+    lighting = runpy.run_path(str(pathlib.Path(__file__).with_name("bridge_lighting_materials.py")))
+    display_sample = lighting["texture_display_rgb"](unreal, editing, material, sample)
+    colored = node(unreal.MaterialExpressionMultiply); wire(display_sample, colored, "A"); wire(tint, colored, "B")
+    lighting["wire_vanilla_lighting"](unreal, editing, material, colored, vertex, use_vertex=True, vertex_output="", pixel_display=True)
     if not editing.connect_material_property(sample, "A", unreal.MaterialProperty.MP_OPACITY if translucent else unreal.MaterialProperty.MP_OPACITY_MASK):
         raise RuntimeError("Cannot connect atlas opacity")
     roughness = node(unreal.MaterialExpressionConstant); roughness.set_editor_property("r", 0.85)

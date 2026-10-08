@@ -83,6 +83,10 @@ def _settings(settings):
     for name in ('invertYMouse', 'slimArms'):
         if type(settings.get(name)) is not bool:
             raise ValueError('Invalid native boolean setting ' + name)
+    if 'smoothCamera' in settings and type(settings['smoothCamera']) is not bool:
+        raise ValueError('Invalid native boolean setting smoothCamera')
+    if 'attackIndicator' in settings and settings['attackIndicator'] not in ('off', 'crosshair', 'hotbar'):
+        raise ValueError('Invalid native attack indicator')
     if settings.get('mainHand') not in ('left', 'right') or settings.get('gameMode') not in ('creative', 'survival'):
         raise ValueError('Invalid native hand/game mode setting')
     if type(settings.get('skinLayers')) is not int or not 0 <= settings['skinLayers'] <= 127:
@@ -99,6 +103,16 @@ def _settings(settings):
             item = stack.get('item', stack.get('id', ''))
             if not isinstance(item, str) or (item and (not REGISTRY_ID.fullmatch(item) or '..' in item)) or type(stack.get('count')) is not int or not 0 <= stack['count'] <= 99:
                 raise ValueError('Invalid native inventory stack')
+    if 'equipment' in settings:
+        equipment = settings['equipment']
+        if not isinstance(equipment, list) or len(equipment) != 4:
+            raise ValueError('Invalid native equipment slots')
+        for stack in equipment:
+            if not isinstance(stack, dict):
+                raise ValueError('Invalid native equipment stack')
+            item = stack.get('item', stack.get('id', ''))
+            if not isinstance(item, str) or (item and (not REGISTRY_ID.fullmatch(item) or '..' in item)) or type(stack.get('count')) is not int or not 0 <= stack['count'] <= 1:
+                raise ValueError('Invalid native equipment stack')
 
 
 def load_native_manifest(filename, helper_directory=None):

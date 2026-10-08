@@ -24,6 +24,8 @@ public:
     bool GetStateBoxes(const FString& BlockId,const FString& StateKey,TArray<FBox>& Collision,TArray<FBox>& Outline) const;
     FString DefaultState(const FString& BlockId) const;
     FVector GetModelOffset(const FString& BlockId,const FIntVector& SourceBlock) const;
+    FColor RenderTint(const FString& BlockId,int32 TintIndex=0) const;
+    FString RenderTintSource(const FString& BlockId,int32 TintIndex=0) const;
     bool HasSolidFace(const FString& BlockId,const FString& StateKey,const FString& Face) const;
     bool CannotConnect(const FString& BlockId,const FString& StateKey) const;
     bool IsOpaqueFullCube(const FString& BlockId,const FString& StateKey) const;

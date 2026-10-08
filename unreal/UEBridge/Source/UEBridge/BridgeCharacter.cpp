@@ -86,8 +86,12 @@ ABridgeCharacter::ABridgeCharacter(const FObjectInitializer& ObjectInitializer)
     GetCharacterMovement()->FallingLateralFriction=1.886f;
     GetCharacterMovement()->BrakingDecelerationFalling=0;
     JumpMaxHoldTime=0;
-    GetCharacterMovement()->MaxWalkSpeedCrouched=130;
-    GetCharacterMovement()->JumpZVelocity=900;
+    // Input owns the vanilla .3 sneaking factor. UE applies that input's
+    // analog magnitude to this limit, including diagonal input normalization.
+    GetCharacterMovement()->MaxWalkSpeedCrouched=431.7f/.98f;
+    GetCharacterMovement()->bCrouchMaintainsBaseLocation=true;
+    GetCharacterMovement()->bCanWalkOffLedgesWhenCrouching=true;
+    GetCharacterMovement()->JumpZVelocity=840;
     GetCharacterMovement()->MaxStepHeight=float(BridgeCharacterMath::StepHeightCm);
     GetCharacterMovement()->SetCrouchedHalfHeight(75);
     GetCharacterMovement()->GetNavAgentPropertiesRef().bCanCrouch=true;
@@ -139,6 +143,8 @@ void ABridgeCharacter::ApplyMinecraftPose(double BodyHeight, double EyeHeight, b
 
 void ABridgeCharacter::SetAuthorityEnabled(bool Enabled) {
     if(UEAuthority==Enabled) return;
+    NativeCameraEye.reset(bIsCrouched ? BridgeCharacterMath::CrouchedEyeCm : BridgeCharacterMath::StandingEyeCm);
+    NativeFallDistanceCm=0;NativeWasFalling=false;NativeSprintResumeTime=0;
     UEAuthority=Enabled; BridgeFlying=false; FlightWasAirborne=FlightLandingLatch=false; PreviousJump=false; SprintRequested=false;BodyYawInitialized=false;StopJumping();
     if(!Enabled) {
         NativePresentation=false;NativePendingVisual=NativeEquipLowering=NativeUsingItem=false;
@@ -148,7 +154,7 @@ void ABridgeCharacter::SetAuthorityEnabled(bool Enabled) {
     auto* Movement=GetCharacterMovement(); Movement->StopMovementImmediately();
     // Landing uses DefaultLandMovementMode, not just the current movement mode.
     Movement->DefaultLandMovementMode=Enabled ? MOVE_Walking : MOVE_None;
-    Movement->JumpZVelocity=900.f;
+    Movement->JumpZVelocity=840.f;
     const float WorldGravity=GetWorld() ? FMath::Abs(GetWorld()->GetGravityZ()) : 980.f;
     Movement->GravityScale=Enabled ? 3200.f/FMath::Max(1.f,WorldGravity) : 0.f;
     Movement->SetMovementMode(Enabled ? MOVE_Walking : MOVE_None);
@@ -156,11 +162,13 @@ void ABridgeCharacter::SetAuthorityEnabled(bool Enabled) {
 void ABridgeCharacter::ApplyUEInput(float Forward,float Right,bool JumpHeld,bool Sneak,bool Sprint) {
     if(!UEAuthority) return;
     if(Sneak && !BridgeFlying) Crouch(); else UnCrouch();
-    SprintRequested=Sprint && !Sneak && Forward>0;
-    GetCharacterMovement()->MaxWalkSpeed=SprintRequested ? 561.2f : 431.7f;
+    const bool SprintAllowed=!GetWorld() || GetWorld()->GetTimeSeconds()>=NativeSprintResumeTime;
+    SprintRequested=Sprint && SprintAllowed && (!Sneak || BridgeFlying) && Forward>0;
+    GetCharacterMovement()->MaxWalkSpeed=(SprintRequested ? 561.2f : 431.7f)/.98f;
     GetCharacterMovement()->MaxFlySpeed=SprintRequested ? 2160.f : 1080.f;
     const FRotator Heading(0,GetControlRotation().Yaw,0);
-    FVector Direction=Heading.Vector()*Forward + FRotationMatrix(Heading).GetUnitAxis(EAxis::Y)*Right;
+    const auto Input=BridgeMovementMath::movementInput(Right,Forward,bIsCrouched && !BridgeFlying);
+    FVector Direction=Heading.Vector()*Input.z + FRotationMatrix(Heading).GetUnitAxis(EAxis::Y)*Input.x;
     const float Magnitude=FMath::Min(1.f,Direction.Size());
     if(Magnitude>0) AddMovementInput(Direction.GetSafeNormal(),Magnitude);
     if(BridgeFlying) {
@@ -182,6 +190,14 @@ bool ABridgeCharacter::CanJumpInternal_Implementation() const {
         return Movement && Movement->IsJumpAllowed() && Movement->IsMovingOnGround() && JumpCurrentCount<JumpMaxCount;
     return Super::CanJumpInternal_Implementation();
 }
+void ABridgeCharacter::ApplyNativeAttackSlowdown() {
+    auto* Movement=GetCharacterMovement();
+    Movement->Velocity.X*=.6f;Movement->Velocity.Y*=.6f;
+    SprintRequested=false;
+    // The client may start sprinting again on the following 20 Hz input tick;
+    // cancelling an attack sprint must not require releasing the sprint key.
+    NativeSprintResumeTime=GetWorld() ? GetWorld()->GetTimeSeconds()+.05f : 0;
+}
 bool ABridgeCharacter::IsAuthoritySprinting() const {
     const FVector Forward=FRotator(0,GetControlRotation().Yaw,0).Vector();
     return UEAuthority && SprintRequested && !bIsCrouched && FVector::DotProduct(GetVelocity(),Forward)>5.f;
@@ -201,9 +217,14 @@ void ABridgeCharacter::ApplyFlight(bool Creative,bool Flying) {
     const bool Enabled=UEAuthority && Creative && Flying && !FlightLandingLatch;
     if(BridgeFlying==Enabled) return;
     BridgeFlying=Enabled;FlightWasAirborne=false;StopJumping();PreviousJump=false;
-    auto* Movement=GetCharacterMovement();Movement->StopMovementImmediately();
+    auto* Movement=GetCharacterMovement();
+    FVector Carry=Movement->Velocity;
+    // ClientPlayerEntity toggles the ability without resetting velocity. Taking
+    // off from the ground invokes the normal .42-block jump before flight travel.
+    if(Enabled && Movement->IsMovingOnGround()) Carry.Z=FMath::Max(Carry.Z,840.0);
     Movement->MaxFlySpeed=1088.9f;Movement->BrakingDecelerationFlying=0;
     Movement->SetMovementMode(Enabled ? MOVE_Flying : (UEAuthority ? MOVE_Falling : MOVE_None));
+    Movement->Velocity=Carry;
 }
 void ABridgeCharacter::ConfigureOutline(UMaterialInterface* Material) {
     if(Material && AimOutline->GetMaterial(0)!=Material) AimOutline->SetMaterial(0,Material);
@@ -219,6 +240,17 @@ void ABridgeCharacter::Tick(float DeltaSeconds) {
     }
     BridgeEyeHeightCm=UEAuthority ? float(bIsCrouched ? BridgeCharacterMath::CrouchedEyeCm : BridgeCharacterMath::StandingEyeCm) : RemoteEyeHeight;
     BridgeFloorGapCm=GetFloorGapCm();BaseEyeHeight=BridgeEyeHeightCm-GetCapsuleComponent()->GetScaledCapsuleHalfHeight()-BridgeFloorGapCm;
+    if(UEAuthority) {
+        NativeCameraEye.update(BridgeEyeHeightCm,DeltaSeconds);
+        const bool Falling=GetCharacterMovement()->IsFalling() && !BridgeFlying;
+        const float FeetZ=GetMinecraftFeetPosition().Z;
+        if(Falling) {
+            if(!NativeWasFalling) NativeFallPeakZ=FeetZ;
+            NativeFallPeakZ=FMath::Max(NativeFallPeakZ,FeetZ);
+            NativeFallDistanceCm=FMath::Max(0.f,NativeFallPeakZ-FeetZ);
+        } else NativeFallDistanceCm=0;
+        NativeWasFalling=Falling;
+    }
     BridgeSprinting=IsAuthoritySprinting();
     FovSprintMultiplier=float(BridgeCharacterMath::SprintFovMultiplier(FovSprintMultiplier,BridgeSprinting,DeltaSeconds));
     BridgeVerticalFov=MinecraftBaseFov*(1.f+(FovSprintMultiplier-1.f)*NativeFovEffectScale);
@@ -292,7 +324,7 @@ void ABridgeCharacter::ConfigureVisuals(UMaterialInterface* Material,UBridgeBloc
         auto Tint=[&](UStaticMeshComponent* VisualMesh,const FColor& ColorValue) {
             UMaterialInterface* Base=Material ? Material : VisualMesh->GetMaterial(0);if(!Base) return;
             auto* Dynamic=CreateVisualInstance(Base,this);if(!Dynamic) return;
-            Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(ColorValue));
+            Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor(ColorValue.R/255.f,ColorValue.G/255.f,ColorValue.B/255.f,1));
             VisualMesh->SetMaterial(0,Dynamic);
         };
         Tint(Sleeve,FColor(45,100,165));Tint(Hand,FColor(199,150,113));
@@ -308,7 +340,7 @@ void ABridgeCharacter::ConfigureVisuals(UMaterialInterface* Material,UBridgeBloc
         if(ItemMaterial) {
             auto* Dynamic=CreateVisualInstance(ItemMaterial,this);
             const FColor ItemColor(Block.IsEmpty() ? 200 : ((Color>>16)&255),Block.IsEmpty() ? 180 : ((Color>>8)&255),Block.IsEmpty() ? 110 : (Color&255));
-            if(Dynamic) {Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(ItemColor));HeldMesh->SetMaterial(0,Dynamic);}
+            if(Dynamic) {Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor(ItemColor.R/255.f,ItemColor.G/255.f,ItemColor.B/255.f,1));HeldMesh->SetMaterial(0,Dynamic);}
         }
     }
     VisualsConfigured=true;VisualMaterial=Material;VisualPalette=Palette;VisualItem=Item;VisualBlock=Block;VisualColor=Color;VisualModelKey=ModelKey;
@@ -395,6 +427,7 @@ void ABridgeCharacter::ConfigureNativeViewOptions(bool BobView,float FovEffectSc
 
 void ABridgeCharacter::UpdatePlayerCamera() {
     FVector EyePosition;FRotator AimRotation;GetEyeAim(EyePosition,AimRotation);
+    if(UEAuthority) EyePosition.Z+=float(NativeCameraEye.previous+(NativeCameraEye.current-NativeCameraEye.previous)*FMath::Clamp(NativeCameraEye.remainder/.05,0.0,1.0))-BridgeEyeHeightCm;
     BridgeCamera->bUsePawnControlRotation=CameraPerspective==0;
     if(CameraPerspective==0) {BridgeCamera->SetWorldLocationAndRotation(EyePosition,AimRotation);return;}
     const FVector Desired=EyePosition+AimRotation.Vector()*(CameraPerspective==1 ? -400.f : 400.f);
@@ -530,7 +563,9 @@ void ABridgeCharacter::BuildHandGeometry(UProceduralMeshComponent* Model,const F
             const FVector MC=NativeGeometry ? Face.Vertices[I] : Face.Vertices[I]-FVector(.5);
             Section.Vertices.Add((NativeGeometry ? FVector(-MC.Z,MC.X,MC.Y) : FVector(MC.Z,-MC.X,MC.Y))*100);Section.UV.Add(Face.UV[I]);Section.Colors.Add(FLinearColor::White);
         }
-        const FVector Normal=FVector::CrossProduct(Section.Vertices[First+2]-Section.Vertices[First],Section.Vertices[First+1]-Section.Vertices[First]).GetSafeNormal();
+        const FVector Normal=NativeGeometry && Face.HasNativeNormal
+            ? FVector(-Face.NativeNormal.Z,Face.NativeNormal.X,Face.NativeNormal.Y)
+            : FVector::CrossProduct(Section.Vertices[First+2]-Section.Vertices[First],Section.Vertices[First+1]-Section.Vertices[First]).GetSafeNormal();
         const FVector Tangent=(Section.Vertices[First+1]-Section.Vertices[First]).GetSafeNormal();
         for(int32 I=0;I<4;++I) {Section.Normals.Add(Normal);Section.Tangents.Add(FProcMeshTangent(Tangent,false));}
         Section.Triangles.Append({First,First+2,First+1,First,First+3,First+2});
@@ -541,7 +576,9 @@ void ABridgeCharacter::BuildHandGeometry(UProceduralMeshComponent* Model,const F
         if(Section.Material) {
             auto* Dynamic=CreateVisualInstance(Section.Material,this);
             const FColor ItemTint=Section.Tint;
-            if(Dynamic) {Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(ItemTint));Model->SetMaterial(Index,Dynamic);}
+            // Minecraft multiplies RGBA8 texture and tint in display RGB. The
+            // generated shader performs the one final transfer to UE linear.
+            if(Dynamic) {Dynamic->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor(ItemTint.R/255.f,ItemTint.G/255.f,ItemTint.B/255.f,1));Model->SetMaterial(Index,Dynamic);}
         }
     }
     CacheHandGeometry(Model);

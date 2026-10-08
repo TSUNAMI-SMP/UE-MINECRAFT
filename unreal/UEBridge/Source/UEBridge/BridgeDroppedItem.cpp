@@ -59,7 +59,8 @@ bool ABridgeDroppedItem::BuildMesh() {
             Section.Positions.Add(Point);Bounds+=Point;Section.UV.Add(Face.UV[V]);Section.Colors.Add(FLinearColor::White);
         }
         // The Minecraft -> UE axis conversion changes handedness; reverse winding.
-        const FVector Normal=FVector::CrossProduct(Section.Positions[First+2]-Section.Positions[First],Section.Positions[First+1]-Section.Positions[First]).GetSafeNormal();
+        const FVector Normal=Face.HasNativeNormal ? FVector(Face.NativeNormal.Z,-Face.NativeNormal.X,Face.NativeNormal.Y)
+            : FVector::CrossProduct(Section.Positions[First+2]-Section.Positions[First],Section.Positions[First+1]-Section.Positions[First]).GetSafeNormal();
         const FVector Tangent=(Section.Positions[First+1]-Section.Positions[First]).GetSafeNormal();
         for(int32 V=0;V<4;++V) {Section.Normals.Add(Normal);Section.Tangents.Add(FProcMeshTangent(Tangent,false));}
         Section.Indices.Append({First,First+2,First+1,First,First+3,First+2});
@@ -68,7 +69,7 @@ bool ABridgeDroppedItem::BuildMesh() {
     for(int32 Index=0;Index<Sections.Num();++Index) {
         auto& Section=Sections[Index];Mesh->CreateMeshSection_LinearColor(Index,Section.Positions,Section.Indices,Section.Normals,Section.UV,Section.Colors,Section.Tangents,false);
         if(auto* Material=Instance(Section.Material,this)) {
-            Material->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor::FromSRGBColor(Section.Tint));
+            Material->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor(Section.Tint.R/255.f,Section.Tint.G/255.f,Section.Tint.B/255.f,1));
             Material->SetScalarParameterValue(TEXT("BridgeUseVertexLight"),0);Material->SetVectorParameterValue(TEXT("BridgeLight"),FLinearColor(1,0,1,1));Mesh->SetMaterial(Index,Material);
         }
     }

@@ -125,6 +125,15 @@ class NativePackageValidation(unittest.TestCase):
         self.assertEqual(result['world']['rows'], 1)
         self.assertEqual(result['paths']['ui'], self.fixture.root / 'ui/manifest.json')
         self.assertEqual(result['parsed']['ui']['items'][0]['name'], '石')
+    def test_look_indicator_and_equipment_settings_are_preserved_and_validated(self):
+        settings = self.fixture.manifest['settings']
+        settings.update(smoothCamera=True, attackIndicator='hotbar', equipment=[{'id': 'minecraft:diamond_helmet', 'count': 1}] + [{'id': '', 'count': 0}] * 3)
+        self.fixture.finish()
+        result = native.load_native_manifest(self.fixture.path)
+        self.assertEqual(settings, result['manifest']['settings'])
+        for field, value in (('smoothCamera', 1), ('attackIndicator', 'bad'), ('equipment', []), ('equipment', [{'id': '../helmet', 'count': 1}] * 4), ('equipment', [{'id': '', 'count': True}] * 4)):
+            bad = copy.deepcopy(settings); bad[field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError): native._settings(bad)
 
     def test_submanifest_hash_modified_even_if_still_valid_json(self):
         path = self.fixture.root / 'items/manifest.json'

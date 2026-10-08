@@ -36,6 +36,18 @@ class ItemManifestTest(unittest.TestCase):
         self.assertEqual(set(items.HAND_CONTEXTS), set(result['items'][self.key]))
         self.assertEqual(0, items.ground_model_count(result))
         self.assertNotIn('ground', result['items'][self.key])
+    def test_captured_normals_and_translucent_pipeline_survive_compressed_export(self):
+        data = copy.deepcopy(self.manifest)
+        face = data['items'][self.key]['ground'][0]
+        face.update(normal=[0, .7071068, .7071068], alphaMode='translucent')
+        result = self.load(self.compressed(data))
+        self.assertEqual(face['normal'], result['items'][self.key]['ground'][0]['normal'])
+        self.assertEqual({'masked', 'translucent'}, items.item_render_modes(result)[self.hash])
+    def test_invalid_normals_and_unknown_item_pipeline_are_rejected_before_ue(self):
+        for field, value in (('normal', [0, float('nan'), 1]), ('normal', [0, 1]), ('normal', [True, 0, 1]), ('alphaMode', 'additive'), ('alphaMode', True)):
+            data = copy.deepcopy(self.manifest)
+            data['items'][self.key]['ground'][0][field] = value
+            with self.assertRaises(ValueError): self.load(data)
     def test_new_ground_display_retains_native_scale_and_texture(self):
         data = copy.deepcopy(self.manifest)
         data['items'][self.key]['ground'][0]['vertices'] = [[-.25,.125,0],[.25,.125,0],[.25,.625,0],[-.25,.625,0]]

@@ -60,7 +60,7 @@ private:
     TSet<FIntVector> SeenCells;
     TSet<FString> ValidatedModels;
     TArray<FIntVector> SaveCells;
-    struct FSaveCell { TArray<FBridgeBlock> Rows; TArray<uint8> SkyTop; };
+    struct FSaveCell { TArray<FBridgeBlock> Rows; TArray<uint8> SkyTop; TArray<uint16> Water; TArray<FIntVector> BiomeTints; };
     TMap<FIntVector,FSaveCell> SaveSnapshot;
     int32 SaveCursor=0;
     TSharedPtr<FJsonObject> SaveHeader;

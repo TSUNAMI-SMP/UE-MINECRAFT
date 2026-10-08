@@ -104,7 +104,8 @@ void ABridgeNativePlayerController::ConfigureNativeSettings(const TSharedPtr<FJs
     CachedNativeSettings=Settings;
     ResetDefaultBindings();
     ToggleCrouchOption=ToggleSprintOption=InvertMouse=InvertMouseX=LeftHanded=SlimArms=ForceUnicode=false;
-    BobView=true;MouseSensitivity=.5f;NativeBaseFov=70.f;NativeFovEffectScale=1.f;GuiScale=0;SkinLayers=127;
+    BobView=true;SmoothCamera=false;AttackIndicator=1;LookXSmoother.Clear();LookYSmoother.Clear();
+    MouseSensitivity=.5f;NativeBaseFov=70.f;NativeFovEffectScale=1.f;GuiScale=0;SkinLayers=127;
     MouseWheelSensitivity=1;WheelRemainder=0;
     if(Settings.IsValid()) {
         const TSharedPtr<FJsonObject>* Keys=nullptr;
@@ -129,6 +130,9 @@ void ABridgeNativePlayerController::ConfigureNativeSettings(const TSharedPtr<FJs
         if(!Settings->TryGetBoolField(TEXT("sneakToggled"),ToggleCrouchOption)) Settings->TryGetBoolField(TEXT("toggleCrouch"),ToggleCrouchOption);
         if(!Settings->TryGetBoolField(TEXT("sprintToggled"),ToggleSprintOption)) Settings->TryGetBoolField(TEXT("toggleSprint"),ToggleSprintOption);
         Settings->TryGetBoolField(TEXT("bobView"),BobView);
+        Settings->TryGetBoolField(TEXT("smoothCamera"),SmoothCamera);
+        FString Indicator;if(Settings->TryGetStringField(TEXT("attackIndicator"),Indicator))
+            AttackIndicator=Indicator==TEXT("off") ? 0 : Indicator==TEXT("hotbar") ? 2 : 1;
         if(Settings->TryGetNumberField(TEXT("fovEffectScale"),Number) && FMath::IsFinite(Number)) NativeFovEffectScale=FMath::Clamp(float(Number),0.f,1.f);
         Settings->TryGetBoolField(TEXT("slimArms"),SlimArms);
         Settings->TryGetBoolField(TEXT("forceUnicodeFont"),ForceUnicode);
@@ -228,6 +232,7 @@ void ABridgeNativePlayerController::SetMenuInput() {
     }
     if(PlayerInput) PlayerInput->FlushPressedKeys();
     WheelRemainder=0;
+    LookXSmoother.Clear();LookYSmoother.Clear();
     PreviousJumpTap=PreviousForwardTap=-1;bDoubleSprint=false;
     float UnusedX=0,UnusedY=0;GetInputMouseDelta(UnusedX,UnusedY);
 }
@@ -261,7 +266,7 @@ void ABridgeNativePlayerController::UpdateSelectedItem() {
         const auto* Entry=LoadedUiPalette ? LoadedUiPalette->FindItem(OffhandItem) : nullptr;
         const FString Block=Entry ? Entry->BlockId : FString();
         const int32 Color=NativeReceiver->TexturePalette && !Block.IsEmpty()
-            ? int32(NativeReceiver->TexturePalette->ParticleTint(Block).ToPackedARGB() & 0xffffffu) : 0xffffff;
+            ? int32(NativeReceiver->TexturePalette->RenderTint(Block).ToPackedARGB() & 0xffffffu) : 0xffffff;
         BridgePawn->ConfigureOffhandVisuals(OffhandItem,Block,Color,Entry ? Entry->ModelKey : FString());
     }
 }
@@ -273,9 +278,14 @@ void ABridgeNativePlayerController::RouteMenuInput() {
 }
 bool ABridgeNativePlayerController::InputKey(const FInputKeyEventArgs& Params) {
     const bool Result=Super::InputKey(Params);
+    if(IsValid(NativeReceiver) && NativeReceiver->NativePlayActive && (bInventoryOpen || bPauseOpen)
+        && Params.Event==IE_Released && (Params.Key==EKeys::LeftMouseButton || Params.Key==EKeys::RightMouseButton || Params.Key==EKeys::MiddleMouseButton)) {
+        float X=0,Y=0;if(GetMousePosition(X,Y)) if(auto* Hud=Cast<ABridgeNativeHUD>(GetHUD()))
+            return Hud->HandlePointerReleased(Params.Key,FVector2D(X,Y)) || Result;
+    }
     if(IsValid(NativeReceiver) && NativeReceiver->NativePlayActive && Params.Event==IE_Pressed) {
         if(!bInventoryOpen && !bPauseOpen && Focused() && MatchesBinding(TEXT("key.togglePerspective"),Params.Key)) {CycleNativePerspective();return true;}
-        if((bInventoryOpen || bPauseOpen) && (Params.Key==EKeys::LeftMouseButton || Params.Key==EKeys::RightMouseButton)) {
+        if((bInventoryOpen || bPauseOpen) && (Params.Key==EKeys::LeftMouseButton || Params.Key==EKeys::RightMouseButton || Params.Key==EKeys::MiddleMouseButton)) {
             float X=0,Y=0;if(GetMousePosition(X,Y)) if(auto* Hud=Cast<ABridgeNativeHUD>(GetHUD())) return Hud->HandlePointer(Params.Key,FVector2D(X,Y)) || Result;
         }
     }
@@ -324,6 +334,7 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
     const bool HasFocus=Focused();
     if(!HasFocus) {
         StopNativeInput();bLastFocused=false;
+        LookXSmoother.Clear();LookYSmoother.Clear();
         PreviousJumpTap=PreviousForwardTap=-1;bDoubleSprint=false;WheelRemainder=0;
         return;
     }
@@ -354,11 +365,13 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
     if(ToggleSprintOption && Pressed(TEXT("key.sprint"))) bToggleSprint=!bToggleSprint;
     if(Pressed(TEXT("key.toggleGui"))) NativeHudVisible=!NativeHudVisible;
     float MouseX=0,MouseY=0;GetInputMouseDelta(MouseX,MouseY);
-    const float Degrees=float(BridgeNativeInputMath::MouseDegreesPerCount(MouseSensitivity));
+    const bool Spyglass=SelectedItem==TEXT("minecraft:spyglass") && Down(TEXT("key.use")) && NativePerspective==0;
+    const float YawDelta=float(BridgeNativeLookMath::Degrees(MouseX,MouseSensitivity,DeltaSeconds,SmoothCamera,Spyglass,LookXSmoother));
+    const float PitchDelta=float(BridgeNativeLookMath::Degrees(MouseY,MouseSensitivity,DeltaSeconds,SmoothCamera,Spyglass,LookYSmoother));
     const FRotator PreviousRotation=GetControlRotation();
     // UE MouseY is positive upwards; Minecraft exposes independent axis inversions.
-    const FRotator Rotation(float(BridgeNativeInputMath::ClampPitch(PreviousRotation.Pitch+MouseY*Degrees*(InvertMouse ? -1.f : 1.f))),
-        FRotator::NormalizeAxis(PreviousRotation.Yaw+MouseX*Degrees*(InvertMouseX ? -1.f : 1.f)),0);
+    const FRotator Rotation(float(BridgeNativeInputMath::ClampPitch(PreviousRotation.Pitch+PitchDelta*(InvertMouse ? -1.f : 1.f))),
+        FRotator::NormalizeAxis(PreviousRotation.Yaw+YawDelta*(InvertMouseX ? -1.f : 1.f)),0);
     SetControlRotation(Rotation);
     const float Forward=(Down(TEXT("key.forward")) ? 1.f : 0.f)-(Down(TEXT("key.back")) ? 1.f : 0.f);
     const float Right=(Down(TEXT("key.right")) ? 1.f : 0.f)-(Down(TEXT("key.left")) ? 1.f : 0.f);

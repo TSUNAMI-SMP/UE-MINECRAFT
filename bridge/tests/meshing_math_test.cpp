@@ -29,6 +29,12 @@ int main() {
     const std::array<Point,6> normals={{{0,-1,0},{0,1,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}}};
     for(int face=0;face<6;++face) {const auto& q=quads[face];assert(NativeNormal(q)==normals[face]);
         const Point ueNormal=MCToUE(NativeNormal(q));const Point a=MCToUE(q[0]),b=MCToUE(q[2]),c=MCToUE(q[1]);
-        assert(Cross(Subtract(b,a),Subtract(c,a))==ueNormal);}
-    std::cout << "Meshing: 128 randomized collider round trips, empty/full/floor/cavity and native cull guards passed\n";
+        assert(Cross(Subtract(b,a),Subtract(c,a))==ueNormal);
+        // Grass overlay has identical corners and orientation, even after a
+        // cyclic reordering. Crossed foliage's reverse face must remain unbiased.
+        auto cyclic=q;for(int i=0;i<4;++i) cyclic[i]=q[(i+1)%4];assert(CoincidentForwardQuads(q,cyclic));
+        auto reverse=q;reverse[1]=q[3];reverse[3]=q[1];assert(!CoincidentForwardQuads(q,reverse));
+        auto shifted=q;for(auto& point:shifted) point[0]+=.001;assert(!CoincidentForwardQuads(q,shifted));
+        auto partial=q;partial[0]=partial[1];assert(!CoincidentForwardQuads(q,partial));}
+    std::cout << "Meshing: 128 randomized collider round trips, native cull guards and six layered-quad orientation checks passed\n";
 }

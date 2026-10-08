@@ -28,14 +28,18 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/Pawn.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Dom/JsonObject.h"
 #include "EngineUtils.h"
 #include "Materials/Material.h"
+#include "Materials/MaterialParameterCollection.h"
+#include "Materials/MaterialParameterCollectionInstance.h"
 #include "ShowFlags.h"
 #include "Math/Float16Color.h"
 #include "DynamicRHI.h"
+#include "ProceduralMeshComponent.h"
 #include "Misc/ScopeLock.h"
 #include <atomic>
 
@@ -146,6 +150,13 @@ void UBridgeVideo::SetNativeRenderMode(bool Lighting) {
     Viewport->EngineShowFlags.SetGlobalIllumination(false);
     Viewport->EngineShowFlags.SetReflectionEnvironment(false);
     Viewport->EngineShowFlags.SetSkyLighting(false);
+    // Retain the final scene pass for the vanilla inverse crosshair blend, while
+    // exposure, tone curves and UE atmosphere remain explicitly disabled.
+    Viewport->EngineShowFlags.SetPostProcessing(true);
+    Viewport->EngineShowFlags.SetBloom(false);
+    Viewport->EngineShowFlags.SetColorGrading(false);
+    Viewport->EngineShowFlags.SetVignette(false);
+    Viewport->EngineShowFlags.SetDepthOfField(false);
     if(!Lighting) Viewport->EngineShowFlags.SetAntiAliasing(false);
     for(TActorIterator<AActor> It(World);It;++It) {
         if(It->ActorHasTag(TEXT("UEBridgeNativeSky")) || It->ActorHasTag(TEXT("UEBridgeNativeLighting"))) continue;
@@ -176,6 +187,10 @@ void UBridgeVideo::SetNativeRenderMode(bool Lighting) {
     UE_LOG(LogTemp,Display,TEXT("Bridge native lighting: mode=%s sky=native sun=%.2f skyFactor=%.3f"),Lighting?TEXT("UE-lit"):TEXT("Minecraft lightmap"),NativeSunAngle,NativeSkyFactor);
 }
 void UBridgeVideo::RestoreNativeRenderMode() {
+    if(auto* Camera=NativeInverseHudCamera.Get()) {
+        Camera->PostProcessSettings.WeightedBlendables.Array.RemoveAll([this](const FWeightedBlendable& Entry){return Entry.Object==NativeInverseHudMaterial;});
+    }
+    NativeInverseHudCamera.Reset();NativeInverseHudMaterial=nullptr;
     if(SavedNativeFlags) if(auto* Viewport=NativeViewport.Get()) Viewport->EngineShowFlags=*SavedNativeFlags;
     SavedNativeFlags.Reset();NativeViewport.Reset();
     for(const auto& Pair:NativeHiddenSky) if(auto* Part=Pair.Key.Get()) Part->SetHiddenInGame(Pair.Value);
@@ -184,6 +199,31 @@ void UBridgeVideo::RestoreNativeRenderMode() {
     NativeHiddenLights.Empty();
     if(NativeLightRig) NativeLightRig->Destroy();NativeLightRig=nullptr;NativeSunLight=nullptr;NativeMoonLight=nullptr;
     if(NativeSky) NativeSky->Destroy();NativeSky=nullptr;NativeSkySphere=nullptr;NativeSun=nullptr;NativeMoon=nullptr;NativeSunMaterial=nullptr;NativeMoonMaterial=nullptr;NativeSkyMaterial=nullptr;
+    NativeStars=nullptr;NativeSunrise=nullptr;NativeStarsMaterial=nullptr;NativeSunriseMaterial=nullptr;
+    NativeSunriseGeometryDirty=true;
+}
+bool UBridgeVideo::SetNativeInverseSprite(int32 Slot,UTexture2D* Texture,const FVector4& PixelRect,const FVector4& UVRect,bool Enabled) {
+    if(Slot<0 || Slot>=3 || !SavedNativeFlags || !GetWorld()) return false;
+    auto* PC=GetWorld()->GetFirstPlayerController();auto* Pawn=PC?PC->GetPawn():nullptr;
+    auto* Camera=Pawn?Pawn->FindComponentByClass<UCameraComponent>():nullptr;
+    if(!Camera) return false;
+    if(!NativeInverseHudMaterial) {
+        auto* Master=LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/Bridge/Minecraft/M_NativeInverseHud_v1.M_NativeInverseHud_v1"));
+        if(!Master) return false;
+        NativeInverseHudMaterial=UMaterialInstanceDynamic::Create(Master,this);
+        if(!NativeInverseHudMaterial) return false;
+    }
+    if(NativeInverseHudCamera.Get()!=Camera) {
+        if(auto* Previous=NativeInverseHudCamera.Get()) Previous->PostProcessSettings.WeightedBlendables.Array.RemoveAll([this](const FWeightedBlendable& Entry){return Entry.Object==NativeInverseHudMaterial;});
+        Camera->PostProcessSettings.WeightedBlendables.Array.Add(FWeightedBlendable(1.f,NativeInverseHudMaterial.Get()));
+        Camera->PostProcessBlendWeight=1.f;NativeInverseHudCamera=Camera;
+    }
+    const FString Suffix=FString::FromInt(Slot);
+    if(Texture) NativeInverseHudMaterial->SetTextureParameterValue(FName(*(TEXT("InverseTexture")+Suffix)),Texture);
+    const bool Visible=Enabled && Texture && PixelRect.Z>0 && PixelRect.W>0;
+    NativeInverseHudMaterial->SetVectorParameterValue(FName(*(TEXT("InverseRect")+Suffix)),Visible?FLinearColor(PixelRect.X,PixelRect.Y,PixelRect.Z,PixelRect.W):FLinearColor::Transparent);
+    NativeInverseHudMaterial->SetVectorParameterValue(FName(*(TEXT("InverseUV")+Suffix)),FLinearColor(UVRect.X,UVRect.Y,UVRect.Z,UVRect.W));
+    return true;
 }
 void UBridgeVideo::SetNativeSkyPalette(UBridgeNativeUiPalette* Palette) {
     NativeSkyPalette=Palette;
@@ -191,8 +231,9 @@ void UBridgeVideo::SetNativeSkyPalette(UBridgeNativeUiPalette* Palette) {
     if(NativeSunMaterial && Sun) NativeSunMaterial->SetTextureParameterValue(TEXT("CelestialTexture"),Sun);
     if(NativeMoonMaterial && Moon) {
         NativeMoonMaterial->SetTextureParameterValue(TEXT("CelestialTexture"),Moon);
-        NativeMoonMaterial->SetVectorParameterValue(TEXT("CelestialUVScale"),PhaseSheet?FLinearColor(.25,.5,0,0):FLinearColor(1,1,0,0));
-        NativeMoonMaterial->SetVectorParameterValue(TEXT("CelestialUVOffset"),PhaseSheet?FLinearColor((NativeMoonPhase%4)*.25,(NativeMoonPhase/4)*.5,0,0):FLinearColor(0,0,0,0));
+        // createMoonPhases reverses both texture coordinates relative to sun.
+        NativeMoonMaterial->SetVectorParameterValue(TEXT("CelestialUVScale"),PhaseSheet?FLinearColor(-.25,-.5,0,0):FLinearColor(-1,-1,0,0));
+        NativeMoonMaterial->SetVectorParameterValue(TEXT("CelestialUVOffset"),PhaseSheet?FLinearColor((NativeMoonPhase%4+1)*.25,(NativeMoonPhase/4+1)*.5,0,0):FLinearColor(1,1,0,0));
     }
     if(NativeSky && NativeHasCelestials && Palette && (!Sun || !Moon)) {
         UE_LOG(LogTemp,Warning,TEXT("Bridge native sky: exported celestial textures missing (sun=%s moon=%s); make a new native export with MOD 0.13.0 for Minecraft 1.21.11 sky assets"),Sun?TEXT("available"):TEXT("missing"),Moon?TEXT("available"):TEXT("missing"));
@@ -215,10 +256,20 @@ void UBridgeVideo::SetNativeSkyEnvironment(const TSharedPtr<FJsonObject>& Values
     bool HasSky=true;Values->TryGetBoolField(TEXT("hasSky"),HasSky);
     FString Skybox;Values->TryGetStringField(TEXT("skybox"),Skybox);
     NativeHasCelestials=BridgeSkyMath::HasCelestialBodies(TCHAR_TO_UTF8(*Dimension),HasSky,TCHAR_TO_UTF8(*Skybox));
+    if(auto* World=GetWorld()) if(auto* Collection=LoadObject<UMaterialParameterCollection>(nullptr,TEXT("/Game/Bridge/Minecraft/MPC_BridgeLighting_v1.MPC_BridgeLighting_v1"))) if(auto* Instance=World->GetParameterCollectionInstance(Collection)) Instance->SetScalarParameterValue(TEXT("BridgeDiffuseLight1Y"),Dimension==TEXT("minecraft:the_nether")?-1.f:1.f);
     double Color=0x78a7ff;Values->TryGetNumberField(TEXT("skyBackgroundColor"),Color);
     const uint32 RGB=static_cast<uint32>(FMath::Clamp(FMath::IsFinite(Color)?Color:double(0x78a7ff),0.,16777215.));
     NativeBackgroundColor=FLinearColor(((RGB>>16)&255)/255.f,((RGB>>8)&255)/255.f,(RGB&255)/255.f,1);
+    NativeStarAngle=NativeSunAngle;NativeStarBrightness=0;NativeSunriseColor=FLinearColor::Transparent;
+    double StarAngle=0,Brightness=0,Sunrise=0;
+    if(Values->TryGetNumberField(TEXT("starAngle"),StarAngle) && FMath::IsFinite(StarAngle)) NativeStarAngle=StarAngle;
+    if(Values->TryGetNumberField(TEXT("starBrightness"),Brightness) && FMath::IsFinite(Brightness)) NativeStarBrightness=FMath::Clamp(float(Brightness),0.f,1.f);
+    if(Values->TryGetNumberField(TEXT("sunriseAndSunsetColor"),Sunrise) && FMath::IsFinite(Sunrise) && Sunrise>=0 && Sunrise<=4294967295.) {
+        const uint32 ColorBits=static_cast<uint32>(Sunrise);
+        NativeSunriseColor=FLinearColor(((ColorBits>>16)&255)/255.f,((ColorBits>>8)&255)/255.f,(ColorBits&255)/255.f,((ColorBits>>24)&255)/255.f);
+    }
     if(NativeSkyMaterial) NativeSkyMaterial->SetVectorParameterValue(TEXT("NativeSkyColor"),NativeBackgroundColor);
+    NativeSunriseGeometryDirty=true;
     SetNativeSkyPalette(NativeSkyPalette);
 }
 void UBridgeVideo::CreateNativeSky() {
@@ -244,6 +295,23 @@ void UBridgeVideo::CreateNativeSky() {
         NativeSun->SetAbsolute(false,true,true);NativeMoon->SetAbsolute(false,true,true);
         NativeSun->SetWorldScale3D(FVector(BridgeSkyMath::PlaneScale(false)));NativeMoon->SetWorldScale3D(FVector(BridgeSkyMath::PlaneScale(true)));
     }
+    auto PrepareProcedural=[&](const TCHAR* Name,const TCHAR* MaterialPath,TObjectPtr<UMaterialInstanceDynamic>& Instance) {
+        auto* Master=LoadObject<UMaterialInterface>(nullptr,MaterialPath);if(!Master) return static_cast<UProceduralMeshComponent*>(nullptr);
+        auto* Part=NewObject<UProceduralMeshComponent>(NativeSky,Name);NativeSky->AddInstanceComponent(Part);Part->SetupAttachment(NativeSky->GetRootComponent());
+        Part->SetAbsolute(false,true,true); // The background sphere has a 10000x scale.
+        Part->SetCollisionEnabled(ECollisionEnabled::NoCollision);Part->SetCastShadow(false);Part->SetCanEverAffectNavigation(false);Part->SetMobility(EComponentMobility::Movable);
+        Instance=UMaterialInstanceDynamic::Create(Master,this);Part->SetMaterial(0,Instance.Get());Part->RegisterComponent();return Part;
+    };
+    NativeStars=PrepareProcedural(TEXT("NativeStars"),TEXT("/Game/Bridge/Minecraft/M_NativeStars_v1.M_NativeStars_v1"),NativeStarsMaterial);
+    NativeSunrise=PrepareProcedural(TEXT("NativeSunrise"),TEXT("/Game/Bridge/Minecraft/M_NativeSunrise_v1.M_NativeSunrise_v1"),NativeSunriseMaterial);
+    if(NativeStars) {
+        TArray<FVector> Vertices,Normals;TArray<int32> Triangles;TArray<FVector2D> UVs;TArray<FColor> Colors;TArray<FProcMeshTangent> Tangents;
+        for(const auto& Star:BridgeSkyMath::Stars()) {
+            const int32 Base=Vertices.Num();for(const auto& P:Star.vertices) Vertices.Add(FVector(P[2],-P[0],P[1])*(BridgeSkyMath::CelestialRadius/100.));
+            Triangles.Append({Base,Base+1,Base+2,Base,Base+2,Base+3});
+        }
+        NativeStars->CreateMeshSection(0,Vertices,Triangles,Normals,UVs,Colors,Tangents,false);
+    }
     SetNativeSkyPalette(NativeSkyPalette);
 }
 void UBridgeVideo::UpdateNativeSky() {
@@ -262,7 +330,9 @@ void UBridgeVideo::UpdateNativeSky() {
         Component->SetWorldRotation((-FVector(Direction[0],Direction[1],Direction[2])).Rotation());
         // Direct light supplies shadows; ambient/block light is supplied by the native lightmap material.
         Component->SetIntensity((Moonlight ? .12f : 1.8f)*Elevation*(1.f-NativeRain*.75f)*(Moonlight ? 1.f : NativeSkyFactor));
-        Component->SetLightColor(Moonlight ? FLinearColor(.65f,.72f,1.f) : FLinearColor(1.f,.96f,.90f));
+        // Vanilla's colour comes from SKY_LIGHT_COLOR_VISUAL/lightmap, not a
+        // second hard-coded warm sun or blue moon colour multiplier.
+        Component->SetLightColor(FLinearColor::White);
     };
     Light(NativeSunLight,Sun,false);Light(NativeMoonLight,Moon,true);
     bool PhaseSheet=false;
@@ -270,6 +340,28 @@ void UBridgeVideo::UpdateNativeSky() {
     Place(NativeMoon,FVector(Moon[0],Moon[1],Moon[2]),NativeMoonTexture(NativeSkyPalette,NativeMoonPhase,PhaseSheet)!=nullptr);
     if(NativeSunMaterial) NativeSunMaterial->SetScalarParameterValue(TEXT("CelestialOpacity"),1.f-NativeRain);
     if(NativeMoonMaterial) NativeMoonMaterial->SetScalarParameterValue(TEXT("CelestialOpacity"),1.f-NativeRain);
+    for(auto* Material:{NativeSunMaterial.Get(),NativeMoonMaterial.Get(),NativeStarsMaterial.Get(),NativeSunriseMaterial.Get()}) if(Material) Material->SetVectorParameterValue(TEXT("NativeSkyColor"),NativeBackgroundColor);
+    if(NativeStars) {
+        NativeStars->SetHiddenInGame(!NativeHasCelestials || NativeStarBrightness<=0);
+        // Coordinates are already MC z/-x/y; Y(-90) then X(angle) becomes this
+        // mapped transform. Reflection of axes flips both rotation signs.
+        const FQuat Rotation=FQuat(FVector::UpVector,FMath::DegreesToRadians(90.))*FQuat(FVector::YAxisVector,FMath::DegreesToRadians(NativeStarAngle));
+        NativeStars->SetWorldRotation(Rotation);
+    }
+    if(NativeStarsMaterial) NativeStarsMaterial->SetScalarParameterValue(TEXT("StarBrightness"),NativeStarBrightness);
+    if(NativeSunrise) NativeSunrise->SetHiddenInGame(!NativeHasCelestials || NativeSunriseColor.A<=.001f);
+    if(NativeSunrise && NativeSunriseGeometryDirty) {
+        NativeSunriseGeometryDirty=false;
+        // Same 16-segment coloured triangle fan as SkyRendering.createSunrise.
+        TArray<FVector> Vertices,Normals;TArray<int32> Triangles;TArray<FVector2D> UVs;TArray<FColor> Colors;TArray<FProcMeshTangent> Tangents;
+        const double Scale=BridgeSkyMath::CelestialRadius/150.;
+        const FQuat Rotation=FQuat(FVector::YAxisVector,FMath::DegreesToRadians(-90.))*FQuat(FVector::ForwardVector,FMath::DegreesToRadians(-(std::sin(NativeSunAngle*BridgeSkyMath::Pi/180.)<0?270.:90.)));
+        auto Vertex=[&](double X,double Y,double Z,uint8 Alpha) {Vertices.Add(Rotation.RotateVector(FVector(Z*NativeSunriseColor.A,-X,Y))*Scale);Colors.Add(FColor(255,255,255,Alpha));};
+        Vertex(0,100,0,255);
+        for(int32 Index=0;Index<=16;++Index) {const double Angle=Index*2*BridgeSkyMath::Pi/16.;Vertex(std::sin(Angle)*120,std::cos(Angle)*120,-std::cos(Angle)*40,0);if(Index>0) Triangles.Append({0,Index,Index+1});}
+        NativeSunrise->CreateMeshSection(0,Vertices,Triangles,Normals,UVs,Colors,Tangents,false);
+    }
+    if(NativeSunriseMaterial) NativeSunriseMaterial->SetVectorParameterValue(TEXT("SunriseColor"),NativeSunriseColor);
 }
 void UBridgeVideo::ConfigureCapture(USceneCaptureComponent2D* Component,bool Mask) {
     if(!Component) return;

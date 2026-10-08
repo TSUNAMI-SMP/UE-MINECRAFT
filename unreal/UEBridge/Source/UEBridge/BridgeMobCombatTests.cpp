@@ -4,12 +4,13 @@
 #include "BridgeCharacter.h"
 #include "BridgeCharacterMovement.h"
 #include "Components/CapsuleComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "ProceduralMeshComponent.h"
 #include "Materials/Material.h"
 #include "Engine/World.h"
 #include "Misc/AutomationTest.h"
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeMobCombatTest,"UEBridge.Native.Mobs.HurtWindowAndGroundedDeath",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBridgeMobCombatTest,"UEBridge.Native.Mobs.HurtWindowAndVanillaDeath",EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FBridgeMobCombatTest::RunTest(const FString&) {
     UWorld* World=UWorld::CreateWorld(EWorldType::Game,false);
     if(!TestNotNull(TEXT("Test world"),World)) return false;
@@ -33,9 +34,12 @@ bool FBridgeMobCombatTest::RunTest(const FString&) {
         TestEqual(TEXT("20 - 4 - (7-4) health"),Mob->NativeSnapshot(FVector::ZeroVector,FVector::ZeroVector).Health,13.f);
         TestTrue(TEXT("Fatal stronger hit accepted"),Mob->Hit(100,FVector(1,0,0)));
         TestFalse(TEXT("Dead mob is not alive"),Mob->Alive());Mob->Tick(.1f);
-        float Bottom=TNumericLimits<float>::Max();TInlineComponentArray<UProceduralMeshComponent*> Parts;Mob->GetComponents(Parts);
-        for(auto* Mesh:Parts) if(Mesh->GetNumSections()>0) Bottom=FMath::Min(Bottom,float(Mesh->CalcBounds(Mesh->GetComponentTransform()).GetBox().Min.Z));
-        TestTrue(TEXT("Fallen model bottom rests at feet plane"),FMath::IsNearlyZero(Bottom,.1f));
+        const FVector LethalVelocity=Mob->GetCharacterMovement()->Velocity;
+        Mob->SetAuthority(true,nullptr);
+        TestTrue(TEXT("Authority refresh preserves dying entity motion"),Mob->GetCharacterMovement()->Velocity.Equals(LethalVelocity));
+        TestTrue(TEXT("Dying mob retains terrain collision"),Mob->GetCapsuleComponent()->GetCollisionEnabled()!=ECollisionEnabled::NoCollision);
+        TestEqual(TEXT("Dying mob does not block aiming"),Mob->GetCapsuleComponent()->GetCollisionResponseToChannel(ECC_Visibility),ECR_Ignore);
+        TestEqual(TEXT("Dying mob does not block player"),Mob->GetCapsuleComponent()->GetCollisionResponseToChannel(ECC_Pawn),ECR_Ignore);
     }
     const auto* Character=GetDefault<ABridgeCharacter>();
     TestNotNull(TEXT("Creative flight uses the custom movement component"),Cast<UBridgeCharacterMovement>(Character->GetCharacterMovement()));

@@ -50,7 +50,8 @@ def setup_vanilla_effects(explosion_system_path=None):
     if complete:
         if not assets.save_loaded_asset(material, False):
             raise RuntimeError("Cannot save dust material")
-        _assign_effects(unreal, receivers[0], material, explosion)
+        poof = _create_death_poof_material(unreal, assets, editing, folder, lighting_helper)
+        _assign_effects(unreal, receivers[0], material, explosion, poof)
         return material
     # This revisioned graph is staged independently of any previously registered
     # dust material. Failed repairs leave the old receiver/material untouched.
@@ -145,25 +146,92 @@ def setup_vanilla_effects(explosion_system_path=None):
         raise RuntimeError("Dust material parameters are incomplete; run setup_vanilla_effects() again")
     if not assets.save_loaded_asset(material, False):
         raise RuntimeError("Cannot save dust material")
-    _assign_effects(unreal, receivers[0], material, explosion)
+    poof = _create_death_poof_material(unreal, assets, editing, folder, lighting_helper)
+    _assign_effects(unreal, receivers[0], material, explosion, poof)
     return material
 
 
-def _assign_effects(unreal, receiver, material, explosion):
+def _create_death_poof_material(unreal, assets, editing, folder, lighting_helper):
+    """Create the sprite material used by the 20 vanilla death particles.
+
+    Death sprites are exported from the active Minecraft pack into the native UI
+    palette.  The material is deliberately tiny and masked: C++ selects one
+    frame per particle instance and supplies the source grayscale multiplier via
+    custom-data channel 0.  No vanilla texture is embedded in this repository.
+    """
+    revision = hashlib.sha256(b"death-poof-v1\0" + lighting_helper.read_bytes()).hexdigest()[:12]
+    name, path = "M_MinecraftDeathPoof_v1_" + revision, folder + "/M_MinecraftDeathPoof_v1_" + revision
+    material = unreal.load_asset(path) if assets.does_asset_exist(path) else None
+    if material is None:
+        material = unreal.AssetToolsHelpers.get_asset_tools().create_asset(name, folder, unreal.Material, unreal.MaterialFactoryNew())
+    if not isinstance(material, unreal.Material):
+        raise RuntimeError("Death poof material asset path is occupied by another asset type")
+    required = {"PoofTexture"} <= {str(value) for value in editing.get_texture_parameter_names(material)}
+    required = required and "PoofColor" in {str(value) for value in editing.get_vector_parameter_names(material)}
+    required = required and all(editing.get_material_property_input_node(material, prop) is not None for prop in (unreal.MaterialProperty.MP_OPACITY_MASK, unreal.MaterialProperty.MP_EMISSIVE_COLOR))
+    if not required:
+        editing.delete_all_material_expressions(material)
+        material.set_editor_property("used_with_instanced_static_meshes", True)
+        material.set_editor_property("two_sided", True)
+        material.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED)
+        if hasattr(unreal, "MaterialShadingModel"):
+            material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
+
+        def node(cls):
+            expression = editing.create_material_expression(material, cls, 0, 0)
+            if expression is None:
+                raise RuntimeError("Cannot create death poof material expression")
+            return expression
+
+        def wire(source, target, pin="", output=""):
+            if not editing.connect_material_expressions(source, output, target, pin):
+                raise RuntimeError("Cannot connect death poof material")
+
+        sample = node(unreal.MaterialExpressionTextureSampleParameter2D)
+        sample.set_editor_property("parameter_name", "PoofTexture")
+        default_texture = unreal.load_asset("/Engine/EngineResources/DefaultTexture.DefaultTexture")
+        if default_texture is None:
+            raise RuntimeError("Engine default texture is missing")
+        sample.set_editor_property("texture", default_texture)
+        color = node(unreal.MaterialExpressionVectorParameter)
+        color.set_editor_property("parameter_name", "PoofColor")
+        color.set_editor_property("default_value", unreal.LinearColor(1, 1, 1, 1))
+        product = node(unreal.MaterialExpressionMultiply)
+        wire(sample, product, "A", "RGB")
+        wire(color, product, "B")
+        gray = node(unreal.MaterialExpressionPerInstanceCustomData)
+        gray.set_editor_property("data_index", 0)
+        toned = node(unreal.MaterialExpressionMultiply)
+        wire(product, toned, "A")
+        wire(gray, toned, "B")
+        if not editing.connect_material_property(toned, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR):
+            raise RuntimeError("Cannot connect death poof emissive")
+        if not editing.connect_material_property(sample, "A", unreal.MaterialProperty.MP_OPACITY_MASK):
+            raise RuntimeError("Cannot connect death poof opacity")
+        editing.recompile_material(material)
+    if not assets.save_loaded_asset(material, False):
+        raise RuntimeError("Cannot save death poof material")
+    return material
+
+
+def _assign_effects(unreal, receiver, material, explosion, poof):
     previous = receiver.get_editor_property("vanilla_particle_material")
     previous_explosion = receiver.get_editor_property("explosion_system")
+    previous_poof = receiver.get_editor_property("vanilla_death_poof_material")
     try:
         with unreal.ScopedEditorTransaction("Configure Minecraft vanilla particles"):
             receiver.set_editor_property("vanilla_particle_material", material)
+            receiver.set_editor_property("vanilla_death_poof_material", poof)
             if explosion is not None:
                 receiver.set_editor_property("explosion_system", explosion)
-        if not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level() or receiver.get_editor_property("vanilla_particle_material") != material:
+        if not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level() or receiver.get_editor_property("vanilla_particle_material") != material or receiver.get_editor_property("vanilla_death_poof_material") != poof:
             raise RuntimeError("Cannot save/verify vanilla particle assignment")
     except Exception:
         receiver.set_editor_property("vanilla_particle_material", previous)
+        receiver.set_editor_property("vanilla_death_poof_material", previous_poof)
         receiver.set_editor_property("explosion_system", previous_explosion)
         unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level()
         raise
-    unreal.log("Minecraft dust material assigned and saved; check particle readiness in the Bridge diagnostics")
+    unreal.log("Minecraft dust and death-poof materials assigned and saved; check particle readiness in the Bridge diagnostics")
     if receiver.get_editor_property("explosion_system") is None:
         getattr(unreal, "log_warning", unreal.log)("Niagara explosion is not assigned. Dust is ready; supply a Niagara System with setup_vanilla_effects('/Game/.../NS_Explosion') for Niagara TNT VFX. Existing VFX assignments were preserved.")

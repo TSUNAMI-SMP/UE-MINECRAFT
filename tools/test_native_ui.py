@@ -55,6 +55,71 @@ class NativeUiValidation(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"weapon attributes"):
             self.load()
 
+    def creative_group(self):
+        return dict(id="minecraft:building_blocks", name="建築ブロック", type="category", icon="minecraft:stone",
+                    texture="hud/hotbar", row=0, column=0, special=False, scrollbar=True, renderName=True, items=["minecraft:stone"])
+
+    def test_creative_group_order_is_preserved_and_legacy_is_optional(self):
+        self.assertEqual([], self.load()["groups"])
+        second = dict(self.manifest["items"][0], id="minecraft:dirt", name="土")
+        self.manifest["items"].append(second)
+        group = self.creative_group()
+        group["items"] = ["minecraft:dirt", "minecraft:stone"]
+        self.manifest["groups"] = [group]
+        self.assertEqual(["minecraft:dirt", "minecraft:stone"], self.load()["groups"][0]["items"])
+
+    def test_creative_group_unknown_duplicate_and_missing_assets_are_rejected(self):
+        self.manifest["groups"] = [self.creative_group()]
+        for order in (["minecraft:unexported"], ["minecraft:stone", "minecraft:stone"]):
+            self.manifest["groups"][0]["items"] = order
+            with self.assertRaisesRegex(ValueError, "item order"):
+                self.load()
+        self.manifest["groups"][0] = self.creative_group()
+        self.manifest["groups"][0]["texture"] = "missing/panel"
+        with self.assertRaisesRegex(ValueError, "icon/texture"):
+            self.load()
+
+    def test_creative_group_positions_are_unique_and_flags_are_boolean(self):
+        self.manifest["groups"] = [self.creative_group()]
+        self.manifest["groups"].append(dict(self.creative_group(), id="minecraft:natural_blocks"))
+        with self.assertRaisesRegex(ValueError, "position"):
+            self.load()
+        self.manifest["groups"] = [self.creative_group()]
+        for row, column in ((True, 0), (0, 7), (-1, 0)):
+            self.manifest["groups"][0].update(row=row, column=column)
+            with self.assertRaisesRegex(ValueError, "position"):
+                self.load()
+        self.manifest["groups"][0] = self.creative_group()
+        self.manifest["groups"][0]["special"] = 1
+        with self.assertRaisesRegex(ValueError, "flags"):
+            self.load()
+
+    def test_equipment_component_attributes_are_validated(self):
+        item=self.manifest["items"][0]
+        item.update(equipmentSlot=2,armor=8,armorToughness=3,armorKnockbackResistance=.1)
+        self.assertEqual(2,self.load()["items"][0]["equipmentSlot"])
+        for slot in (True,-1,5):
+            item["equipmentSlot"]=slot
+            with self.assertRaisesRegex(ValueError,"equipment slot"):
+                self.load()
+        item["equipmentSlot"]=2
+        for key,value in (("armor",float("nan")),("armorToughness",-1),("armorKnockbackResistance",2)):
+            good=item[key];item[key]=value
+            with self.assertRaisesRegex(ValueError,"equipment attributes"):
+                self.load()
+            item[key]=good
+
+    def test_death_poof_order_duplicates_and_legacy_are_preserved(self):
+        self.assertEqual([],self.load()["deathPoofFrames"])
+        self.manifest["sprites"]["particle/generic_0"]=dict(self.entry)
+        self.manifest["sprites"]["pack:particle/replacement"]=dict(self.entry)
+        order=["pack:particle/replacement","particle/generic_0","pack:particle/replacement"]
+        self.manifest["deathPoofFrames"]=order
+        self.assertEqual(order,self.load()["deathPoofFrames"])
+        self.manifest["deathPoofFrames"]=["missing/sprite"]
+        with self.assertRaisesRegex(ValueError,"death poof"):
+            self.load()
+
     def test_modified_texture_rejected(self):
         (self.root / "icon.png").write_bytes(self.data + b"tampered")
         with self.assertRaisesRegex(ValueError, "checksum"):

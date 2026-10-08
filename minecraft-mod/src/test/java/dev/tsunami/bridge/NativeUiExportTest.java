@@ -44,6 +44,33 @@ public class NativeUiExportTest {
         }
         for(String phase:PHASES) assertTrue(celestial.contains("minecraft:textures/environment/celestial/moon/"+phase+".png"));
     }
+    @Test public void creativePanelsAndAttackSpritesExistInVanilla12111() throws Exception {
+        for(String file:List.of("textures/gui/container/creative_inventory/tab_inventory.png", "textures/gui/container/creative_inventory/tab_items.png", "textures/gui/container/creative_inventory/tab_item_search.png",
+                "textures/gui/sprites/hud/crosshair_attack_indicator_background.png", "textures/gui/sprites/hud/crosshair_attack_indicator_progress.png", "textures/gui/sprites/hud/crosshair_attack_indicator_full.png",
+                "textures/gui/sprites/container/creative_inventory/scroller.png", "textures/gui/sprites/container/creative_inventory/tab_top_selected_1.png", "textures/gui/sprites/container/creative_inventory/tab_bottom_unselected_7.png")) {
+            try(var resource=getClass().getResourceAsStream("/assets/minecraft/"+file)) {assertNotNull(file,resource);assertNotNull(ImageIO.read(resource));}
+        }
+    }
+    @Test public void activePoofSpriteOrderAndOverridesArePreserved() throws Exception {
+        SelectedResources manager=new SelectedResources();byte[] pixels=png(4,4,0xff123456);
+        manager.put("minecraft:particles/poof.json","{\"textures\":[\"pack:replacement\",\"minecraft:generic_0\",\"pack:replacement\"]}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        Resource selected=manager.put("pack:textures/particle/replacement.png",pixels);manager.put("minecraft:textures/particle/generic_0.png",pixels);
+        Map<Identifier,Resource> resources=new HashMap<>();var frames=NativeUiExport.collectDeathPoof(manager,resources);
+        assertEquals(List.of(Identifier.of("pack:textures/particle/replacement.png"),Identifier.of("minecraft:textures/particle/generic_0.png"),Identifier.of("pack:textures/particle/replacement.png")),frames);
+        assertSame(selected,resources.get(frames.getFirst()));assertEquals(2,resources.size());
+        manager.entries.remove(Identifier.of("minecraft:textures/particle/generic_0.png"));
+        assertThrows(IOException.class,()->NativeUiExport.collectDeathPoof(manager,new HashMap<>()));
+    }
+    @Test public void vanillaPoofDefinitionUsesActualLocalSpriteAssets() throws Exception {
+        SelectedResources manager=new SelectedResources();
+        try(var input=getClass().getResourceAsStream("/assets/minecraft/particles/poof.json")) {assertNotNull(input);manager.put("minecraft:particles/poof.json",input.readAllBytes());}
+        var json=com.google.gson.JsonParser.parseString(new String(manager.getResource(Identifier.of("minecraft:particles/poof.json")).get().getInputStream().readAllBytes(),java.nio.charset.StandardCharsets.UTF_8));
+        for(var value:json.getAsJsonObject().getAsJsonArray("textures")) {
+            var id=Identifier.of(value.getAsString());var file=Identifier.of(id.getNamespace(),"textures/particle/"+id.getPath()+".png");
+            try(var input=getClass().getResourceAsStream("/assets/"+file.getNamespace()+"/"+file.getPath())) {assertNotNull(file.toString(),input);manager.put(file.toString(),input.readAllBytes());}
+        }
+        var frames=NativeUiExport.collectDeathPoof(manager,new HashMap<>());assertEquals(8,frames.size());
+    }
     @Test public void moonPhaseIndexMatchesActualVanillaCelestialTextureName() {
         for(var phase:net.minecraft.world.MoonPhase.values()) assertEquals(phase.asString(),PHASES.get(phase.getIndex()));
         for(var skybox:net.minecraft.world.dimension.DimensionType.Skybox.values())

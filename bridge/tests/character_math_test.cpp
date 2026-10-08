@@ -1,6 +1,7 @@
 #include "BridgeCharacterMath.h"
 #include "BridgeParticleMath.h"
 #include "BridgeNativeInputMath.h"
+#include "BridgeNativeLookMath.h"
 #include <iostream>
 #include <limits>
 #include <string>
@@ -34,6 +35,13 @@ int main() {
     Check(WheelSteps(-1,.5,WheelRemainder)==-1,"downward fractional wheel movement accumulates with its sign");
     Check(WheelSteps(std::numeric_limits<double>::quiet_NaN(),1,WheelRemainder)==0,"invalid mouse wheel delta never selects an item");
     Check(Near(ClampPitch(200),90)&&Near(ClampPitch(-200),-90),"mouse look remains in vanilla pitch range");
+    BridgeNativeLookMath::Smoother Look;
+    Check(Near(BridgeNativeLookMath::Degrees(10,.5,1./60,false,false,Look),3.75),"requested calibration is 2.5 times vanilla counts after the sensitivity curve");
+    Check(Near(BridgeNativeLookMath::Degrees(10,.5,1./60,false,true,Look),.46875),"spyglass uses vanilla one-eighth mouse gain");
+    Check(Near(BridgeNativeLookMath::Degrees(10,.5,1./60,true,false,Look),.03125),"smooth camera matches Java Smoother first frame golden result");
+    Check(Near(BridgeNativeLookMath::Degrees(0,.5,1./60,true,false,Look),.046614583333333),"smooth camera preserves reference delayed motion after mouse input ends");
+    Check(Near(BridgeNativeLookMath::Degrees(0,.5,1./60,false,false,Look),0)&&Near(Look.ActualSum,0),"turning off smooth camera clears its accumulated movement");
+    Check(Near(BridgeNativeLookMath::Degrees(std::numeric_limits<double>::quiet_NaN(),.5,.01,true,false,Look),0),"nonfinite mouse input cannot corrupt view rotation");
     using namespace BridgeCharacterMath;
     Check(Near(SprintFovMultiplier(1,true,.05),1.075),"sprint FOV approaches half target in one MC tick");
     double LowRate=1,HighRate=1;

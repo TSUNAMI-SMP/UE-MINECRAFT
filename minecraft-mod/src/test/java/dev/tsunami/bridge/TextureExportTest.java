@@ -33,6 +33,33 @@ public class TextureExportTest {
         assertEquals("minecraft:block/grass_side",faces.side().texture()); assertFalse(faces.side().tint());
         assertEquals("minecraft:block/dirt",faces.bottom().texture());
     }
+    @Test public void grassRenderTintIsIndependentOfUntintedDirtDust() throws Exception {
+        var exporter=make(resources());
+        assertTrue(exporter.export(new TextureExport.Block("minecraft:grass_block",Map.of("snowy","false"),0x91bd59,List.of(),"")));
+        var block=JsonParser.parseString(Files.readString(exporter.finish())).getAsJsonObject().getAsJsonObject("blocks").getAsJsonObject("minecraft:grass_block");
+        assertEquals(0x91bd59,block.getAsJsonObject("renderTints").get("0").getAsInt());
+        assertEquals("grass",block.getAsJsonObject("tintSources").get("0").getAsString());
+        assertFalse(block.getAsJsonObject("particle").get("tint").getAsBoolean());
+        assertEquals(0xffffff,block.getAsJsonObject("particle").get("color").getAsInt());
+    }
+    @Test public void nativeTintSourcesPreservePetalAndFixedLeafProviders() {
+        assertEquals("none",TextureExport.tintSource("minecraft:pink_petals",0));
+        assertEquals("grass",TextureExport.tintSource("minecraft:pink_petals",1));
+        assertEquals("foliage",TextureExport.tintSource("minecraft:oak_leaves",0));
+        assertEquals("dry_foliage",TextureExport.tintSource("minecraft:leaf_litter",0));
+        assertEquals("constant",TextureExport.tintSource("minecraft:birch_leaves",0));
+    }
+    @Test public void coplanarGrassBaseAndOverlaySurviveResourceExport() throws Exception {
+        var map=resources();
+        put(map,"minecraft:models/block/grass.json","{\"textures\":{\"base\":\"block/dirt\",\"overlay\":\"block/grass_side\"},\"elements\":[{\"from\":[0,0,0],\"to\":[16,16,16],\"faces\":{\"north\":{\"texture\":\"#base\"}}},{\"from\":[0,0,0],\"to\":[16,16,16],\"faces\":{\"north\":{\"texture\":\"#overlay\",\"tintindex\":0}}}]}");
+        var exporter=make(map);assertTrue(exporter.export(grass()));
+        var elements=JsonParser.parseString(Files.readString(exporter.finish())).getAsJsonObject().getAsJsonObject("models").getAsJsonObject("minecraft:block/grass").getAsJsonArray("elements");
+        assertEquals(2,elements.size());
+        var base=elements.get(0).getAsJsonObject().getAsJsonObject("faces").getAsJsonObject("north");
+        var overlay=elements.get(1).getAsJsonObject().getAsJsonObject("faces").getAsJsonObject("north");
+        assertEquals("minecraft:block/dirt",base.get("texture").getAsString());assertFalse(base.has("tintindex"));
+        assertEquals("minecraft:block/grass_side",overlay.get("texture").getAsString());assertEquals(0,overlay.get("tintindex").getAsInt());
+    }
     @Test public void writesReusableCheckedManifestAndDeduplicatesTextures() throws Exception {
         var exporter=make(resources()); assertTrue(exporter.export(grass())); assertTrue(exporter.export(grass()));
         Path manifest=exporter.finish(); var json=JsonParser.parseString(Files.readString(manifest)).getAsJsonObject();

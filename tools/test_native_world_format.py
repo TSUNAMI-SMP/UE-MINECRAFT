@@ -23,6 +23,49 @@ def fixture():
 
 
 class NativeWorldFormatTest(unittest.TestCase):
+    def test_biome_tints_cover_empty_positions_and_survive_save(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = pathlib.Path(folder) / "world.ndjson"
+            header, cells = fixture()
+            colors = [[0x91BD59, 0x77AB2F, 0xA68F65], [0x80B497, 0x60A17B, 0xAD9774]]
+            field = {"palette": colors, "indices": [0] * 512}
+            field["indices"][511] = 1
+            cells[0]["biomeTints"] = field  # Empty terrain still retains placement colors.
+            write_world_file(path, header, cells)
+            saved = json.loads(path.read_text().splitlines()[1])
+            self.assertEqual(saved["blocks"], [])
+            self.assertEqual(saved["biomeTints"], field)
+            previous = path.read_bytes()
+            variants = [None, {}, {"palette": [], "indices": [0] * 512},
+                        {"palette": colors, "indices": [0] * 511},
+                        {"palette": colors, "indices": [2] * 512},
+                        {"palette": colors, "indices": [True] * 512},
+                        {"palette": colors, "indices": [0.5] * 512},
+                        {"palette": [[-1, 0, 0]], "indices": [0] * 512},
+                        {"palette": [[0x1000000, 0, 0]], "indices": [0] * 512},
+                        {"palette": [[True, 0, 0]], "indices": [0] * 512},
+                        {"palette": [[0, 0]], "indices": [0] * 512}]
+            for invalid in variants:
+                cells[0]["biomeTints"] = invalid
+                with self.subTest(biome_tints=invalid), self.assertRaises(ValueError):
+                    write_world_file(path, header, cells)
+                self.assertEqual(path.read_bytes(), previous)
+
+    def test_water_occupancy_is_bounded_and_survives_world_round_trip(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = pathlib.Path(folder) / "world.ndjson"
+            header, cells = fixture()
+            cells[13]["water"] = [0, 63, 64, 511]
+            write_world_file(path, header, cells)
+            data = [json.loads(line) for line in path.read_text().splitlines()]
+            self.assertEqual(data[14]["water"], [0, 63, 64, 511])
+            previous = path.read_bytes()
+            for invalid in (None, {}, [0, 0], [-1], [512], [True], [1.5], [float("nan")], list(range(513))):
+                cells[13]["water"] = invalid
+                with self.subTest(water=invalid), self.assertRaises(ValueError):
+                    write_world_file(path, header, cells)
+                self.assertEqual(path.read_bytes(), previous)
+
     def test_round_trip_preserves_negative_origin_state_light_and_empty_cells(self):
         with tempfile.TemporaryDirectory() as folder:
             path = pathlib.Path(folder) / "world.ndjson"

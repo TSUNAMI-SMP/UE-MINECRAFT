@@ -23,6 +23,10 @@ inline bool CoincidentForwardQuads(const std::array<Point,4>& A,const std::array
 // MC -> UE reflects the coordinates. UE rasterizes clockwise fronts, so
 // the transformed MC quad order is retained while outward normals transform separately.
 inline std::array<int,6> UEFrontQuad(int base=0) {return {base,base+1,base+2,base,base+2,base+3};}
+inline std::array<int,6> UEFacingQuad(const std::array<Point,4>& Quad,const Point& Outward,int Base=0) {
+    const auto N=NativeNormal(Quad);double Dot=0;for(int I=0;I<3;++I) Dot+=N[I]*Outward[I];
+    return Dot>0 ? std::array<int,6>{Base,Base+2,Base+1,Base,Base+3,Base+2} : UEFrontQuad(Base);
+}
 constexpr int CellSize=8;
 struct Box {int x,y,z,sx,sy,sz;};
 inline int Index(int x,int y,int z) {return x+(z<<3)+(y<<6);}

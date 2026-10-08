@@ -85,6 +85,8 @@ def load_item_manifest(filename):
                     raise ValueError('Invalid native item face texture/tint')
                 if face.get('alphaMode', 'masked') not in ('masked', 'translucent'):
                     raise ValueError('Invalid native item alpha mode')
+                if 'doubleSided' in face and type(face['doubleSided']) is not bool:
+                    raise ValueError('Invalid native item culling flag')
                 if 'normal' in face:
                     vector(face['normal'], 3)
                 for name, size in (('vertices', 3), ('uv', 2)):
@@ -138,7 +140,7 @@ def import_minecraft_items(filename, asset_root="/Game/Bridge/Minecraft/Items"):
     models = {key: json.dumps(value, separators=(',', ':'), allow_nan=False) for key, value in manifest['items'].items()}
     assets, tools, editing = unreal.EditorAssetLibrary, unreal.AssetToolsHelpers.get_asset_tools(), unreal.MaterialEditingLibrary
     helper = runpy.run_path(str(helper_path))
-    root = asset_root; materials = {}; render_modes = item_render_modes(manifest)
+    root = asset_root; materials = {}; render_modes = item_render_modes(manifest); updated_parents = set()
     with unreal.ScopedSlowTask(len(manifest['textures']), 'Import Minecraft item textures') as progress:
         progress.make_dialog(True)
         for key, entry in manifest['textures'].items():
@@ -160,6 +162,14 @@ def import_minecraft_items(filename, asset_root="/Game/Bridge/Minecraft/Items"):
                 raise RuntimeError('Cannot save item texture')
             for alpha_mode in sorted(render_modes[key]):
                 parent = helper['_model_parent'](unreal, assets, tools, editing, root, texture, alpha_mode)
+                if parent not in updated_parents:
+                    # Native per-face culling is now represented by mesh indices.
+                    # A two-sided master would blend every explicit reverse face twice.
+                    parent.set_editor_property('two_sided', False)
+                    editing.recompile_material(parent)
+                    if not assets.save_loaded_asset(parent, False):
+                        raise RuntimeError('Cannot save native item culling master')
+                    updated_parents.add(parent)
                 name = 'MI_Item_' + key[:24] + ('_Translucent' if alpha_mode == 'translucent' else ''); target = root + '/' + name
                 material = unreal.load_asset(target) if assets.does_asset_exist(target) else None
                 if material is None:

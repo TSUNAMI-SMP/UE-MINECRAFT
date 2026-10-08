@@ -82,6 +82,7 @@ private:
     };
     TMap<UProceduralMeshComponent*,TArray<FHandSection>> HandSources;
     FIntVector AimVoxel=FIntVector::ZeroValue;FString AimState;bool AimShapeReady=false;
+    TArray<FVector> AimLineEndpoints;
     bool HeldGeometryReady=false,NativeHeldGeometry=false;
     bool OffhandGeometryReady=false,NativeOffhandGeometry=false,OffhandPendingVisual=false;
     float OffhandEquip=1;

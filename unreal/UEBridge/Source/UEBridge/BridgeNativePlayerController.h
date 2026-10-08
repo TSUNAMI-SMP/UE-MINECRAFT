@@ -14,6 +14,7 @@ public:
     virtual void BeginPlay() override;
     virtual void Tick(float DeltaSeconds) override;
     virtual void UpdateRotation(float DeltaSeconds) override;
+    virtual FRotator GetControlRotation() const override;
     virtual void EndPlay(const EEndPlayReason::Type Reason) override;
     virtual bool InputKey(const FInputKeyEventArgs& Params) override;
     void ConfigureNativeSettings(const TSharedPtr<class FJsonObject>& Settings);
@@ -60,6 +61,8 @@ private:
     float MouseSensitivity=.5f,NativeBaseFov=70.f,NativeFovEffectScale=1.f;
     double MouseWheelSensitivity=1,WheelRemainder=0;
     double RawMouseX=0,RawMouseY=0;
+    // Signed input state must never be reconstructed from normalized UE rotations.
+    double NativeLookYaw=0,NativeLookPitch=0;bool NativeLookReady=false;
     double PreviousJumpTap=-1,PreviousForwardTap=-1,NextAttack=0,NextUse=0;
     FString SelectedItem,SettingsProfile=TEXT("default");
     TSharedPtr<class FJsonObject> CachedNativeSettings;

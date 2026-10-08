@@ -138,7 +138,8 @@ bool Bake(const Object& Model,const Object& Application,TArray<FBridgeModelFace>
             // overlay on the same plane. UE groups material sections and its
             // depth prepass cannot preserve that draw order. Retain both quads
             // and separate only coincident forward-facing layers by 0.05 cm.
-            const FVector FaceNormal=FVector::CrossProduct(Face.Vertices[1]-Face.Vertices[0],Face.Vertices[2]-Face.Vertices[0]).GetSafeNormal();
+            Face.NativeNormal=Rotation.RotateVector(Tilt.RotateVector(Normal)).GetSafeNormal();Face.HasNativeNormal=true;
+            const FVector FaceNormal=Face.NativeNormal;
             std::array<BridgeMeshingMath::Point,4> Quad;for(int32 I=0;I<4;++I) Quad[I]={Face.Vertices[I].X,Face.Vertices[I].Y,Face.Vertices[I].Z};
             double LayerDepth=0;
             for(const auto& Previous:Out) {
@@ -265,7 +266,8 @@ bool UBridgeBlockPalette::BuildItem(const FString& ItemId,const FString& Context
         const TArray<TSharedPtr<FJsonValue>> *Vertices=nullptr,*UV=nullptr;FBridgeModelFace Face;
         if(!Data->TryGetStringField(TEXT("texture"),Face.TextureId)
             || !Data->TryGetArrayField(TEXT("vertices"),Vertices) || Vertices->Num()!=4 || !Data->TryGetArrayField(TEXT("uv"),UV) || UV->Num()!=4) return false;
-        FString AlphaMode=TEXT("masked");
+        FString AlphaMode=TEXT("masked");Face.DoubleSided=true; // Older item exports used a no-cull master.
+        if(Data->HasField(TEXT("doubleSided")) && !Data->TryGetBoolField(TEXT("doubleSided"),Face.DoubleSided)) return false;
         if(Data->HasField(TEXT("alphaMode")) && (!Data->TryGetStringField(TEXT("alphaMode"),AlphaMode)
             || (AlphaMode!=TEXT("masked") && AlphaMode!=TEXT("translucent")))) return false;
         if(AlphaMode==TEXT("translucent")) Face.TextureId+=TEXT("#translucent");
@@ -285,6 +287,11 @@ bool UBridgeBlockPalette::BuildItem(const FString& ItemId,const FString& Context
             double C[5];for(int32 J=0;J<5;++J) if(!(J<3 ? (*P)[J] : (*T)[J-3])->TryGetNumber(C[J]) || !FMath::IsFinite(C[J]) || FMath::Abs(C[J])>4096) return false;
             Face.Vertices[I]=FVector(C[0],C[1],C[2]);Face.UV[I]=FVector2D(C[3],C[4]);
         }
+        // Preserve opaque base + tinted grass overlay even when UE batches sections.
+        const FVector N=Face.HasNativeNormal ? Face.NativeNormal : FVector::CrossProduct(Face.Vertices[1]-Face.Vertices[0],Face.Vertices[2]-Face.Vertices[0]).GetSafeNormal();
+        std::array<BridgeMeshingMath::Point,4> Q;for(int32 I=0;I<4;++I) Q[I]={Face.Vertices[I].X,Face.Vertices[I].Y,Face.Vertices[I].Z};
+        for(const auto& Previous:Out) {std::array<BridgeMeshingMath::Point,4> P;for(int32 I=0;I<4;++I) P[I]={Previous.Vertices[I].X,Previous.Vertices[I].Y,Previous.Vertices[I].Z};
+            if(BridgeMeshingMath::CoincidentForwardQuads(Q,P)) Face.RenderOffset=N*FMath::Max(Face.RenderOffset.Size(),Previous.RenderOffset.Size()+.0005);}
         Out.Add(MoveTemp(Face));
     }
     return !Out.IsEmpty();

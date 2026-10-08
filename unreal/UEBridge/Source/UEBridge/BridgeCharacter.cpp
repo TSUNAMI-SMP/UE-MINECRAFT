@@ -293,23 +293,29 @@ void ABridgeCharacter::Tick(float DeltaSeconds) {
             std::vector<BridgeOutlineMath::Box> Hulls;
             for(const auto& Box:Boxes) Hulls.push_back({{Box.Min.X,Box.Min.Y,Box.Min.Z},{Box.Max.X,Box.Max.Y,Box.Max.Z}});
             const auto Lines=BridgeOutlineMath::Edges(Hulls);
-            TArray<FVector> Vertices,Normals;TArray<int32> Indices;TArray<FVector2D> UV;TArray<FLinearColor> Colors;TArray<FProcMeshTangent> Tangents;
+            AimLineEndpoints.Reset();
             auto Convert=[](const BridgeOutlineMath::Point& P){return FVector(P[2]-.5,-P[0]+.5,P[1]-.5)*100;};
-            for(const auto& Line:Lines) {
-                const FVector A=Convert(Line.A),B=Convert(Line.B),D=(B-A).GetSafeNormal();
-                const FVector U=(FMath::Abs(D.Z)<.9 ? FVector::CrossProduct(D,FVector::UpVector) : FVector::CrossProduct(D,FVector::ForwardVector)).GetSafeNormal()*.25;
-                const FVector V=FVector::CrossProduct(D,U);
-                const FVector Corners[]={U+V,-U+V,-U-V,U-V};
-                for(int32 I=0;I<4;++I) {
-                    const int32 Base=Vertices.Num();
-                    Vertices.Append({A+Corners[I],B+Corners[I],B+Corners[(I+1)%4],A+Corners[(I+1)%4]});
-                    Indices.Append({Base,Base+1,Base+2,Base,Base+2,Base+3});
-                    for(int32 J=0;J<4;++J) {Normals.Add(Corners[I].GetSafeNormal());UV.Add(FVector2D::ZeroVector);Colors.Add(FLinearColor::Black);}
-                }
-            }
-            AimOutline->ClearAllMeshSections();
-            if(!Vertices.IsEmpty()) AimOutline->CreateMeshSection_LinearColor(0,Vertices,Indices,Normals,UV,Colors,Tangents,false);
+            for(const auto& Line:Lines) {AimLineEndpoints.Add(Convert(Line.A));AimLineEndpoints.Add(Convert(Line.B));}
         }
+        // One camera-facing ribbon per edge: a translucent tube rendered its
+        // front and rear walls together, making 40% alpha look nearly opaque.
+        TArray<FVector> Vertices,Normals;TArray<int32> Indices;TArray<FVector2D> UV;TArray<FLinearColor> Colors;TArray<FProcMeshTangent> Tangents;
+        const FVector LocalEye=AimRoot->GetComponentTransform().InverseTransformPosition(BridgeCamera->GetComponentLocation());
+        int32 ViewWidth=1280,ViewHeight=720;if(auto* PC=Cast<APlayerController>(GetController())) PC->GetViewportSize(ViewWidth,ViewHeight);
+        const double PixelScale=2*FMath::Tan(FMath::DegreesToRadians(BridgeCamera->FieldOfView*.5))/FMath::Max(1,ViewWidth);
+        for(int32 I=0;I+1<AimLineEndpoints.Num();I+=2) {
+            const FVector A=AimLineEndpoints[I],B=AimLineEndpoints[I+1],Mid=(A+B)*.5;
+            const FVector Normal=(LocalEye-Mid).GetSafeNormal(),D=(B-A).GetSafeNormal();
+            const FVector U=FVector::CrossProduct(D,Normal).GetSafeNormal()*FMath::Max(.02,PixelScale*(LocalEye-Mid).Size());
+            if(U.IsNearlyZero()) continue;
+            const int32 Base=Vertices.Num();Vertices.Append({A-U,B-U,B+U,A+U});
+            std::array<BridgeMeshingMath::Point,4> Q;for(int32 J=0;J<4;++J) {const auto& V=Vertices[Base+J];Q[J]={V.X,V.Y,V.Z};Normals.Add(Normal);UV.Add(FVector2D::ZeroVector);Colors.Add(FLinearColor(0,0,0,.4));}
+            for(int32 T:BridgeMeshingMath::UEFacingQuad(Q,{Normal.X,Normal.Y,Normal.Z},Base)) Indices.Add(T);
+        }
+        const auto* Existing=AimOutline->GetProcMeshSection(0);
+        if(Existing && Existing->ProcVertexBuffer.Num()==Vertices.Num() && Existing->ProcIndexBuffer.Num()==Indices.Num())
+            AimOutline->UpdateMeshSection_LinearColor(0,Vertices,Normals,UV,Colors,Tangents,false);
+        else {AimOutline->ClearAllMeshSections();if(!Vertices.IsEmpty()) AimOutline->CreateMeshSection_LinearColor(0,Vertices,Indices,Normals,UV,Colors,Tangents,false);}
 
     }
 }
@@ -569,7 +575,7 @@ void ABridgeCharacter::BuildHandGeometry(UProceduralMeshComponent* Model,const F
         }
         auto& Section=Sections[Index];const int32 First=Section.Vertices.Num();
         for(int32 I=0;I<4;++I) {
-            const FVector MC=NativeGeometry ? Face.Vertices[I] : Face.Vertices[I]-FVector(.5);
+            const FVector MC=NativeGeometry ? Face.Vertices[I]+Face.RenderOffset : Face.Vertices[I]+Face.RenderOffset-FVector(.5);
             Section.Vertices.Add((NativeGeometry ? FVector(-MC.Z,MC.X,MC.Y) : FVector(MC.Z,-MC.X,MC.Y))*100);Section.UV.Add(Face.UV[I]);Section.Colors.Add(FLinearColor::White);
         }
         const FVector Normal=NativeGeometry && Face.HasNativeNormal
@@ -577,7 +583,10 @@ void ABridgeCharacter::BuildHandGeometry(UProceduralMeshComponent* Model,const F
             : FVector::CrossProduct(Section.Vertices[First+2]-Section.Vertices[First],Section.Vertices[First+1]-Section.Vertices[First]).GetSafeNormal();
         const FVector Tangent=(Section.Vertices[First+1]-Section.Vertices[First]).GetSafeNormal();
         for(int32 I=0;I<4;++I) {Section.Normals.Add(Normal);Section.Tangents.Add(FProcMeshTangent(Tangent,false));}
-        for(int32 TriangleIndex:BridgeMeshingMath::UEFrontQuad(First)) Section.Triangles.Add(TriangleIndex);
+        std::array<BridgeMeshingMath::Point,4> Q;for(int32 I=0;I<4;++I) {const auto& V=Section.Vertices[First+I];Q[I]={V.X,V.Y,V.Z};}
+        const auto Triangles=BridgeMeshingMath::UEFacingQuad(Q,{Normal.X,Normal.Y,Normal.Z},First);
+        for(int32 TriangleIndex:Triangles) Section.Triangles.Add(TriangleIndex);
+        if(Face.DoubleSided) for(int32 I=0;I<6;I+=3) {Section.Triangles.Add(Triangles[I]);Section.Triangles.Add(Triangles[I+2]);Section.Triangles.Add(Triangles[I+1]);}
     }
     for(int32 Index=0;Index<Sections.Num();++Index) {
         const auto& Section=Sections[Index];

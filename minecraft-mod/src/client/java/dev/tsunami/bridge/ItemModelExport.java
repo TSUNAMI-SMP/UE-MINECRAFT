@@ -184,22 +184,22 @@ public final class ItemModelExport {
                         }
                         Vector3f normal=new Vector3f(quad.face().getOffsetX(),quad.face().getOffsetY(),quad.face().getOffsetZ());
                         matrices.peek().getNormalMatrix().transform(normal);
-                        add(texture,color,vertices,uv,vector(normal.x,normal.y,normal.z),alphaMode((RenderLayer)args[7]));
+                        add(texture,color,vertices,uv,vector(normal.x,normal.y,normal.z),alphaMode((RenderLayer)args[7]),!((RenderLayer)args[7]).getRenderPipeline().isCull());
                     }
                     return null;
                 }
                 case "model": {
                     Model model=(Model)args[0];model.setAngles(args[1]);Sprite sprite=(Sprite)args[7];
-                    Collector consumer=new Collector(texture(sprite,(RenderLayer)args[3]),alphaMode((RenderLayer)args[3]));
+                    Collector consumer=new Collector(texture(sprite,(RenderLayer)args[3]),alphaMode((RenderLayer)args[3]),!((RenderLayer)args[3]).getRenderPipeline().isCull());
                     model.render((MatrixStack)args[2],consumer,(int)args[4],(int)args[5],(int)args[6]);consumer.finish();return null;
                 }
                 case "part": {
-                    Collector consumer=new Collector(texture((Sprite)args[5],(RenderLayer)args[2]),alphaMode((RenderLayer)args[2]));
+                    Collector consumer=new Collector(texture((Sprite)args[5],(RenderLayer)args[2]),alphaMode((RenderLayer)args[2]),!((RenderLayer)args[2]).getRenderPipeline().isCull());
                     ((ModelPart)args[0]).render((MatrixStack)args[1],consumer,(int)args[3],(int)args[4],(int)args[8]);consumer.finish();return null;
                 }
                 case "custom": {
                     if(args.length!=3) throw new IOException("Layered custom renderer is not exportable");
-                    Collector consumer=new Collector(texture(null,(RenderLayer)args[1]),alphaMode((RenderLayer)args[1]));
+                    Collector consumer=new Collector(texture(null,(RenderLayer)args[1]),alphaMode((RenderLayer)args[1]),!((RenderLayer)args[1]).getRenderPipeline().isCull());
                     ((OrderedRenderCommandQueue.Custom)args[2]).render(((MatrixStack)args[0]).peek(),consumer);consumer.finish();return null;
                 }
                 default: throw new IOException("Unsupported native item draw command: "+method.getName());
@@ -238,16 +238,16 @@ public final class ItemModelExport {
             } finally {if(owned && original!=null) original.close();}
         }
         private String alphaMode(RenderLayer layer) {return layer.getRenderPipeline().getBlendFunction().isPresent() ? "translucent" : "masked";}
-        void add(String texture,int color,JsonArray vertices,JsonArray uv,JsonArray normal,String alphaMode) throws IOException {
+        void add(String texture,int color,JsonArray vertices,JsonArray uv,JsonArray normal,String alphaMode,boolean doubleSided) throws IOException {
             if(faces.size()>=8192) throw new IOException("Item face limit");
-            JsonObject face=new JsonObject();face.addProperty("texture",texture);face.addProperty("color",color & 0xffffff);face.addProperty("alphaMode",alphaMode);face.add("vertices",vertices);face.add("uv",uv);face.add("normal",normal);faces.add(face);
+            JsonObject face=new JsonObject();face.addProperty("texture",texture);face.addProperty("color",color & 0xffffff);face.addProperty("alphaMode",alphaMode);face.addProperty("doubleSided",doubleSided);face.add("vertices",vertices);face.add("uv",uv);face.add("normal",normal);faces.add(face);
         }
         final class Collector implements VertexConsumer {
-            final String texture,alphaMode;JsonArray vertices=new JsonArray(),uv=new JsonArray();float x,y,z,u,v,nx,ny,nz;int color=-1;boolean pending;
-            Collector(String t,String a) {texture=t;alphaMode=a;}
+            final String texture,alphaMode;final boolean doubleSided;JsonArray vertices=new JsonArray(),uv=new JsonArray();float x,y,z,u,v,nx,ny,nz;int color=-1;boolean pending;
+            Collector(String t,String a,boolean sided) {texture=t;alphaMode=a;doubleSided=sided;}
             private void commit() {
                 if(!pending) return;vertices.add(vector(x,y,z));uv.add(vector(u,v));pending=false;
-                if(vertices.size()==4) {try {add(texture,color,vertices,uv,vector(nx,ny,nz),alphaMode);} catch(IOException e){throw new IllegalStateException(e);}vertices=new JsonArray();uv=new JsonArray();}
+                if(vertices.size()==4) {try {add(texture,color,vertices,uv,vector(nx,ny,nz),alphaMode,doubleSided);} catch(IOException e){throw new IllegalStateException(e);}vertices=new JsonArray();uv=new JsonArray();}
             }
             void finish() {commit();if(!vertices.isEmpty()) throw new IllegalStateException("Native renderer emitted incomplete quads");}
             public VertexConsumer vertex(float a,float b,float c) {commit();x=a;y=b;z=c;pending=true;return this;}

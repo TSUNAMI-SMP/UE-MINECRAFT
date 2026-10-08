@@ -61,10 +61,10 @@ def setup_bridge_rendering(asset_root='/Game/Bridge/Minecraft'):
             migrated += 1
     lighting['ensure_native_sky_materials'](unreal, editing)
     lighting['ensure_native_inverse_hud_material'](unreal, editing)
-    path = asset_root + '/M_BlockOutline_v1'
+    path = asset_root + '/M_BlockOutline_v2'
     material = unreal.load_asset(path) if assets.does_asset_exist(path) else None
     if material is None:
-        material = tools.create_asset('M_BlockOutline_v1', asset_root, unreal.Material, unreal.MaterialFactoryNew())
+        material = tools.create_asset('M_BlockOutline_v2', asset_root, unreal.Material, unreal.MaterialFactoryNew())
     if not isinstance(material, unreal.Material):
         raise RuntimeError('Outline asset path is occupied by another asset type')
     editing.delete_all_material_expressions(material)

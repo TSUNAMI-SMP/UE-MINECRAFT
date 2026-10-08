@@ -1,5 +1,7 @@
 # ダウンロード
 
+**診断後の修正版0.15.4：** [MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.15.4.jar) / [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.15.4.zip) / [適用と確認項目](../docs/UPGRADE_0.15.4.md)。符号付き視点角・アイテムの両面設定・重なる面・アウトライン・ノックバック・基本AIを変更。MOD交換、新規native export、UE再ビルド・再取り込みが必要です。全種固有AIの移植・実機での全問題解消は未確認です。
+
 **コード・実測取得用MOD 0.15.3：** [診断MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.15.3.jar) / [取得手順](../docs/DIAGNOSTICS_0.15.3_JA.md)。`/uebridge diagnose export` でクラスデータ・モデル・約10秒のモブ状態をZIPにします。今回はMODのみで、UEの未解決問題の修正は診断後に行います。
 
 **描画・入力・戦闘修正0.15.2：** [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.15.2.zip) / [MOD 0.15.2](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.15.2.jar) / [更新手順](../docs/UPGRADE_0.15.2.md)。MOD交換・新しいnative export・UE再ビルド・再取り込みが必要です。Windowsの実描画・入力は未確認です。

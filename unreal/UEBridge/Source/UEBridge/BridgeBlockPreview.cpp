@@ -97,7 +97,7 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
                 FSection& Section=Sections.FindOrAdd(FaceKey);Section.Material=Atlas ? AtlasMaterial->Get() : FaceMaterial;Section.Color=FaceColor;Section.Atlas=Atlas;
                 FVector Vertices[4];for(int32 I=0;I<4;++I) Vertices[I]=BridgeProtocol::ToUnreal(Block.Position+Face.Vertices[I]+Face.RenderOffset-FVector(.5),Anchor);
                 std::array<BridgeMeshingMath::Point,4> NativeQuad;for(int32 I=0;I<4;++I) NativeQuad[I]={Face.Vertices[I].X,Face.Vertices[I].Y,Face.Vertices[I].Z};
-                const auto Cross=BridgeMeshingMath::NativeNormal(NativeQuad);const FVector MCNormal=FVector(Cross[0],Cross[1],Cross[2]).GetSafeNormal();
+                const auto Cross=BridgeMeshingMath::NativeNormal(NativeQuad);const FVector MCNormal=Face.HasNativeNormal ? Face.NativeNormal : FVector(Cross[0],Cross[1],Cross[2]).GetSafeNormal();
                 const FVector Normal=BridgeProtocol::ToDirection(MCNormal).GetSafeNormal();if(Normal.IsNearlyZero()) continue;
                 const int32 Base=Section.Vertices.Num();
                 for(int32 I=0;I<4;++I) {
@@ -109,7 +109,7 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
                     Section.Tangents.Add(FProcMeshTangent((Vertices[3]-Vertices[0]).GetSafeNormal(),false));
                 }
                 // This permutation reflects handedness: UE fronts are clockwise: transformed MC order already faces outward.
-                for(int32 TriangleIndex:BridgeMeshingMath::UEFrontQuad(Base)) Section.Indices.Add(TriangleIndex);++RenderedFaces;
+                for(int32 TriangleIndex:BridgeMeshingMath::UEFacingQuad({{{Vertices[0].X,Vertices[0].Y,Vertices[0].Z},{Vertices[1].X,Vertices[1].Y,Vertices[1].Z},{Vertices[2].X,Vertices[2].Y,Vertices[2].Z},{Vertices[3].X,Vertices[3].Y,Vertices[3].Z}}},{Normal.X,Normal.Y,Normal.Z},Base)) Section.Indices.Add(TriangleIndex);++RenderedFaces;
             }
             continue;
         }

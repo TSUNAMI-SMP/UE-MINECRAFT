@@ -58,7 +58,7 @@ final class DiagnosticCapture {
     }
     private static void captureClient(Job job) throws IOException {
         var c=job.client;JsonObject s=job.snapshot;
-        s.addProperty("schema","uebridge.diagnostics.v1");s.addProperty("modVersion","0.15.3");s.addProperty("minecraftVersion","1.21.11");
+        s.addProperty("schema","uebridge.diagnostics.v1");s.addProperty("modVersion",FabricLoader.getInstance().getModContainer("minecraft_ue_bridge").orElseThrow().getMetadata().getVersion().getFriendlyString());s.addProperty("minecraftVersion","1.21.11");
         s.addProperty("mappingVersion","1.21.11+build.6");s.addProperty("createdUtc",Instant.now().toString());s.addProperty("dimension",job.dimension.getValue().toString());
         // Explicit whitelist: no key bindings, inventory names, servers, chat or account details.
         JsonObject settings=new JsonObject();

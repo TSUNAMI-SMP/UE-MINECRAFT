@@ -56,7 +56,7 @@ bool ABridgeDroppedItem::BuildMesh() {
         auto& Section=Sections[Index];const int32 First=Section.Positions.Num();
         const FVector Offset=Copy==0 ? FVector::ZeroVector : FVector(FMath::Sin(Phase+Copy*2.3f)*6,FMath::Cos(Phase+Copy*1.7f)*6,Copy*1.5f);
         for(int32 V=0;V<4;++V) {
-            const FVector MC=Face.Vertices[V];const FVector Point=FVector(MC.Z,-MC.X,MC.Y)*100.f+Offset;
+            const FVector MC=Face.Vertices[V]+Face.RenderOffset;const FVector Point=FVector(MC.Z,-MC.X,MC.Y)*100.f+Offset;
             Section.Positions.Add(Point);Bounds+=Point;Section.UV.Add(Face.UV[V]);Section.Colors.Add(FLinearColor::White);
         }
         // Keep transformed MC order for UE clockwise fronts; normals remain outward.
@@ -64,7 +64,10 @@ bool ABridgeDroppedItem::BuildMesh() {
             : FVector::CrossProduct(Section.Positions[First+2]-Section.Positions[First],Section.Positions[First+1]-Section.Positions[First]).GetSafeNormal();
         const FVector Tangent=(Section.Positions[First+1]-Section.Positions[First]).GetSafeNormal();
         for(int32 V=0;V<4;++V) {Section.Normals.Add(Normal);Section.Tangents.Add(FProcMeshTangent(Tangent,false));}
-        for(int32 TriangleIndex:BridgeMeshingMath::UEFrontQuad(First)) Section.Indices.Add(TriangleIndex);
+        std::array<BridgeMeshingMath::Point,4> Q;for(int32 I=0;I<4;++I) {const auto& V=Section.Positions[First+I];Q[I]={V.X,V.Y,V.Z};}
+        const auto Triangles=BridgeMeshingMath::UEFacingQuad(Q,{Normal.X,Normal.Y,Normal.Z},First);
+        for(int32 TriangleIndex:Triangles) Section.Indices.Add(TriangleIndex);
+        if(Face.DoubleSided) for(int32 I=0;I<6;I+=3) {Section.Indices.Add(Triangles[I]);Section.Indices.Add(Triangles[I+2]);Section.Indices.Add(Triangles[I+1]);}
     }
     Mesh->ClearAllMeshSections();VisualOffset=-Bounds.Min.Z-Radius+7.f;
     for(int32 Index=0;Index<Sections.Num();++Index) {

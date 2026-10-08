@@ -190,7 +190,8 @@ bool ABridgeNativePlayerController::ApplySavedNativeInventory() {
     SelectedSlot=-1;SelectedItem.Empty();return true;
 }
 void ABridgeNativePlayerController::RestoreNativeView(float Yaw,float Pitch,bool Flying,int32 Perspective) {
-    SetControlRotation(FRotator(float(BridgeNativeInputMath::ClampPitch(Pitch)),FRotator::NormalizeAxis(Yaw),0));
+    NativeLookPitch=BridgeNativeInputMath::ClampPitch(Pitch);NativeLookYaw=FRotator::NormalizeAxis(Yaw);NativeLookReady=true;
+    SetControlRotation(FRotator(NativeLookPitch,NativeLookYaw,0));
     bFlying=Flying;bFlightApplied=false;NativePerspective=FMath::Clamp(Perspective,0,2);
 }
 void ABridgeNativePlayerController::FindReceiver() {
@@ -216,7 +217,7 @@ bool ABridgeNativePlayerController::Focused() const {
 void ABridgeNativePlayerController::StopNativeInput() {
     if(bBowHeld && IsValid(NativeReceiver)) {NativeReceiver->NativeAction(TEXT("use_cancel"));bBowHeld=false;}
     if(IsValid(NativeReceiver) && NativeReceiver->NativePlayActive)
-        NativeReceiver->SetNativeInput(0,0,false,false,false,bFlying,NativePerspective,GetControlRotation().Yaw,GetControlRotation().Pitch);
+        NativeReceiver->SetNativeInput(0,0,false,false,false,bFlying,NativePerspective,float(NativeLookYaw),float(NativeLookPitch));
     if(auto* BridgePawn=Cast<ABridgeCharacter>(GetPawn())) {
         BridgePawn->StopJumping();
         if(bInventoryOpen || bPauseOpen || !Focused()) BridgePawn->GetCharacterMovement()->StopMovementImmediately();
@@ -314,9 +315,13 @@ bool ABridgeNativePlayerController::InputKey(const FInputKeyEventArgs& Params) {
     }
     return Result;
 }
+FRotator ABridgeNativePlayerController::GetControlRotation() const {
+    if(NativeLookReady && IsValid(NativeReceiver) && NativeReceiver->NativePlayActive) return FRotator(NativeLookPitch,NativeLookYaw,0);
+    return Super::GetControlRotation();
+}
 void ABridgeNativePlayerController::UpdateRotation(float DeltaSeconds) {
     if(!IsValid(NativeReceiver) || !NativeReceiver->NativePlayActive) {
-        RawMouseX=RawMouseY=0;Super::UpdateRotation(DeltaSeconds);return;
+        RawMouseX=RawMouseY=0;NativeLookReady=false;Super::UpdateRotation(DeltaSeconds);return;
     }
     if(bInventoryOpen || bPauseOpen || !bLastFocused || !Focused() || !NativeReceiver->IsNativeReady()) {
         RawMouseX=RawMouseY=0;LookXSmoother.Clear();LookYSmoother.Clear();return;
@@ -325,10 +330,11 @@ void ABridgeNativePlayerController::UpdateRotation(float DeltaSeconds) {
     const bool Spyglass=SelectedItem==TEXT("minecraft:spyglass") && Down(TEXT("key.use")) && NativePerspective==0;
     const float YawDelta=float(BridgeNativeLookMath::Degrees(MouseX,MouseSensitivity,DeltaSeconds,SmoothCamera,Spyglass,LookXSmoother));
     const float PitchDelta=float(BridgeNativeLookMath::Degrees(MouseY,MouseSensitivity,DeltaSeconds,SmoothCamera,Spyglass,LookYSmoother));
-    const FRotator PreviousRotation=GetControlRotation();
+    if(!NativeLookReady) {const FRotator Initial=GetControlRotation().GetNormalized();NativeLookPitch=BridgeNativeInputMath::ClampPitch(Initial.Pitch);NativeLookYaw=Initial.Yaw;NativeLookReady=true;}
     // UE MouseY is positive upwards; Minecraft exposes independent axis inversions.
-    const FRotator Rotation(float(BridgeNativeInputMath::ClampPitch(PreviousRotation.Pitch+PitchDelta*(InvertMouse ? -1.f : 1.f))),
-        FRotator::NormalizeAxis(PreviousRotation.Yaw+YawDelta*(InvertMouseX ? -1.f : 1.f)),0);
+    NativeLookPitch=BridgeNativeInputMath::ClampPitch(NativeLookPitch+PitchDelta*(InvertMouse ? -1.f : 1.f));
+    NativeLookYaw=FRotator::NormalizeAxis(NativeLookYaw+YawDelta*(InvertMouseX ? -1.f : 1.f));
+    const FRotator Rotation(NativeLookPitch,NativeLookYaw,0);
     SetControlRotation(Rotation);
     if(auto* BridgePawn=Cast<ABridgeCharacter>(GetPawn())) BridgePawn->FaceRotation(Rotation,DeltaSeconds);
 }
@@ -389,7 +395,7 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
     if(ToggleCrouchOption && Pressed(TEXT("key.sneak"))) bToggleSneak=!bToggleSneak;
     if(ToggleSprintOption && Pressed(TEXT("key.sprint"))) bToggleSprint=!bToggleSprint;
     if(Pressed(TEXT("key.toggleGui"))) NativeHudVisible=!NativeHudVisible;
-    const FRotator Rotation=GetControlRotation();
+    const FRotator Rotation(NativeLookPitch,NativeLookYaw,0);
     const float Forward=(Down(TEXT("key.forward")) ? 1.f : 0.f)-(Down(TEXT("key.back")) ? 1.f : 0.f);
     const float Right=(Down(TEXT("key.right")) ? 1.f : 0.f)-(Down(TEXT("key.left")) ? 1.f : 0.f);
     const bool Sneak=ToggleCrouchOption ? bToggleSneak : Down(TEXT("key.sneak"));

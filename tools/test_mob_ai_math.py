@@ -13,6 +13,9 @@ int main() {
     using namespace BridgeMobAIMath;
     // GoalSelector starts ordinary goals every other tick; WanderAroundGoal
     // uses ceil(120/2). The mean start interval stays 120 entity ticks.
+    assert(std::abs(turnToward(179,-179,1)-180)<1e-12);
+    assert(std::abs(turnToward(-179,179,1)+180)<1e-12);
+    assert(std::abs(turnToward(10,180,5)-15)<1e-12);
     assert(goalChance(120)==60 && goalChance(41)==21);
     assert(profile("minecraft:cow").wanderSpeed==1);
     assert(profile("minecraft:creeper").wanderSpeed==.8);

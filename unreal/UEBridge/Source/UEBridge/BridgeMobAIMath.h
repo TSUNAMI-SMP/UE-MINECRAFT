@@ -25,6 +25,9 @@ inline Profile profile(const std::string& type) {
 }
 // Goal starts are checked every other 20 Hz entity tick, and toGoalTicks
 // converts the chance by ceil-dividing by two: no per-render-frame randomness.
+inline double turnToward(double from,double to,double maximum) {
+    double delta=std::remainder(to-from,360.);return from+std::clamp(delta,-maximum,maximum);
+}
 inline int goalChance(int serverTicks) {return std::max(1,(serverTicks+1)/2);}
 inline bool canJump(double riseBlocks,double distanceSquaredBlocks,double widthBlocks,
                     bool grounded,bool headroom,bool blockedByTallObstacle,int cooldownTicks) {

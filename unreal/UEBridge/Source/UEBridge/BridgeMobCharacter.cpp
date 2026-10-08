@@ -17,7 +17,7 @@ ABridgeMobCharacter::ABridgeMobCharacter() {
     GetCapsuleComponent()->SetCollisionProfileName(TEXT("Pawn"));
     GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility,ECR_Block);
     auto* Movement=GetCharacterMovement();
-    Movement->bRunPhysicsWithNoController=true;Movement->bOrientRotationToMovement=false;
+    Movement->bRunPhysicsWithNoController=true;Movement->DefaultLandMovementMode=MOVE_Walking;Movement->bOrientRotationToMovement=false;
     Movement->RotationRate=FRotator(0,360,0);Movement->MaxStepHeight=60;Movement->JumpZVelocity=900;
     Movement->AirControl=.2f;Movement->MaxAcceleration=1800;Movement->BrakingDecelerationWalking=1200;
     Tags.Add(TEXT("BridgeMinecraftVisual"));
@@ -123,7 +123,8 @@ void ABridgeMobCharacter::Tick(float DeltaSeconds) {
     // control intent between decisions instead of pulsing it at 20 FPS.
     const auto Locomotion=BridgeMobAIMath::profile(TCHAR_TO_UTF8(*MinecraftType)).locomotion;
     if(Now>=KnockbackUntil && GetCharacterMovement()->MovementMode!=MOVE_Flying && !MoveIntent.IsNearlyZero()) AddMovementInput(MoveIntent,1.f,true);
-    const FVector Facing=GetVelocity().SizeSquared2D()>25 ? GetVelocity() : MoveIntent;
+    // A knockback impulse changes velocity, not the entity's intended facing.
+    const FVector Facing=Now<KnockbackUntil ? FVector::ZeroVector : MoveIntent;
     if(!Facing.IsNearlyZero()) {
         const float MaxTurn=(Locomotion==BridgeMobAIMath::Locomotion::Bat ? 360.f : 180.f)*FMath::Max(0.f,DeltaSeconds);
         const float Yaw=GetActorRotation().Yaw;
@@ -164,7 +165,7 @@ bool ABridgeMobCharacter::FindGroundWaypoint(const FVector& Destination,FVector&
     TArray<FNode> Nodes;TMap<FIntPoint,int32> Indices;
     FNode Root;Root.Key=FIntPoint::ZeroValue;Root.Feet=Start;Root.Score=float(FVector::Dist2D(Start,Destination));Nodes.Add(Root);Indices.Add(Root.Key,0);
     int32 Best=0;
-    const FIntPoint Steps[]={FIntPoint(1,0),FIntPoint(-1,0),FIntPoint(0,1),FIntPoint(0,-1)};
+    const FIntPoint Steps[]={FIntPoint(1,0),FIntPoint(-1,0),FIntPoint(0,1),FIntPoint(0,-1),FIntPoint(1,1),FIntPoint(1,-1),FIntPoint(-1,1),FIntPoint(-1,-1)};
     for(int32 Iteration=0;Iteration<64;++Iteration) {
         int32 Current=INDEX_NONE;float Score=TNumericLimits<float>::Max();
         for(int32 I=0;I<Nodes.Num();++I) if(!Nodes[I].Closed && Nodes[I].Score<Score) {Current=I;Score=Nodes[I].Score;}
@@ -177,6 +178,9 @@ bool ABridgeMobCharacter::FindGroundWaypoint(const FVector& Destination,FVector&
             if(FMath::Abs(Key.X)>8 || FMath::Abs(Key.Y)>8 || Indices.Contains(Key)) continue;
             FVector Feet;const FVector Seed=Start+FVector(Key.X*100,Key.Y*100,From.Feet.Z-Start.Z);
             if(!ProbeGround(Seed,float(From.Feet.Z),Feet)) continue;
+            // Diagonal paths cannot squeeze through two touching solid corners.
+            if(Step.X && Step.Y) {FVector Side;
+                if(!ProbeGround(From.Feet+FVector(Step.X*100,0,0),float(From.Feet.Z),Side) || !ProbeGround(From.Feet+FVector(0,Step.Y*100,0),float(From.Feet.Z),Side)) continue;}
             // Reject routes through a wall above the proposed step. A 1-block
             // rise is crossed at jumping height; tall walls remain impassable.
             const float TravelZ=FMath::Max(float(From.Feet.Z),float(Feet.Z));
@@ -185,7 +189,7 @@ bool ABridgeMobCharacter::FindGroundWaypoint(const FVector& Destination,FVector&
             const float Half=GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
             if(GetWorld()->SweepSingleByObjectType(Hit,FVector(From.Feet.X,From.Feet.Y,TravelZ+Half),FVector(Feet.X,Feet.Y,TravelZ+Half),FQuat::Identity,Objects,
                 FCollisionShape::MakeCapsule(FMath::Max(1.f,GetCapsuleComponent()->GetScaledCapsuleRadius()-.5f),FMath::Max(1.f,Half-.5f)),Query)) continue;
-            FNode Node;Node.Key=Key;Node.Feet=Feet;Node.Parent=Current;Node.Cost=From.Cost+100+FMath::Abs(float(Feet.Z-From.Feet.Z))*.5f;
+            FNode Node;Node.Key=Key;Node.Feet=Feet;Node.Parent=Current;Node.Cost=From.Cost+(Step.X && Step.Y ? 141.42136f : 100.f)+FMath::Abs(float(Feet.Z-From.Feet.Z))*.5f;
             Node.Score=Node.Cost+float(FVector::Dist2D(Feet,Destination));Indices.Add(Key,Nodes.Num());Nodes.Add(Node);
         }
     }
@@ -202,6 +206,13 @@ void ABridgeMobCharacter::TickNativeAI() {
     const auto Profile=BridgeMobAIMath::profile(TCHAR_TO_UTF8(*MinecraftType));
     auto* Movement=GetCharacterMovement();
     const FVector Feet=GetActorLocation()-FVector(0,0,GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+    // LOOK goals run independently of MOVE and do not rotate the capsule.
+    if(LookTicks>0) --LookTicks;
+    if(LookTicks==0 && AiTicks%2==0) {
+        const bool Nearby=Target.IsValid() && FVector::DistSquared(Target->GetActorLocation(),GetActorLocation())<640000;
+        if(Nearby && Random.FRand()<.02f) {LookAtPlayer=true;LookTicks=40+Random.RandRange(0,39);}
+        else if(Random.FRand()<.02f) {LookAtPlayer=false;IdleLookYaw=Random.FRandRange(-180,180);LookTicks=20+Random.RandRange(0,19);}
+    }
     ACharacter* Player=WorldOwner.IsValid() && (WorldOwner->IsCreative() || WorldOwner->PlayerHealth<=0) ? nullptr : Target.Get();
     if(Profile.locomotion==BridgeMobAIMath::Locomotion::Bat) {
         Movement->SetMovementMode(MOVE_Flying);
@@ -285,6 +296,13 @@ void ABridgeMobCharacter::TickNativeAI() {
         Movement->Velocity+=FVector(Random.FRandRange(-100,100),Random.FRandRange(-100,100),800);Movement->SetMovementMode(MOVE_Falling);JumpTicks=10;return;
     }
     bool Chasing=Hostile && Player && FVector::DistSquared2D(Player->GetActorLocation(),GetActorLocation())<FMath::Square(Profile.followRange*100);
+    if(Chasing) {
+        FHitResult Sight;FCollisionQueryParams SightQuery(SCENE_QUERY_STAT(MobAcquireTarget),false,this);
+        const bool Visible=!GetWorld()->LineTraceSingleByChannel(Sight,GetActorLocation(),Player->GetActorLocation(),ECC_Visibility,SightQuery) || Sight.GetActor()==Player;
+        TargetUnseenTicks=Visible ? 0 : TargetUnseenTicks+1;
+        Chasing=Visible || (WasChasing && TargetUnseenTicks<=60);
+    }
+    if(WasChasing!=Chasing) {HasGoal=HasWaypoint=false;PathTicks=0;StalledPathTicks=0;WasChasing=Chasing;}
     if(PanicTicks>0 && !Hostile) {
         if(HasGoal && FVector::DistSquared2D(Feet,GoalPosition)<2500) {HasGoal=false;PanicTicks=0;}
         if(!HasGoal) for(int32 Try=0;Try<10;++Try) {
@@ -354,12 +372,15 @@ void ABridgeMobCharacter::Animate(float DeltaSeconds) {
             float Frame=FMath::Fmod(Phase,float(Part.WalkFrames.Num()));int32 First=FMath::FloorToInt(Frame),Next=(First+1)%Part.WalkFrames.Num();
             FTransform Walk;Walk.Blend(Part.WalkFrames[First],Part.WalkFrames[Next],Frame-First);Pose.Blend(Part.Rest,Walk,WalkWeight);
         }
-        // Head independently follows the nearby UE player without changing the capsule/body yaw.
-        if(Part.Name.Contains(TEXT("head"),ESearchCase::IgnoreCase) && Target.IsValid() && FVector::DistSquared(Target->GetActorLocation(),GetActorLocation())<FMath::Square(Hostile ? 800.f : 600.f)) {
-            FVector Direction=Target->GetActorLocation()-GetActorLocation();
-            FRotator Look=Direction.Rotation();float Yaw=FMath::Clamp(FMath::FindDeltaAngleDegrees(GetActorRotation().Yaw,Look.Yaw),-55.f,55.f);
-            NativeViewPitch=FMath::FInterpTo(NativeViewPitch,FMath::Clamp(-Look.Pitch,-45.f,45.f),DeltaSeconds,8.f);
-            HeadYaw=FMath::FInterpTo(HeadYaw,Yaw,DeltaSeconds,8.f);
+        if(Part.Name.Contains(TEXT("head"),ESearchCase::IgnoreCase)) {
+            float DesiredYaw=0,DesiredPitch=0;
+            if((LookTicks>0 && LookAtPlayer) || WasChasing) {
+                if(Target.IsValid()) {const FRotator Look=(Target->GetActorLocation()-GetActorLocation()).Rotation();
+                    DesiredYaw=FMath::Clamp(FMath::FindDeltaAngleDegrees(GetActorRotation().Yaw,Look.Yaw),-75.f,75.f);DesiredPitch=FMath::Clamp(-Look.Pitch,-40.f,40.f);}
+            } else if(LookTicks>0) DesiredYaw=FMath::Clamp(FMath::FindDeltaAngleDegrees(GetActorRotation().Yaw,IdleLookYaw),-75.f,75.f);
+            // LookControl limits head rotation to 10 degrees per entity tick.
+            NativeViewPitch=float(BridgeMobAIMath::turnToward(NativeViewPitch,DesiredPitch,200*DeltaSeconds));
+            HeadYaw=float(BridgeMobAIMath::turnToward(HeadYaw,DesiredYaw,200*DeltaSeconds));
             Pose.SetRotation(FRotator(-NativeViewPitch,HeadYaw,0).Quaternion()*Pose.GetRotation());
         }
         Parts[Index]->SetRelativeTransform(Pose);
@@ -369,13 +390,17 @@ void ABridgeMobCharacter::Animate(float DeltaSeconds) {
 
 void ABridgeMobCharacter::ApplyNativeKnockback(float StrengthBlocksPerTick,const FVector& AwayDirection) {
     if(!Enabled || !GetWorld() || !FMath::IsFinite(StrengthBlocksPerTick) || StrengthBlocksPerTick<=0) return;
+    if(InitialSnapshot.KnockbackResistance>=1.f) return;
     auto* Movement=GetCharacterMovement();const FVector Old=Movement->Velocity;
     FVector Away=AwayDirection;
     if(Away.SizeSquared2D()<.1) do {Away.X=Random.FRand()-Random.FRand();Away.Y=Random.FRand()-Random.FRand();} while(Away.SizeSquared2D()<.1);
-    const auto Result=BridgeCombatMath::knockbackVelocity({Old.X,Old.Y,Old.Z},StrengthBlocksPerTick,InitialSnapshot.KnockbackResistance,Away.X,Away.Y,Movement->IsMovingOnGround());
-    // LaunchCharacter defers the impulse until CharacterMovement consumes it;
-    // writing Velocity on a walking frame can be projected away by floor physics.
-    LaunchCharacter(FVector(Result.x,Result.y,Result.z),true,true);
+    FFindFloorResult Floor;Movement->FindFloor(GetActorLocation(),Floor,false);
+    const bool Grounded=Movement->IsMovingOnGround() || (Movement->IsFalling() && Old.Z<=0 && Floor.IsWalkableFloor() && Floor.FloorDist<=3.f);
+    const auto Result=BridgeCombatMath::knockbackVelocity({Old.X,Old.Y,Old.Z},StrengthBlocksPerTick,InitialSnapshot.KnockbackResistance,Away.X,Away.Y,Grounded);
+    // Apply synchronously so two impulses in one attack compose rather than
+    // replacing a deferred launch. Enter falling BEFORE writing positive Z.
+    if(Result.z>0 && (Grounded || Movement->IsMovingOnGround())) Movement->SetMovementMode(MOVE_Falling);
+    Movement->Velocity=FVector(Result.x,Result.y,Result.z);
     KnockbackUntil=GetWorld()->GetTimeSeconds()+.25;
     MoveIntent=FVector::ZeroVector;HasWaypoint=false;PathTicks=0;
 }

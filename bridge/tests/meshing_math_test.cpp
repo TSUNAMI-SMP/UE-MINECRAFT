@@ -38,5 +38,11 @@ int main() {
         auto reverse=q;reverse[1]=q[3];reverse[3]=q[1];assert(!CoincidentForwardQuads(q,reverse));
         auto shifted=q;for(auto& point:shifted) point[0]+=.001;assert(!CoincidentForwardQuads(q,shifted));
         auto partial=q;partial[0]=partial[1];assert(!CoincidentForwardQuads(q,partial));}
+    // Culling follows the declared outward normal even after mirrored item transforms.
+    const std::array<Point,4> face={{{0,0,0},{1,0,0},{1,1,0},{0,1,0}}};
+    assert((UEFacingQuad(face,{0,0,1})==std::array<int,6>({0,2,1,0,3,2})));
+    assert(UEFacingQuad(face,{0,0,-1})==UEFrontQuad());
+    auto mirrored=face;for(auto& point:mirrored) point[0]=-point[0];
+    assert(UEFacingQuad(mirrored,{0,0,1})==UEFrontQuad());
     std::cout << "Meshing: 128 randomized collider round trips, native cull guards and six layered-quad orientation checks passed\n";
 }

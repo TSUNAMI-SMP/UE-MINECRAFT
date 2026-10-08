@@ -39,12 +39,12 @@ class ItemManifestTest(unittest.TestCase):
     def test_captured_normals_and_translucent_pipeline_survive_compressed_export(self):
         data = copy.deepcopy(self.manifest)
         face = data['items'][self.key]['ground'][0]
-        face.update(normal=[0, .7071068, .7071068], alphaMode='translucent')
+        face.update(normal=[0, .7071068, .7071068], alphaMode='translucent', doubleSided=True)
         result = self.load(self.compressed(data))
         self.assertEqual(face['normal'], result['items'][self.key]['ground'][0]['normal'])
         self.assertEqual({'masked', 'translucent'}, items.item_render_modes(result)[self.hash])
     def test_invalid_normals_and_unknown_item_pipeline_are_rejected_before_ue(self):
-        for field, value in (('normal', [0, float('nan'), 1]), ('normal', [0, 1]), ('normal', [True, 0, 1]), ('alphaMode', 'additive'), ('alphaMode', True)):
+        for field, value in (('normal', [0, float('nan'), 1]), ('normal', [0, 1]), ('normal', [True, 0, 1]), ('alphaMode', 'additive'), ('alphaMode', True), ('doubleSided', 'false'), ('doubleSided', 1)):
             data = copy.deepcopy(self.manifest)
             data['items'][self.key]['ground'][0][field] = value
             with self.assertRaises(ValueError): self.load(data)

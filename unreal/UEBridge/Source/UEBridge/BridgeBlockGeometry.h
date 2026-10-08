@@ -13,6 +13,7 @@ struct FBridgeModelFace {
     FColor Color=FColor::White;
     FVector NativeNormal=FVector::ZeroVector;
     bool HasNativeNormal=false;
+    bool DoubleSided=false;
     /** Native cullface is independent of the normal (rotated cuboids may have none). */
     FIntVector CullOffset=FIntVector::ZeroValue;
 };

@@ -44,6 +44,7 @@ private:
     float GoalSpeed=1,FishSpeed=0,HeadYaw=0;
     float LastWaypointDistance=-1;
     int32 StalledPathTicks=0;
+    int32 LookTicks=0,TargetUnseenTicks=0;bool LookAtPlayer=false,WasChasing=false;float IdleLookYaw=0;
     float ThrustTimer=0,ThrustSpeed=.2f;
     FRandomStream Random;
     FString InitializationReason=TEXT("not_initialized");

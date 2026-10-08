@@ -8,7 +8,7 @@ struct FBridgeMobSnapshot {
     FString Id, Type, Appearance;
     FVector Position=FVector::ZeroVector;
     double Yaw=0;
-    float Width=.6f, Height=1.8f, Health=20, MaxHealth=20, Speed=.25f, Damage=0;
+    float Width=.6f, Height=1.8f, Health=20, MaxHealth=20, Speed=.25f, Damage=0, KnockbackResistance=0;
     bool Hostile=false, Baby=false;
 };
 
@@ -33,6 +33,7 @@ struct FBridgeMobAppearance {
     UPROPERTY(EditAnywhere,BlueprintReadOnly) float MaxHealth=20;
     UPROPERTY(EditAnywhere,BlueprintReadOnly) float Speed=.25f;
     UPROPERTY(EditAnywhere,BlueprintReadOnly) float Damage=0;
+    UPROPERTY(EditAnywhere,BlueprintReadOnly) float KnockbackResistance=0;
     UPROPERTY(EditAnywhere,BlueprintReadOnly) bool Hostile=false;
     UPROPERTY(EditAnywhere,BlueprintReadOnly) bool Baby=false;
     UPROPERTY(EditAnywhere,BlueprintReadOnly) TObjectPtr<class UMaterialInterface> Material;

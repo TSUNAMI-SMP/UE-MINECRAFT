@@ -1,4 +1,5 @@
 #include "BridgeCharacter.h"
+#include "BridgeCharacterMovement.h"
 #include "BridgeCharacterMath.h"
 #include "BridgeOutlineMath.h"
 #include "Camera/CameraComponent.h"
@@ -63,7 +64,8 @@ void SkinCuboid(UProceduralMeshComponent* Part,float PixelWidth,float PixelHeigh
 }
 }
 
-ABridgeCharacter::ABridgeCharacter() {
+ABridgeCharacter::ABridgeCharacter(const FObjectInitializer& ObjectInitializer)
+    : Super(ObjectInitializer.SetDefaultSubobjectClass<UBridgeCharacterMovement>(ACharacter::CharacterMovementComponentName)) {
     GetCapsuleComponent()->InitCapsuleSize(30.f, 90.f);
     BridgeCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("BridgeCamera"));
     BridgeCamera->SetupAttachment(GetCapsuleComponent());
@@ -76,12 +78,12 @@ ABridgeCharacter::ABridgeCharacter() {
     GetCharacterMovement()->GravityScale = 0;
     PrimaryActorTick.bCanEverTick=true;PrimaryActorTick.TickGroup=TG_PostPhysics;
     GetCharacterMovement()->MaxWalkSpeed=431.7f;
-    GetCharacterMovement()->MaxAcceleration=6500.f;
-    GetCharacterMovement()->BrakingDecelerationWalking=6500.f;
-    GetCharacterMovement()->GroundFriction=8.f;
+    GetCharacterMovement()->MaxAcceleration=5224.f;
+    GetCharacterMovement()->BrakingDecelerationWalking=0.f;
+    GetCharacterMovement()->GroundFriction=12.1f;
     GetCharacterMovement()->BrakingFrictionFactor=1.f;
     GetCharacterMovement()->AirControl=.35f;
-    GetCharacterMovement()->FallingLateralFriction=.5f;
+    GetCharacterMovement()->FallingLateralFriction=1.886f;
     GetCharacterMovement()->BrakingDecelerationFalling=0;
     JumpMaxHoldTime=0;
     GetCharacterMovement()->MaxWalkSpeedCrouched=130;
@@ -162,7 +164,10 @@ void ABridgeCharacter::ApplyUEInput(float Forward,float Right,bool JumpHeld,bool
     const float Magnitude=FMath::Min(1.f,Direction.Size());
     if(Magnitude>0) AddMovementInput(Direction.GetSafeNormal(),Magnitude);
     if(BridgeFlying) {
-        AddMovementInput(FVector::UpVector,(JumpHeld ? 1.f : 0.f)-(Sneak ? 1.f : 0.f));
+        if(auto* Movement=Cast<UBridgeCharacterMovement>(GetCharacterMovement())) {
+            Movement->FlightIntent=Direction.GetClampedToMaxSize(1)+FVector::UpVector*((JumpHeld ? 1.f : 0.f)-(Sneak ? 1.f : 0.f));
+            Movement->FlightSprint=SprintRequested;
+        }
         StopJumping();
     } else if(JumpHeld && (!PreviousJump || GetCharacterMovement()->IsMovingOnGround())) Jump();
     if(!JumpHeld) StopJumping(); PreviousJump=JumpHeld;
@@ -197,7 +202,7 @@ void ABridgeCharacter::ApplyFlight(bool Creative,bool Flying) {
     if(BridgeFlying==Enabled) return;
     BridgeFlying=Enabled;FlightWasAirborne=false;StopJumping();PreviousJump=false;
     auto* Movement=GetCharacterMovement();Movement->StopMovementImmediately();
-    Movement->MaxFlySpeed=1080.f;Movement->BrakingDecelerationFlying=6500.f;
+    Movement->MaxFlySpeed=1088.9f;Movement->BrakingDecelerationFlying=0;
     Movement->SetMovementMode(Enabled ? MOVE_Flying : (UEAuthority ? MOVE_Falling : MOVE_None));
 }
 void ABridgeCharacter::ConfigureOutline(UMaterialInterface* Material) {

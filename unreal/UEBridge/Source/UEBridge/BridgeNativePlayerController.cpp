@@ -15,6 +15,9 @@
 #include "UnrealClient.h"
 #include "InputCoreTypes.h"
 #include "InputKeyEventArgs.h"
+#include "Misc/ConfigCacheIni.h"
+#include "Misc/Paths.h"
+#include "HAL/PlatformFileManager.h"
 
 ABridgeNativePlayerController::ABridgeNativePlayerController() {
     PrimaryActorTick.bCanEverTick=true;
@@ -136,6 +139,9 @@ void ABridgeNativePlayerController::ConfigureNativeSettings(const TSharedPtr<FJs
         if(Settings->TryGetNumberField(TEXT("perspective"),Number)) NativePerspective=FMath::Clamp(int32(Number),0,2);
         if(Settings->TryGetNumberField(TEXT("fov"),Number)) NativeBaseFov=FMath::Clamp(float(Number),30.f,110.f);
     }
+    float SavedSensitivity=MouseSensitivity;
+    const FString ControlsFile=FPaths::Combine(FPaths::ProjectSavedDir(),TEXT("Config/NativeControls.ini"));
+    if(GConfig) {GConfig->LoadFile(ControlsFile);if(GConfig->GetFloat(TEXT("Controls"),TEXT("MouseSensitivity"),SavedSensitivity,ControlsFile) && FMath::IsFinite(SavedSensitivity)) MouseSensitivity=FMath::Clamp(SavedSensitivity,0.f,1.f);}
     if(auto* BridgePawn=Cast<ABridgeCharacter>(GetPawn())) {
         BridgePawn->ConfigureNativeViewOptions(BobView,NativeFovEffectScale);
         BridgePawn->SetMinecraftFov(NativeBaseFov);
@@ -226,7 +232,7 @@ void ABridgeNativePlayerController::SetMenuInput() {
     float UnusedX=0,UnusedY=0;GetInputMouseDelta(UnusedX,UnusedY);
 }
 void ABridgeNativePlayerController::ToggleInventory() {
-    if(!IsValid(NativeReceiver) || !NativeReceiver->NativePlayActive || bPauseOpen || NativeReceiver->IsNativeSaving()) return;
+    if(!IsValid(NativeReceiver) || !NativeReceiver->NativePlayActive || bPauseOpen) return;
     bInventoryOpen=!bInventoryOpen;
     if(!bInventoryOpen && NativeInventory) {NativeInventory->ReturnCursor();NativeInventory->SaveProfile();}
     StopNativeInput();SetMenuInput();
@@ -237,7 +243,7 @@ void ABridgeNativePlayerController::TogglePause() {
     bPauseOpen=!bPauseOpen;
     StopNativeInput();
     if(bPauseOpen) {NativeReceiver->NativeSave();if(NativeInventory) NativeInventory->SaveProfile();}
-    SetPause(bPauseOpen || NativeReceiver->IsNativeSaving());SetMenuInput();
+    SetPause(bPauseOpen);SetMenuInput();
 }
 void ABridgeNativePlayerController::SelectNativeHotbar(int32 Slot) {
     if(NativeInventory) NativeInventory->SelectHotbar(Slot);
@@ -261,17 +267,18 @@ void ABridgeNativePlayerController::UpdateSelectedItem() {
 }
 void ABridgeNativePlayerController::RouteMenuInput() {
     auto* Hud=Cast<ABridgeNativeHUD>(GetHUD());if(!Hud) return;
-    float X=0,Y=0;
-    if(GetMousePosition(X,Y)) {
-        if(WasInputKeyJustPressed(EKeys::LeftMouseButton)) Hud->HandlePointer(EKeys::LeftMouseButton,FVector2D(X,Y));
-        if(WasInputKeyJustPressed(EKeys::RightMouseButton)) Hud->HandlePointer(EKeys::RightMouseButton,FVector2D(X,Y));
-    }
     const float Wheel=GetInputAnalogKeyState(EKeys::MouseWheelAxis);
     const int32 Steps=BridgeNativeInputMath::WheelSteps(Wheel,MouseWheelSensitivity,WheelRemainder);
     if(Steps) Hud->HandleScroll(Steps);
 }
 bool ABridgeNativePlayerController::InputKey(const FInputKeyEventArgs& Params) {
     const bool Result=Super::InputKey(Params);
+    if(IsValid(NativeReceiver) && NativeReceiver->NativePlayActive && Params.Event==IE_Pressed) {
+        if(!bInventoryOpen && !bPauseOpen && Focused() && MatchesBinding(TEXT("key.togglePerspective"),Params.Key)) {CycleNativePerspective();return true;}
+        if((bInventoryOpen || bPauseOpen) && (Params.Key==EKeys::LeftMouseButton || Params.Key==EKeys::RightMouseButton)) {
+            float X=0,Y=0;if(GetMousePosition(X,Y)) if(auto* Hud=Cast<ABridgeNativeHUD>(GetHUD())) return Hud->HandlePointer(Params.Key,FVector2D(X,Y)) || Result;
+        }
+    }
     if(IsValid(NativeReceiver) && NativeReceiver->NativePlayActive && Params.Event==IE_Pressed && Params.Key==EKeys::F3) {
         if(auto* Hud=Cast<ABridgeNativeHUD>(GetHUD())) return Hud->HandleKey(Params.Key) || Result;
     }
@@ -345,7 +352,6 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
     if(!Down(TEXT("key.forward")) || Down(TEXT("key.sneak"))) bDoubleSprint=false;
     if(ToggleCrouchOption && Pressed(TEXT("key.sneak"))) bToggleSneak=!bToggleSneak;
     if(ToggleSprintOption && Pressed(TEXT("key.sprint"))) bToggleSprint=!bToggleSprint;
-    if(Pressed(TEXT("key.togglePerspective"))) NativePerspective=(NativePerspective+1)%3;
     if(Pressed(TEXT("key.toggleGui"))) NativeHudVisible=!NativeHudVisible;
     float MouseX=0,MouseY=0;GetInputMouseDelta(MouseX,MouseY);
     const float Degrees=float(BridgeNativeInputMath::MouseDegreesPerCount(MouseSensitivity));
@@ -370,7 +376,7 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
         NativeInventory->SwapOffhand();
     }
     UpdateSelectedItem();
-    if(Down(TEXT("key.attack")) && (Pressed(TEXT("key.attack")) || Now>=NextAttack)) {NativeReceiver->NativeAction(TEXT("break"));NextAttack=Now+.25;}
+    if(Down(TEXT("key.attack")) && (Pressed(TEXT("key.attack")) || Now>=NextAttack)) {NativeReceiver->NativeAction(Pressed(TEXT("key.attack")) ? TEXT("attack") : TEXT("break"));NextAttack=Now+.25;}
     const bool UseDown=Down(TEXT("key.use"));
     const bool BowSelected=SelectedItem==TEXT("minecraft:bow");
     if(bBowHeld && (!UseDown || !BowSelected)) {
@@ -384,5 +390,19 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
         const auto Stack=NativeInventory->Selected();
         const int32 Count=All ? Stack.Count : 1;
         if(!Stack.ItemId.IsEmpty() && Stack.Count>0 && NativeReceiver->NativeDrop(Stack.ItemId,Count)) NativeInventory->ConsumeSelected(Count);
+    }
+}
+
+void ABridgeNativePlayerController::CycleNativePerspective() {
+    NativePerspective=(NativePerspective+1)%3;StopNativeInput();
+    if(auto* Pawn=Cast<ABridgeCharacter>(GetPawn())) Pawn->ApplyNativePresentation(NativePerspective,LeftHanded,SkinLayers,SlimArms,0);
+}
+void ABridgeNativePlayerController::SetNativeSensitivity(float Value) {
+    if(!FMath::IsFinite(Value)) return;
+    MouseSensitivity=FMath::Clamp(Value,0.f,1.f);
+    if(GConfig) {
+        const FString File=FPaths::Combine(FPaths::ProjectSavedDir(),TEXT("Config/NativeControls.ini"));
+        FPlatformFileManager::Get().GetPlatformFile().CreateDirectoryTree(*FPaths::GetPath(File));
+        GConfig->SetFloat(TEXT("Controls"),TEXT("MouseSensitivity"),MouseSensitivity,File);GConfig->Flush(false,File);
     }
 }

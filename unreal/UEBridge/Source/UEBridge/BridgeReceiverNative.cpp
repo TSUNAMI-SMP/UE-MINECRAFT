@@ -16,6 +16,7 @@
 #include "BridgeVideo.h"
 #include "BridgeArrow.h"
 #include "BridgeNativeExplosion.h"
+#include "BridgeCombatMath.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Dom/JsonObject.h"
@@ -44,7 +45,7 @@ TArray<TSharedPtr<FJsonValue>> JsonVector(const FVector& Value) {
 
 bool ABridgeReceiver::IsNativeReady() const {
     return NativePlayActive && NativeInitialized && !NativeRestoreFailed && NativeStore.IsValid() && NativeStore->IsReady()
-        && !NativeStore->IsSaving() && IsValid(SyncedWorld) && SyncedWorld->IsSealed() && TerrainMovementReady;
+        && IsValid(SyncedWorld) && SyncedWorld->IsSealed() && TerrainMovementReady;
 }
 float ABridgeReceiver::GetNativeHealth() const {return IsValid(MobWorld) ? MobWorld->PlayerHealth : 20.f;}
 bool ABridgeReceiver::IsNativeSaving() const {return NativePlayActive && NativeStore.IsValid() && NativeStore->IsSaving();}
@@ -107,7 +108,7 @@ void ABridgeReceiver::BeginNativePlay() {
     Video->SetNativeSkyEnvironment(LatestInput.VanillaLight,NativeStore->GetMetadata().Dimension);
     NativeSetLighting(NativeLighting);
     NativeStatus=TEXT("Validating offline world...");
-    UE_LOG(LogTemp,Display,TEXT("Bridge 0.13.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
+    UE_LOG(LogTemp,Display,TEXT("Bridge 0.14.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
 }
 
 void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
@@ -116,11 +117,7 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
     if(!Video->IsNativeRenderModeActive()) Video->SetNativeRenderMode(NativeLighting);
     if(auto* PC=Controller(this)) if(!PC->IsSavedInventoryValid()) {NativeRestoreFailed=true;NativeStatus=PC->GetInventoryRestoreError();}
     if(NativeRestoreFailed) {if(auto* Pawn=Cast<ABridgeCharacter>(TargetCharacter)) Pawn->SetAuthorityEnabled(false);LogDiagnostics(Now);return;}
-    NativeStore->Tick(4);
-    if(NativeSavePausedWorld && !NativeStore->IsSaving()) {
-        NativeSavePausedWorld=false;
-        if(auto* PC=Controller(this)) UGameplayStatics::SetGamePaused(this,PC->IsPausedMenuOpen());
-    }
+    NativeStore->Tick(NativeStore->IsSaving() ? 1 : 4);
     auto* Character=Cast<ABridgeCharacter>(TargetCharacter);
     if(!Character) {NativeStatus=TEXT("Waiting for BridgeCharacter pawn...");return;}
     if(!NativeStore->GetError().IsEmpty() && !NativeStore->IsReady()) {
@@ -199,7 +196,7 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
             *Metadata.PackageId,Metadata.Cells,*Metadata.Spawn.ToString(),*Metadata.SaveFile);
     }
     TerrainMovementReady=SyncedWorld->IsMovementReady(Character->GetMinecraftFeetPosition(),Character->GetVelocity());
-    const bool Running=!NativeStore->IsSaving() && GetNativeHealth()>0 && TerrainMovementReady;
+    const bool Running=GetNativeHealth()>0 && TerrainMovementReady;
     UEControl=Running;Character->SetAuthorityEnabled(Running);
     Character->SetNativeBlockReach(NativeCreative ? 500.f : 450.f);
     Character->ConfigureVisuals(PreviewMaterial,TexturePalette,LatestInput.HeldItem,LatestInput.HeldBlock,LatestInput.HeldColor,LatestInput.HeldModelKey);
@@ -227,7 +224,7 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
         for(TActorIterator<AActor> It(GetWorld());It;++It) if(It->ActorHasTag(TEXT("BridgeMinecraftVisual"))) LightActor(*It);
         LightActor(Character);
     }
-    if(!NativeStore->IsSaving() && !GetWorld()->IsPaused()) {
+    if(!GetWorld()->IsPaused()) {
         for(int32 I=NativeFuses.Num()-1;I>=0;--I) if(GetWorld()->GetTimeSeconds()>=NativeFuses[I].Deadline) {
             const FVector Position=NativeFuses[I].Position;NativeFuses.RemoveAtSwap(I);
             if(!ExplosionSystem && !ABridgeNativeExplosion::Spawn(GetWorld(),Position,NativeUiPalette))
@@ -253,6 +250,7 @@ void ABridgeReceiver::SetNativeInput(float Forward,float Right,bool Jump,bool Sn
 }
 void ABridgeReceiver::NativeSelect(const FString& ItemId) {
     if(!NativePlayActive) return;
+    if(LatestInput.HeldItem!=ItemId) NativeLastAttack=GetWorld()->GetTimeSeconds();
     LatestInput.HeldItem=ItemId;LatestInput.HeldBlock.Empty();LatestInput.HeldModelKey.Empty();LatestInput.SpawnType.Empty();
     LatestInput.HeldColor=0xffffff;
     if(const auto* Item=NativeUiPalette ? NativeUiPalette->FindItem(ItemId) : nullptr) {
@@ -260,6 +258,17 @@ void ABridgeReceiver::NativeSelect(const FString& ItemId) {
         if(TexturePalette && !Item->BlockId.IsEmpty()) LatestInput.HeldColor=TexturePalette->ParticleTint(Item->BlockId).ToPackedARGB() & 0xffffffu;
         LatestInput.SpawnType=Item->SpawnType;
     }
+}
+float ABridgeReceiver::GetNativeAttackCharge() const {
+    auto Weapon=BridgeCombatMath::weapon(TCHAR_TO_UTF8(*LatestInput.HeldItem));
+    if(const auto* Item=NativeUiPalette ? NativeUiPalette->FindItem(LatestInput.HeldItem) : nullptr) if(Item->AttackSpeed>0) Weapon.speed=Item->AttackSpeed;
+    return float(BridgeCombatMath::charge(GetWorld()->GetTimeSeconds()-NativeLastAttack,Weapon.speed));
+}
+float ABridgeReceiver::NativeAttackDamage() const {
+    auto Weapon=BridgeCombatMath::weapon(TCHAR_TO_UTF8(*LatestInput.HeldItem));
+    if(const auto* Item=NativeUiPalette ? NativeUiPalette->FindItem(LatestInput.HeldItem) : nullptr) if(Item->AttackSpeed>0) Weapon.damage=Item->AttackDamage;
+    if(const auto* Item=NativeUiPalette ? NativeUiPalette->FindItem(LatestInput.HeldItem) : nullptr) if(Item->AttackSpeed>0) Weapon.speed=Item->AttackSpeed;
+    return float(BridgeCombatMath::damage(Weapon.damage,BridgeCombatMath::charge(GetWorld()->GetTimeSeconds()-NativeLastAttack,Weapon.speed,.5)));
 }
 void ABridgeReceiver::NativeAction(const FString& Action) {
     if(NativePlayActive && Action==TEXT("ui_click")) {PlayNativeSound(TEXT("minecraft:ui.button.click"),FVector::ZeroVector,1,1,TEXT("master"));return;}
@@ -294,6 +303,13 @@ void ABridgeReceiver::NativeAction(const FString& Action) {
         }
         return;
     }
+    if(Action==TEXT("attack")) {
+        const float Damage=NativeAttackDamage();NativeLastAttack=GetWorld()->GetTimeSeconds();Character->SwingHand();
+        if(MobWorld && MobWorld->Attack(Eye,Aim.Vector(),NativeCreative ? 500.f : 300.f,Damage)) {LastAction=TEXT("mob attacked");return;}
+    }
+    // Holding attack continues block mining, not repeated melee attacks. A mob
+    // still occludes mining while its invulnerability timer is active.
+    if(Action==TEXT("break") && MobWorld && MobWorld->Attack(Eye,Aim.Vector(),NativeCreative ? 500.f : 300.f,0)) return;
     FIntVector Voxel;FVector Normal,Hit;const bool Found=SyncedWorld->Aim(Eye,Aim,NativeCreative ? 500.f : 450.f,Voxel,Normal,Character,&Hit);
     if(Action==TEXT("pick")) {
         FString Id;FColor Tint;
@@ -313,7 +329,7 @@ void ABridgeReceiver::NativeAction(const FString& Action) {
         }
     }
     if(Action==TEXT("place") && !NativeCreative && (!Inventory || Inventory->Selected().IsEmpty())) return;
-    FBridgePacket Packet=LatestInput;Packet.Kind=EBridgeKind::BlockAction;Packet.Action=Action;
+    FBridgePacket Packet=LatestInput;Packet.Kind=EBridgeKind::BlockAction;Packet.Action=Action==TEXT("attack") ? TEXT("break") : Action;
     Packet.Sequence=++LastSequence;Packet.EventId=FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
     Packet.ImportId=SyncedWorld->GetImportId();Packet.Yaw=Aim.Yaw;Packet.Pitch=-Aim.Pitch;
     BlockAction(Packet);
@@ -365,18 +381,10 @@ bool ABridgeReceiver::NativeSave() {
     }
     Runtime->SetArrayField(TEXT("fuses"),Fuses);
     const bool Started=NativeStore->BeginSave(SyncedWorld,SourceOrigin+MinecraftDelta(Character->GetMinecraftFeetPosition()-Anchor),PC->GetControlRotation(),Runtime);
-    if(Started) {
-        // Freeze entity physics as well as edits so the terrain and inventory,
-        // drops, mobs and TNT all describe the same game-time snapshot.
-        NativeSavePausedWorld=true;UGameplayStatics::SetGamePaused(this,true);
-        UEControl=false;Character->SetAuthorityEnabled(false);
-        if(MobWorld) MobWorld->SetAuthority(false,Character);
-        if(ItemWorld) ItemWorld->SetAuthority(false,Character);
-    }
     return Started;
 }
 void ABridgeReceiver::NativeRespawn() {
-    if(!NativePlayActive || !NativeInitialized || NativeRestoreFailed || !NativeStore.IsValid() || NativeStore->IsSaving() || !TargetCharacter) return;
+    if(!NativePlayActive || !NativeInitialized || NativeRestoreFailed || !NativeStore.IsValid() || !TargetCharacter) return;
     if(MobWorld) MobWorld->RespawnPlayer();
     LatestInput.Flying=false;if(auto* PC=Controller(this)) PC->RestoreNativeView(LatestInput.Yaw,-LatestInput.Pitch,false,LatestInput.Perspective);
     const FVector Feet=BridgeProtocol::ToUnreal(NativeRespawnPosition-SourceOrigin,Anchor);

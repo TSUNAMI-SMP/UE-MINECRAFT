@@ -26,7 +26,7 @@ public final class NativeUiExport {
         var resources=collectSprites(client.getResourceManager());
         if(resources.size()>2048) throw new IOException("HUD sprite limit 2048 exceeded");spriteResources=resources.entrySet().iterator();
         for(int cp=32;cp<=126;cp++) characters.add(cp);
-        "照明".codePoints().forEach(characters::add);
+        "照明感度下上視点一人称後前所持品へ検索へ".codePoints().forEach(characters::add);
         "クリエイティブサバイバルインベントリ検索完了読み込み中設定戻る終了経験値保存再開操作アイテムゲームメニューワールド開始地点に所持品クラフトは未対応です".codePoints().forEach(characters::add);
         for(Item item:Registries.ITEM) {ItemStack stack=item.getDefaultStack();if(stack.isEmpty()) continue;if(stacks.size()>=4096) throw new IOException("UI item limit exceeded");stacks.add(stack);stack.getName().getString().codePoints().forEach(characters::add);}
         stacks.sort(Comparator.comparing(stack->Registries.ITEM.getId(stack.getItem()).toString()));
@@ -53,6 +53,9 @@ public final class NativeUiExport {
                 entry.addProperty("width",32);entry.addProperty("height",32);entry.addProperty("maxCount",stack.getMaxCount());entry.addProperty("modelKey",ItemModelExport.modelKey(client,stack));
                 String block="";if(stack.getItem() instanceof BlockItem b && BlockGeometryCapture.supported(b.getBlock().getDefaultState())) block=Registries.BLOCK.getId(b.getBlock()).toString();entry.addProperty("block",block);
                 if(stack.getItem() instanceof SpawnEggItem egg) entry.addProperty("spawnType",Registries.ENTITY_TYPE.getId(egg.getEntityType(stack)).toString());
+                var modifiers=stack.getOrDefault(net.minecraft.component.DataComponentTypes.ATTRIBUTE_MODIFIERS,net.minecraft.component.type.AttributeModifiersComponent.DEFAULT);
+                entry.addProperty("attackDamage",modifiers.applyOperations(net.minecraft.entity.attribute.EntityAttributes.ATTACK_DAMAGE,1,net.minecraft.entity.EquipmentSlot.MAINHAND));
+                entry.addProperty("attackSpeed",modifiers.applyOperations(net.minecraft.entity.attribute.EntityAttributes.ATTACK_SPEED,4,net.minecraft.entity.EquipmentSlot.MAINHAND));
                 items.add(entry);
             } catch(RuntimeException | IOException error) {excluded.addProperty(id,error.getMessage()==null ? error.getClass().getSimpleName() : error.getMessage());}
             // Icon source pixels are re-read as needed; bound the decoded cache independently of registry size.

@@ -22,6 +22,9 @@
 #include "RenderingThread.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/DirectionalLightComponent.h"
+#include "Components/LightComponent.h"
+#include "Components/SceneComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
 #include "GameFramework/PlayerController.h"
@@ -134,34 +137,52 @@ void UBridgeVideo::SetNativeRenderMode(bool Lighting) {
     UpdateStandaloneViewport(false);
     LightingEnabled=Lighting;
     Viewport->EngineShowFlags=*SavedNativeFlags;
-    LightingFlags(Viewport->EngineShowFlags,Lighting,Lighting);
+    LightingFlags(Viewport->EngineShowFlags,Lighting,false);
+    // Native lighting is calibrated against the same exported environment as
+    // the lightmap. Automatic exposure and a fixed UE atmosphere destroy that parity.
+    Viewport->EngineShowFlags.SetEyeAdaptation(false);
+    Viewport->EngineShowFlags.SetTonemapper(false);
+    Viewport->EngineShowFlags.SetSpecular(false);
+    Viewport->EngineShowFlags.SetGlobalIllumination(false);
+    Viewport->EngineShowFlags.SetReflectionEnvironment(false);
+    Viewport->EngineShowFlags.SetSkyLighting(false);
     if(!Lighting) Viewport->EngineShowFlags.SetAntiAliasing(false);
-    // OFF supplies native sky geometry. Atmospheric fog/UE sky meshes must not
-    // obscure it or continue producing the old lit background.
-    if(!Lighting) {
-        for(TActorIterator<AActor> It(World);It;++It) {
-            if(It->ActorHasTag(TEXT("UEBridgeNativeSky"))) continue;
-            TInlineComponentArray<UPrimitiveComponent*> Parts;It->GetComponents(Parts);
-            for(auto* Part:Parts) {
-                bool Sky=It->ActorHasTag(TEXT("UEBridgeSky"));
-                for(int32 I=0;!Sky && I<Part->GetNumMaterials();++I) if(auto* Material=Part->GetMaterial(I)) if(auto* Base=Material->GetMaterial()) Sky=Base->bIsSky;
-                if(Sky && !NativeHiddenSky.Contains(Part)) {NativeHiddenSky.Add(Part,Part->bHiddenInGame);Part->SetHiddenInGame(true);}
-            }
+    for(TActorIterator<AActor> It(World);It;++It) {
+        if(It->ActorHasTag(TEXT("UEBridgeNativeSky")) || It->ActorHasTag(TEXT("UEBridgeNativeLighting"))) continue;
+        TInlineComponentArray<ULightComponent*> Lights;It->GetComponents(Lights);
+        for(auto* Light:Lights) if(!NativeHiddenLights.Contains(Light)) {NativeHiddenLights.Add(Light,Light->IsVisible());Light->SetVisibility(false);}
+        TInlineComponentArray<UPrimitiveComponent*> Parts;It->GetComponents(Parts);
+        for(auto* Part:Parts) {
+            bool Sky=It->ActorHasTag(TEXT("UEBridgeSky"));
+            for(int32 I=0;!Sky && I<Part->GetNumMaterials();++I) if(auto* Material=Part->GetMaterial(I)) if(auto* Base=Material->GetMaterial()) Sky=Base->bIsSky;
+            if(Sky && !NativeHiddenSky.Contains(Part)) {NativeHiddenSky.Add(Part,Part->bHiddenInGame);Part->SetHiddenInGame(true);}
         }
-        CreateNativeSky();
-    } else {
-        for(const auto& Pair:NativeHiddenSky) if(auto* Part=Pair.Key.Get()) Part->SetHiddenInGame(Pair.Value);
-        NativeHiddenSky.Empty();
     }
-    if(NativeSky) NativeSky->SetActorHiddenInGame(Lighting);
+    CreateNativeSky();
+    if(!NativeLightRig) {
+        NativeLightRig=World->SpawnActor<AActor>();
+        if(NativeLightRig) {
+            NativeLightRig->Tags.Add(TEXT("UEBridgeNativeLighting"));
+            auto* Root=NewObject<USceneComponent>(NativeLightRig);NativeLightRig->AddInstanceComponent(Root);NativeLightRig->SetRootComponent(Root);Root->RegisterComponent();
+            auto MakeLight=[&](const TCHAR* Name) {
+                auto* Light=NewObject<UDirectionalLightComponent>(NativeLightRig,Name);NativeLightRig->AddInstanceComponent(Light);Light->SetupAttachment(Root);
+                Light->SetMobility(EComponentMobility::Movable);Light->SetCastShadows(true);Light->RegisterComponent();return Light;
+            };
+            NativeSunLight=MakeLight(TEXT("NativeSunLighting"));NativeMoonLight=MakeLight(TEXT("NativeMoonLighting"));
+        }
+    }
+    if(NativeSky) NativeSky->SetActorHiddenInGame(false);
     UpdateNativeSky();
-    UE_LOG(LogTemp,Display,TEXT("Bridge native lighting: mode=%s viewport=%s sky=%s"),Lighting?TEXT("UE-lit"):TEXT("Minecraft lightmap"),*Viewport->GetName(),Lighting?TEXT("UE atmosphere"):NativeSky?TEXT("native sky"):TEXT("unavailable: run setup_bridge_rendering"));
+    UE_LOG(LogTemp,Display,TEXT("Bridge native lighting: mode=%s sky=native sun=%.2f skyFactor=%.3f"),Lighting?TEXT("UE-lit"):TEXT("Minecraft lightmap"),NativeSunAngle,NativeSkyFactor);
 }
 void UBridgeVideo::RestoreNativeRenderMode() {
     if(SavedNativeFlags) if(auto* Viewport=NativeViewport.Get()) Viewport->EngineShowFlags=*SavedNativeFlags;
     SavedNativeFlags.Reset();NativeViewport.Reset();
     for(const auto& Pair:NativeHiddenSky) if(auto* Part=Pair.Key.Get()) Part->SetHiddenInGame(Pair.Value);
     NativeHiddenSky.Empty();
+    for(const auto& Pair:NativeHiddenLights) if(auto* Light=Pair.Key.Get()) Light->SetVisibility(Pair.Value);
+    NativeHiddenLights.Empty();
+    if(NativeLightRig) NativeLightRig->Destroy();NativeLightRig=nullptr;NativeSunLight=nullptr;NativeMoonLight=nullptr;
     if(NativeSky) NativeSky->Destroy();NativeSky=nullptr;NativeSkySphere=nullptr;NativeSun=nullptr;NativeMoon=nullptr;NativeSunMaterial=nullptr;NativeMoonMaterial=nullptr;NativeSkyMaterial=nullptr;
 }
 void UBridgeVideo::SetNativeSkyPalette(UBridgeNativeUiPalette* Palette) {
@@ -186,6 +207,7 @@ void UBridgeVideo::SetNativeSkyEnvironment(const TSharedPtr<FJsonObject>& Values
     // would show midnight while the exported daylight factor remains at noon.
     NativeSunAngle=BridgeSkyMath::DefaultSunDegrees(Time);NativeMoonAngle=NativeSunAngle+180.;
     NativeMoonPhase=BridgeSkyMath::DefaultMoonPhase(Time);
+    double Factor=1;Values->TryGetNumberField(TEXT("skyFactor"),Factor);NativeSkyFactor=float(FMath::Clamp(FMath::IsFinite(Factor)?Factor:1.,0.,4.));
     double Angle=0,Phase=0;
     if(Values->TryGetNumberField(TEXT("sunAngle"),Angle) && FMath::IsFinite(Angle)) NativeSunAngle=Angle;
     if(Values->TryGetNumberField(TEXT("moonAngle"),Angle) && FMath::IsFinite(Angle)) NativeMoonAngle=Angle;
@@ -225,7 +247,7 @@ void UBridgeVideo::CreateNativeSky() {
     SetNativeSkyPalette(NativeSkyPalette);
 }
 void UBridgeVideo::UpdateNativeSky() {
-    if(!NativeSky || !SavedNativeFlags || LightingEnabled || !GetWorld()) return;
+    if(!NativeSky || !SavedNativeFlags || !GetWorld()) return;
     auto* PC=GetWorld()->GetFirstPlayerController();if(!PC || !PC->PlayerCameraManager) return;
     const FVector Camera=PC->PlayerCameraManager->GetCameraLocation();NativeSky->SetActorLocation(Camera);
     auto Place=[&](UStaticMeshComponent* Component,const FVector& Direction,bool Available) {
@@ -233,6 +255,16 @@ void UBridgeVideo::UpdateNativeSky() {
         Component->SetWorldLocation(Camera+Direction*BridgeSkyMath::CelestialRadius);Component->SetWorldRotation(FRotationMatrix::MakeFromZ(-Direction).Rotator());
     };
     const auto Sun=BridgeSkyMath::Direction(NativeSunAngle),Moon=BridgeSkyMath::Direction(NativeMoonAngle);
+    auto Light=[&](UDirectionalLightComponent* Component,const std::array<double,3>& Direction,bool Moonlight) {
+        if(!Component) return;
+        const float Elevation=float(FMath::Max(0.,Direction[2]));
+        Component->SetVisibility(LightingEnabled && NativeHasCelestials && Elevation>0);
+        Component->SetWorldRotation((-FVector(Direction[0],Direction[1],Direction[2])).Rotation());
+        // Direct light supplies shadows; ambient/block light is supplied by the native lightmap material.
+        Component->SetIntensity((Moonlight ? .12f : 1.8f)*Elevation*(1.f-NativeRain*.75f)*(Moonlight ? 1.f : NativeSkyFactor));
+        Component->SetLightColor(Moonlight ? FLinearColor(.65f,.72f,1.f) : FLinearColor(1.f,.96f,.90f));
+    };
+    Light(NativeSunLight,Sun,false);Light(NativeMoonLight,Moon,true);
     bool PhaseSheet=false;
     Place(NativeSun,FVector(Sun[0],Sun[1],Sun[2]),NativeSunTexture(NativeSkyPalette)!=nullptr);
     Place(NativeMoon,FVector(Moon[0],Moon[1],Moon[2]),NativeMoonTexture(NativeSkyPalette,NativeMoonPhase,PhaseSheet)!=nullptr);
@@ -306,7 +338,7 @@ FString UBridgeVideo::GetGpuDiagnostic() const {
 }
 FString UBridgeVideo::GetDiagnosticSummary() const {
     if(IsNativeRenderModeActive()) return FString::Printf(TEXT("display=native viewport videoTransfer=bypassed lighting=%s sky=%s GPUtime=unavailable"),
-        LightingEnabled?TEXT("UE-lit"):TEXT("Minecraft lightmap"),LightingEnabled?TEXT("UE"):NativeSky?TEXT("native"):TEXT("missing"));
+        LightingEnabled?TEXT("UE-lit"):TEXT("Minecraft lightmap"),NativeSky?TEXT("native"):TEXT("missing"));
     return FString::Printf(TEXT("streaming=%s transport=%s requested=%dx%d@%d captured=%llu transmitted=%llu replaced=%llu stale=%llu backpressureTicks=%llu readbackQueue=%d outputBytes=%d framePreparationMs=%.2f connections=%llu GPUtime=unavailable"),
         Streaming?TEXT("true"):TEXT("false"),*GetTransportName(),Width,Height,FramesPerSecond,static_cast<unsigned long long>(CapturedFrames),static_cast<unsigned long long>(TransmittedFrames),
         static_cast<unsigned long long>(ReplacedFrames),static_cast<unsigned long long>(StaleFrames),static_cast<unsigned long long>(BackpressureTicks),Readbacks.Num(),FMath::Max(0,Output.Num()-Sent),LastCaptureMs,static_cast<unsigned long long>(Connections));

@@ -161,7 +161,8 @@ bool BridgeProtocol::Parse(const TSharedPtr<FJsonObject>& P, FBridgePacket& Out)
                     || !Number(P,TEXT("health"),.01,10000,HP) || !Number(P,TEXT("maxHealth"),.01,10000,MaxHP) || HP>MaxHP
                     || !Number(P,TEXT("speed"),0,2,Speed) || !Number(P,TEXT("damage"),0,100,Damage)) return false;
                 R.Mob.Width=float(W);R.Mob.Height=float(H);R.Mob.Health=float(HP);R.Mob.MaxHealth=float(MaxHP);
-                R.Mob.Speed=float(Speed);R.Mob.Damage=float(Damage);
+                double Resistance=0;if(P->HasField(TEXT("knockbackResistance")) && !Number(P,TEXT("knockbackResistance"),0,1,Resistance)) return false;
+                R.Mob.KnockbackResistance=float(Resistance);R.Mob.Speed=float(Speed);R.Mob.Damage=float(Damage);
             }
         }
         else if(Event==TEXT("block_action")) {

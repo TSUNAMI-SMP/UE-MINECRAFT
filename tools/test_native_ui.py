@@ -43,6 +43,18 @@ class NativeUiValidation(unittest.TestCase):
         self.assertEqual(result["font"]["glyphs"][0]["drawWidth"], 1)
         self.assertEqual(result["items"][0]["source"], str(self.root / "icon.png"))
 
+    def test_weapon_attributes_are_optional_but_must_be_paired_and_finite(self):
+        item=self.manifest["items"][0]
+        item.update(attackDamage=7,attackSpeed=1.6)
+        self.assertEqual(1.6,self.load()["items"][0]["attackSpeed"])
+        for damage,speed in ((-1,1.6),(7,0),(7,float("nan")),(7,True),(float("inf"),1.6)):
+            item.update(attackDamage=damage,attackSpeed=speed)
+            with self.assertRaisesRegex(ValueError,"weapon attributes"):
+                self.load()
+        item.pop("attackSpeed")
+        with self.assertRaisesRegex(ValueError,"weapon attributes"):
+            self.load()
+
     def test_modified_texture_rejected(self):
         (self.root / "icon.png").write_bytes(self.data + b"tampered")
         with self.assertRaisesRegex(ValueError, "checksum"):

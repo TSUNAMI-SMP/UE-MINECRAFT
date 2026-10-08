@@ -21,7 +21,9 @@ public final class NativeIconRaster {
             if(vertices.size()!=4 || uv.size()!=4) throw new IOException("Invalid GUI quad");
             double[][] v=new double[4][5];for(int i=0;i<4;i++) {var p=vertices.get(i).getAsJsonArray();var t=uv.get(i).getAsJsonArray();
                 v[i]=new double[]{(p.get(0).getAsDouble()+.5)*size,(.5-p.get(1).getAsDouble())*size,p.get(2).getAsDouble(),t.get(0).getAsDouble(),t.get(1).getAsDouble()};}
-            int tint=face.get("color").getAsInt();triangle(output,depth,texture,tint,v[0],v[1],v[2]);triangle(output,depth,texture,tint,v[0],v[2],v[3]);
+            int tint=face.get("color").getAsInt();
+            if(face.has("guiShade")) {double shade=face.get("guiShade").getAsDouble();if(!Double.isFinite(shade) || shade<0 || shade>1) throw new IOException("Invalid GUI diffuse light");
+                tint=((int)(((tint>>16)&255)*shade)<<16)|((int)(((tint>>8)&255)*shade)<<8)|(int)((tint&255)*shade);}triangle(output,depth,texture,tint,v[0],v[1],v[2]);triangle(output,depth,texture,tint,v[0],v[2],v[3]);
         }
         return output;
     }

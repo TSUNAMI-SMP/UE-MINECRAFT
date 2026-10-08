@@ -156,6 +156,8 @@ def load_mob_manifest(filename):
             value = _number(stats.get(key))
             if not low <= value <= high:
                 raise ValueError("Invalid mob template stat: " + key)
+        if "knockbackResistance" in stats and not 0 <= _number(stats["knockbackResistance"]) <= 1:
+            raise ValueError("Invalid mob knockback resistance")
         if type(stats.get("hostile")) is not bool or type(stats.get("baby")) is not bool:
             raise ValueError("Invalid mob template flags")
     return manifest
@@ -325,6 +327,7 @@ def _import_minecraft_mobs(unreal, manifest, stage, filename):
         if "stats" in source:
             for field in ("width", "height", "speed", "damage", "hostile", "baby"):
                 appearance.set_editor_property(field, source["stats"][field])
+            appearance.set_editor_property("knockback_resistance", source["stats"].get("knockbackResistance", 1 if source["type"] == "minecraft:iron_golem" else 0))
             appearance.set_editor_property("max_health", source["stats"]["maxHealth"])
         appearance.set_editor_property("key", key)
         appearance.set_editor_property("type", source["type"])

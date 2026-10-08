@@ -8,7 +8,7 @@ UCLASS()
 class UEBRIDGE_API ABridgeCharacter : public ACharacter {
     GENERATED_BODY()
 public:
-    ABridgeCharacter();
+    ABridgeCharacter(const FObjectInitializer& ObjectInitializer=FObjectInitializer::Get());
     virtual void Tick(float DeltaSeconds) override;
     void SetAuthorityEnabled(bool Enabled);
     void ApplyUEInput(float Forward,float Right,bool JumpHeld,bool Sneak,bool Sprint=false);

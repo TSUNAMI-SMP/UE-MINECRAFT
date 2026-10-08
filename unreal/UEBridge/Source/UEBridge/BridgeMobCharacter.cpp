@@ -5,6 +5,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "ProceduralMeshComponent.h"
 #include "Engine/World.h"
+#include "BridgeCombatMath.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 ABridgeMobCharacter::ABridgeMobCharacter() {
     PrimaryActorTick.bCanEverTick=true;
@@ -49,7 +51,11 @@ bool ABridgeMobCharacter::Initialize(const FBridgeMobSnapshot& Snapshot,const FB
     const float Gravity=GetWorld() ? FMath::Abs(GetWorld()->GetGravityZ()) : 980.f;
     Movement->GravityScale=3200.f/FMath::Max(1.f,Gravity);
     // Vanilla MOVEMENT_SPEED .25 gives about 4.3 blocks/s on level ground.
-    Movement->MaxWalkSpeed=FMath::Clamp(Snapshot.Speed*1727.f,0.f,1200.f);
+    GroundSpeed=FMath::Clamp(Snapshot.Speed*1727.f,0.f,1200.f);Movement->MaxWalkSpeed=GroundSpeed;
+    Movement->JumpZVelocity=840;Movement->AirControl=0.02f;
+    Movement->MaxAcceleration=GroundSpeed*12.1f;Movement->GroundFriction=12.1f;
+    Movement->BrakingFrictionFactor=1;Movement->BrakingDecelerationWalking=0;
+    Movement->FallingLateralFriction=1.886f;Movement->BrakingDecelerationFalling=0;
     Random.Initialize(int32(GetTypeHash(Snapshot.Id)));
     Poses=Appearance.Parts;
     for(int32 Index=0;Index<Poses.Num();Index++) {
@@ -68,7 +74,7 @@ bool ABridgeMobCharacter::Initialize(const FBridgeMobSnapshot& Snapshot,const FB
             for(int32 Offset=0;Offset<4;Offset++) Normals[Vertex+Offset]=Normal;
         }
         if(!Part.Vertices.IsEmpty()) MobPartComponent->CreateMeshSection_LinearColor(0,Part.Vertices,Triangles,Normals,Part.Texcoords,Colors,Tangents,false);
-        MobPartComponent->SetMaterial(0,Appearance.Material);
+        MobPartComponent->SetMaterial(0,UMaterialInstanceDynamic::Create(Appearance.Material,MobPartComponent));
     }
     LastPosition=GetActorLocation();GetCharacterMovement()->SetMovementMode(MOVE_None);InitializationReason=TEXT("ready");return true;
 }
@@ -83,9 +89,16 @@ void ABridgeMobCharacter::SetAuthority(bool Active,ACharacter* NewTarget) {
 void ABridgeMobCharacter::Tick(float DeltaSeconds) {
     Super::Tick(DeltaSeconds);
     float Dt=FMath::Clamp(DeltaSeconds,0.f,.1f);
+    HurtRemaining=float(FMath::Max(0.,LastFullHit+.5-GetWorld()->GetTimeSeconds()));
+    for(auto* Part:Parts) if(auto* Material=Cast<UMaterialInstanceDynamic>(Part->GetMaterial(0))) Material->SetScalarParameterValue(TEXT("BridgeHurt"),HurtRemaining>0 ? 1.f : 0.f);
     if(!Alive()) {
-        DeathAge+=Dt;VisualRoot->SetRelativeRotation(FRotator(0,0,FMath::Min(90.f,DeathAge*450.f)));
-        if(DeathAge>.9f) Destroy();return;
+        DeathAge=float(FMath::Max(0.,GetWorld()->GetTimeSeconds()-DeathStarted));
+        const float Angle=FMath::Min(90.f,FMath::Sqrt(FMath::Max(0.f,(DeathAge*20-1)/20*1.6f))*90.f);
+        VisualRoot->SetRelativeLocation(DeathRootPosition);VisualRoot->SetRelativeRotation(FRotator(0,0,Angle));
+        float Bottom=TNumericLimits<float>::Max();
+        for(auto* Part:Parts) if(Part->GetNumSections()>0) Bottom=FMath::Min(Bottom,float(Part->CalcBounds(Part->GetComponentTransform()).GetBox().Min.Z));
+        if(Bottom<TNumericLimits<float>::Max()) VisualRoot->AddWorldOffset(FVector(0,0,DeathFloorZ-Bottom));
+        if(DeathAge>=1.f) Destroy();return;
     }
     if(!Enabled) return;
     AttackCooldown=FMath::Max(0.f,AttackCooldown-Dt);Decision-=Dt;
@@ -120,16 +133,21 @@ void ABridgeMobCharacter::Tick(float DeltaSeconds) {
         if(WorldOwner.IsValid() && WorldOwner->SpawnAllowed && !WorldOwner->SpawnAllowed(NextFeet)) {
             GetCharacterMovement()->StopMovementImmediately();Wander=-Wander;Decision=.5f;Animate(Dt);return;
         }
-        AddMovementInput(Direction,Hostile ? 1.f : .35f,true);
+        GetCharacterMovement()->MaxWalkSpeed=GroundSpeed*(Hostile && Player ? 1.f : .35f);
+        AddMovementInput(Direction,1.f,true);
         if(FVector::DistSquared2D(GetActorLocation(),LastPosition)<1.f && GetCharacterMovement()->IsMovingOnGround()) Stuck+=Dt;else Stuck=0;
         if(Stuck>.35f) { Jump();Stuck=0;if(!Hostile) { Wander=-Wander;Decision=.5f; } }
     } else Stuck=0;
-    LastPosition=GetActorLocation();Animate(Dt);
+    Animate(Dt);
 }
 
 void ABridgeMobCharacter::Animate(float DeltaSeconds) {
-    float Speed=GetVelocity().Size2D();float Weight=FMath::Clamp(Speed/260.f,0.f,1.f);
-    WalkWeight=FMath::FInterpTo(WalkWeight,Weight,DeltaSeconds,10.f);Phase+=Speed*DeltaSeconds/230.f*16.f;
+    const float Distance=FVector::Dist2D(GetActorLocation(),LastPosition)/100.f;
+    const float Weight=DeltaSeconds>0 ? FMath::Clamp(Distance/(DeltaSeconds*5.f),0.f,1.f) : 0;
+    const double Decay=BridgeCombatMath::damping(.6,DeltaSeconds);
+    const double Progress=Weight*DeltaSeconds*20+(WalkWeight-Weight)*.6*(1-Decay)/.4;
+    WalkWeight=float(Weight+(WalkWeight-Weight)*Decay);
+    Phase+=float(Progress)*(InitialSnapshot.Baby ? 3.f : 1.f)*.6662f/(2*PI)*16.f;
     for(int32 Index=0;Index<Parts.Num();Index++) {
         const FBridgeMobPart& Part=Poses[Index];FTransform Pose=Part.Rest;
         if(Part.WalkFrames.Num()>=2) {
@@ -145,14 +163,28 @@ void ABridgeMobCharacter::Animate(float DeltaSeconds) {
         }
         Parts[Index]->SetRelativeTransform(Pose);
     }
+    LastPosition=GetActorLocation();
 }
 
 bool ABridgeMobCharacter::Hit(float Amount,const FVector& Direction) {
     if(!Enabled || !Alive() || !FMath::IsFinite(Amount) || Amount<=0) return false;
-    Health=FMath::Max(0.f,Health-Amount);
+    const double Now=GetWorld()->GetTimeSeconds();
+    const float Accepted=float(BridgeCombatMath::acceptedDamage(Amount,Now-LastFullHit,PreviousDamage));
+    if(Accepted<=0) return false;
+    const bool Full=Now-LastFullHit>=.5;
+    if(Full) {LastFullHit=Now;HurtRemaining=.5f;}
+    PreviousDamage=Amount;Health=FMath::Max(0.f,Health-Accepted);
     if(WorldOwner.IsValid()) WorldOwner->NotifyMobSound(MinecraftType,Alive() ? TEXT("hurt") : TEXT("death"),GetActorLocation());
-    if(Alive()) LaunchCharacter(Direction.GetSafeNormal2D()*220.f+FVector(0,0,180),true,true);
-    else { GetCharacterMovement()->StopMovementImmediately();GetCharacterMovement()->SetMovementMode(MOVE_None);GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision); }
+    if(Alive() && Full && InitialSnapshot.KnockbackResistance<1) {
+        const FVector Old=GetVelocity();const float Strength=800.f*(1.f-FMath::Clamp(InitialSnapshot.KnockbackResistance,0.f,1.f));
+        const float Vertical=GetCharacterMovement()->IsMovingOnGround() ? FMath::Min(800.f,float(Old.Z)*.5f+Strength) : float(Old.Z);
+        LaunchCharacter(Old*.5f+Direction.GetSafeNormal2D()*Strength+FVector(0,0,Vertical-Old.Z*.5f),true,true);
+    } else if(!Alive()) {
+        DeathStarted=Now;DeathRootPosition=VisualRoot->GetRelativeLocation();DeathFloorZ=GetActorLocation().Z-GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+        FHitResult Floor;FCollisionQueryParams Query(SCENE_QUERY_STAT(MobDeathFloor),false,this);
+        if(GetWorld()->LineTraceSingleByChannel(Floor,GetActorLocation(),GetActorLocation()-FVector(0,0,1000),ECC_Visibility,Query)) DeathFloorZ=Floor.ImpactPoint.Z;
+        GetCharacterMovement()->StopMovementImmediately();GetCharacterMovement()->SetMovementMode(MOVE_None);GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    }
     return true;
 }
 

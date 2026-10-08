@@ -37,5 +37,9 @@ private:
     FBridgeMobSnapshot InitialSnapshot;
     int32 VertexCount=0;
     float NativeViewPitch=0;
+    double LastFullHit=-100,DeathStarted=-1;
+    float PreviousDamage=0,HurtRemaining=0,GroundSpeed=0;
+    float DeathFloorZ=0;
+    FVector DeathRootPosition=FVector::ZeroVector;
     void Animate(float DeltaSeconds);
 };

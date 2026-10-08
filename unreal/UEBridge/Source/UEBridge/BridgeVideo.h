@@ -70,6 +70,11 @@ private:
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> NativeSkyMaterial;
     UPROPERTY() TObjectPtr<class UBridgeNativeUiPalette> NativeSkyPalette;
     TMap<TWeakObjectPtr<class UPrimitiveComponent>,bool> NativeHiddenSky;
+    TMap<TWeakObjectPtr<class ULightComponent>,bool> NativeHiddenLights;
+    UPROPERTY() TObjectPtr<class AActor> NativeLightRig;
+    UPROPERTY() TObjectPtr<class UDirectionalLightComponent> NativeSunLight;
+    UPROPERTY() TObjectPtr<class UDirectionalLightComponent> NativeMoonLight;
+    float NativeSkyFactor=1;
     double NativeSunAngle=0,NativeMoonAngle=180;
     int32 NativeMoonPhase=0;
     bool NativeHasCelestials=true;

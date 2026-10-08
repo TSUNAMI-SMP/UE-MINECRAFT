@@ -51,7 +51,7 @@ try {
     if (Get-Process UnrealEditor,UnrealEditor-Cmd -ErrorAction SilentlyContinue) {
         throw "Save and close Unreal Editor/the previous native game before starting. Your processes were left running."
     }
-    $descriptor = Get-Content -LiteralPath $project -Raw | ConvertFrom-Json
+    $descriptor = Get-Content -LiteralPath $project -Raw -Encoding UTF8 | ConvertFrom-Json
     if (!($descriptor.Modules | Where-Object { $_.Name -eq "UEBridge" })) { throw "This is not the UEBridge project." }
     $association = [string]$descriptor.EngineAssociation
     if (!$EngineRoot) {
@@ -79,7 +79,7 @@ try {
     $markerPath = Join-Path $saved "NativeLauncher.json"
     $marker = $null
     if (Test-Path -LiteralPath $markerPath) {
-        try { $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json } catch { Write-Host "Previous native setup marker is unreadable; select your export again." }
+        try { $marker = Get-Content -LiteralPath $markerPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { Write-Host "Previous native setup marker is unreadable; select your export again." }
     }
     if (!$Manifest -and $marker -and $marker.completed -and !$Reimport) { $Manifest = [string]$marker.manifest }
     if (!$Manifest) {
@@ -93,7 +93,7 @@ try {
     }
     $Manifest = [IO.Path]::GetFullPath($Manifest.Trim('"'))
     if (!(Test-Path -LiteralPath $Manifest)) { throw "Export not found: $Manifest. Run /uebridge native export in Minecraft and select its native_manifest.json." }
-    $nativeData = Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json
+    $nativeData = Get-Content -LiteralPath $Manifest -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($nativeData.schema -ne "uebridge.native.v1" -or !$nativeData.world.complete) { throw "This is not a completed native export. Select native_manifest.json from a successful export." }
     $manifestHash = (Get-FileHash -LiteralPath $Manifest -Algorithm SHA256).Hash.ToLowerInvariant()
     $source = Join-Path $PSScriptRoot "Source"
@@ -143,7 +143,7 @@ try {
         }
         $marker = $null
         if (Test-Path -LiteralPath $markerPath) {
-            try { $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json } catch { Write-Host "Import completion marker is unreadable." }
+            try { $marker = Get-Content -LiteralPath $markerPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { Write-Host "Import completion marker is unreadable." }
         }
         if (!(Test-NativeImportCompletion -Marker $marker -AttemptId $attemptId -Manifest $Manifest -ManifestHash $manifestHash -Level $level -ExitCode $process.ExitCode -LogPath $importLog)) {
             throw (Get-NativeImportFailure -LogPath $importLog -ExitCode $process.ExitCode)

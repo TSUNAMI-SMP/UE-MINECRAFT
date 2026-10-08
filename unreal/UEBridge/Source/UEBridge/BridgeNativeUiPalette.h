@@ -14,6 +14,8 @@ struct FBridgeNativeUiItem {
     UPROPERTY(EditAnywhere, BlueprintReadOnly) FString BlockId;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) FString ModelKey;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) FString SpawnType;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) bool Glint=false;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) FString ArmorSprite;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) int32 EquipmentSlot = 0; // 1head,2chest,3legs,4feet,0none.
     UPROPERTY(EditAnywhere, BlueprintReadOnly) float Armor = 0;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) float ArmorToughness = 0;
@@ -65,6 +67,9 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Bridge|Native UI") TArray<FBridgeNativeGlyph> Glyphs;
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Bridge|Native UI") FString Language;
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Bridge|Native UI") FString ExportId;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Bridge|Native UI") FString GameplayData;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Bridge|Native UI") FString ParticleFramesData;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Bridge|Native UI") TObjectPtr<class UMaterialInterface> IconGlintMaterial;
     const FBridgeNativeUiItem* FindItem(const FString& ItemId) const {
         return Items.FindByPredicate([&](const FBridgeNativeUiItem& Entry) { return Entry.ItemId == ItemId; });
     }

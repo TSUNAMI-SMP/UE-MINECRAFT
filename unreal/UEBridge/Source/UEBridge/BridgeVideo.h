@@ -15,7 +15,7 @@ public:
     void Start(int32 Port);
     void SetSource(class UCameraComponent* Camera,const FString& Session,uint64 InputSequence);
     void SetRenderMode(bool Lighting,bool VanillaSky);
-    /** Native play bypasses SceneCapture; apply the mode to the actual game viewport. */
+    /** Native terrain goes directly to the viewport; hands have an independent depth pass. */
     void SetNativeRenderMode(bool Lighting);
     void RestoreNativeRenderMode();
     void SetNativeSkyPalette(class UBridgeNativeUiPalette* Palette);
@@ -78,6 +78,10 @@ private:
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> NativeSunriseMaterial;
     UPROPERTY() TObjectPtr<class UBridgeNativeUiPalette> NativeSkyPalette;
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> NativeInverseHudMaterial;
+    UPROPERTY() TObjectPtr<class USceneCaptureComponent2D> NativeHandCapture;
+    UPROPERTY() TObjectPtr<class UTextureRenderTarget2D> NativeHandTarget;
+    TArray<TWeakObjectPtr<class UPrimitiveComponent>> NativeHandParts;
+    void TickNativeHands();
     TWeakObjectPtr<class UCameraComponent> NativeInverseHudCamera;
     TMap<TWeakObjectPtr<class UPrimitiveComponent>,bool> NativeHiddenSky;
     TMap<TWeakObjectPtr<class ULightComponent>,bool> NativeHiddenLights;

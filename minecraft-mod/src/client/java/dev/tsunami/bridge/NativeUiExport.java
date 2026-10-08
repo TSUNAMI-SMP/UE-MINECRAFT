@@ -19,16 +19,22 @@ public final class NativeUiExport {
     private final JsonArray items=new JsonArray(),groups=new JsonArray(),deathPoofFrames=new JsonArray();private final List<ItemStack> stacks=new ArrayList<>();private final Set<Integer> characters=new TreeSet<>();
     private final Map<String,String> cache=new HashMap<>();private final Map<String,BufferedImage> decoded=new HashMap<>();private final long[] written={0};private int cursor;
     private final Iterator<Map.Entry<Identifier,net.minecraft.resource.Resource>> spriteResources;
+    private final int[] gameplayBounds;
     private boolean copiedSprites;private final boolean uniform,japanese;
-    public NativeUiExport(MinecraftClient client,Path root) throws IOException {
+    public NativeUiExport(MinecraftClient client,Path root) throws IOException {this(client,root,null);}
+    public NativeUiExport(MinecraftClient client,Path root,int[] bounds) throws IOException {
+        gameplayBounds=bounds;
         directory=root.resolve("ui");Files.createDirectory(directory);Files.createDirectory(directory.resolve("textures"));Files.createDirectory(directory.resolve("sprites"));Files.createDirectory(directory.resolve("items"));
         manifest.addProperty("kind","native-ui");manifest.addProperty("version",1);manifest.addProperty("language",client.getLanguageManager().getLanguage());manifest.addProperty("exportId",UUID.randomUUID().toString());uniform=client.options.getForceUnicodeFont().getValue();japanese=client.options.getJapaneseGlyphVariants().getValue();
         var resources=collectSprites(client.getResourceManager());
         for(Identifier id:collectDeathPoof(client.getResourceManager(),resources)) deathPoofFrames.add(spriteKey(id));
+        JsonObject particleFrames=new JsonObject();
+        for(String type:List.of("smoke","crit","sweep_attack")) {JsonArray frames=new JsonArray();for(Identifier id:collectParticleFrames(client.getResourceManager(),resources,type)) frames.add(spriteKey(id));particleFrames.add("minecraft:"+type,frames);}
+        manifest.add("particleFrames",particleFrames);
         for(int cp=32;cp<=126;cp++) characters.add(cp);
         "時間サイクル時刻日数経過変更数値以上指定使い方値個追加未取り込対応コマンド一覧確認開始保存空照明天候雨粒雷待モード個数".codePoints().forEach(characters::add);
         "照明感度下上視点一人称後前所持品へ検索へアイテムを削除".codePoints().forEach(characters::add);
-        "クリエイティブサバイバルインベントリ検索完了読み込み中設定戻る終了経験値保存再開操作アイテムゲームメニューワールド開始地点に所持品クラフトは未対応です".codePoints().forEach(characters::add);
+        "クリエイティブサバイバルインベントリ検索完了読み込み中設定戻る終了経験値保存再開操作アイテムゲームメニューワールド開始地点に所持品クラフトかまど石切り台燃料材料完成品チェストホッパードロッパーディスペンサー".codePoints().forEach(characters::add);
         for(Item item:Registries.ITEM) {ItemStack stack=item.getDefaultStack();if(stack.isEmpty()) continue;if(stacks.size()>=4096) throw new IOException("UI item limit exceeded");stacks.add(stack);stack.getName().getString().codePoints().forEach(characters::add);}
         // Use the actual enabled-feature/operator ItemGroups display order, never registry/alphabetical order.
         if(client.world!=null && client.player!=null) {
@@ -68,7 +74,7 @@ public final class NativeUiExport {
                 BufferedImage icon=NativeIconRaster.render(faces,decoded,32);ByteArrayOutputStream out=new ByteArrayOutputStream();ImageIO.write(icon,"png",out);byte[] bytes=out.toByteArray();
                 String hash=MobModelExport.sha256(bytes),file="items/"+hash+".png";if(!Files.exists(directory.resolve(file))) Files.write(directory.resolve(file),bytes,StandardOpenOption.CREATE_NEW);
                 JsonObject entry=new JsonObject();entry.addProperty("id",id);entry.addProperty("name",stack.getName().getString());entry.addProperty("icon",file);entry.addProperty("sha256",hash);
-                entry.addProperty("width",32);entry.addProperty("height",32);entry.addProperty("maxCount",stack.getMaxCount());entry.addProperty("modelKey",ItemModelExport.modelKey(client,stack));
+                entry.addProperty("width",32);entry.addProperty("height",32);entry.addProperty("maxCount",stack.getMaxCount());entry.addProperty("glint",stack.hasGlint());entry.addProperty("modelKey",ItemModelExport.modelKey(client,stack));
                 String block="";if(stack.getItem() instanceof BlockItem b && BlockGeometryCapture.supported(b.getBlock().getDefaultState())) block=Registries.BLOCK.getId(b.getBlock()).toString();entry.addProperty("block",block);
                 if(stack.getItem() instanceof SpawnEggItem egg) entry.addProperty("spawnType",Registries.ENTITY_TYPE.getId(egg.getEntityType(stack)).toString());
                 var modifiers=stack.getOrDefault(net.minecraft.component.DataComponentTypes.ATTRIBUTE_MODIFIERS,net.minecraft.component.type.AttributeModifiersComponent.DEFAULT);
@@ -79,6 +85,9 @@ public final class NativeUiExport {
                 int equipment=equipmentSlot==null ? 0 : switch(equipmentSlot) {case HEAD->1;case CHEST->2;case LEGS->3;case FEET->4;default->0;};
                 entry.addProperty("equipmentSlot",equipment);
                 if(equipment>0) {
+                    JsonObject armor=NativeEquipmentTextures.capture(client.getResourceManager(),stack,directory);
+                    if(armor!=null) {String key="equipment/"+id.replace(':','/');sprites.add(key,armor);entry.addProperty("armorSprite",key);}
+
                     entry.addProperty("armor",modifiers.applyOperations(net.minecraft.entity.attribute.EntityAttributes.ARMOR,0,equipmentSlot));
                     entry.addProperty("armorToughness",modifiers.applyOperations(net.minecraft.entity.attribute.EntityAttributes.ARMOR_TOUGHNESS,0,equipmentSlot));
                     entry.addProperty("armorKnockbackResistance",modifiers.applyOperations(net.minecraft.entity.attribute.EntityAttributes.KNOCKBACK_RESISTANCE,0,equipmentSlot));
@@ -92,6 +101,7 @@ public final class NativeUiExport {
     public Path finish(MinecraftClient client,NativeFontExport.Resources resources) throws IOException {
         if(!complete()) throw new IOException("UI export is still in progress");
         if(!sprites.has("hud/hotbar") || !sprites.has("hud/hotbar_selection") || !sprites.has("hud/crosshair")) throw new IOException("Required active-pack HUD sprites missing");
+        manifest.add("gameplay",NativeGameplayExport.capture(client,gameplayBounds));
         manifest.add("sprites",sprites);manifest.add("items",items);manifest.add("excludedItems",excluded);
         // Remove icons excluded by the rasterizer so every imported category reference resolves.
         Set<String> exported=new HashSet<>();for(var item:items) exported.add(item.getAsJsonObject().get("id").getAsString());
@@ -104,7 +114,9 @@ public final class NativeUiExport {
     static List<String> additionalSprites() {
         // 1.21.11 split the moon atlas into individual celestial phase textures.
         // Query the active ResourceManager so selected packs remain authoritative.
-        return List.of("minecraft:textures/gui/container/inventory.png","minecraft:textures/gui/container/creative_inventory/tab_items.png",
+        return List.of("minecraft:textures/gui/container/inventory.png","minecraft:textures/gui/container/crafting_table.png",
+                "minecraft:textures/gui/container/furnace.png","minecraft:textures/gui/container/blast_furnace.png","minecraft:textures/gui/container/smoker.png",
+                "minecraft:textures/gui/container/stonecutter.png","minecraft:textures/gui/container/generic_54.png","minecraft:textures/misc/enchanted_glint_item.png","minecraft:textures/gui/container/creative_inventory/tab_items.png",
                 "minecraft:textures/gui/container/creative_inventory/tab_item_search.png","minecraft:textures/gui/container/creative_inventory/tab_inventory.png","minecraft:textures/gui/container/creative_inventory/tabs.png",
                 "minecraft:textures/environment/celestial/sun.png",
                 "minecraft:textures/environment/celestial/moon/full_moon.png","minecraft:textures/environment/celestial/moon/waning_gibbous.png",
@@ -124,7 +136,10 @@ public final class NativeUiExport {
     }
     /** SpriteProvider list from the active particle JSON, preserving pack order and repeated frames. */
     static List<Identifier> collectDeathPoof(ResourceManager manager,Map<Identifier,Resource> sprites) throws IOException {
-        var definition=manager.getResource(Identifier.ofVanilla("particles/poof.json"));if(definition.isEmpty()) return List.of();
+        return collectParticleFrames(manager,sprites,"poof");
+    }
+    static List<Identifier> collectParticleFrames(ResourceManager manager,Map<Identifier,Resource> sprites,String type) throws IOException {
+        var definition=manager.getResource(Identifier.ofVanilla("particles/"+type+".json"));if(definition.isEmpty()) return List.of();
         JsonElement data;try(var input=definition.get().getInputStream()) {
             byte[] bytes=input.readNBytes(65537);if(bytes.length>65536) throw new IOException("Poof sprite definition exceeds budget");
             try {data=JsonParser.parseString(new String(bytes,java.nio.charset.StandardCharsets.UTF_8));} catch(RuntimeException error) {throw new IOException("Invalid poof sprite definition",error);}

@@ -38,6 +38,9 @@ inline double acceptedDamage(double incoming,double secondsSinceFull,double prev
 }
 inline int hurtTicks(double secondsSinceFull) {return std::max(0,10-int(ticks(secondsSinceFull)));}
 struct Velocity { double x=0,y=0,z=0; };
+inline double groundedVerticalVelocity(double ueWalkingZ) {
+    return std::abs(ueWalkingZ)<1.e-6 ? -.08*.98*2000 : ueWalkingZ;
+}
 // LivingEntity#takeKnockback, expressed in UE centimetres/second. Minecraft
 // velocity is blocks/tick, so 1 velocity unit = 100 cm * 20 ticks/second.
 // AwayDirection is opposite the Java source-to-target direction argument.

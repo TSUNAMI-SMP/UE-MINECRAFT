@@ -197,7 +197,7 @@ public final class TextureExport {
         if(textures.has(texture)) return;
         if(textures.size()>=4096) throw new IOException("Texture count budget exceeded");
         byte[] raw=read(resource(texture,"textures/",".png"),4*1024*1024);
-        byte[] png=raw; int width,height;String alphaMode="opaque";boolean fluidTexture=texture.contains("/water_") || texture.contains("/lava_");int frameCount=1,frameTime=2;
+        byte[] png=raw; int width,height;String alphaMode="opaque";boolean fluidTexture=texture.contains("/water_") || texture.contains("/lava_"),shaderInterpolation=false;int frameCount=1,frameTime=2;
         try(var stream=new MemoryCacheImageInputStream(new ByteArrayInputStream(raw))) {
             var readers=ImageIO.getImageReaders(stream); if(!readers.hasNext()) throw new Unsupported("Invalid PNG");
             var reader=readers.next();
@@ -206,41 +206,35 @@ public final class TextureExport {
                 reader.setInput(stream,true,true); width=reader.getWidth(0); height=reader.getHeight(0);
                 if(width<1 || height<1 || width>2048 || height>16384 || (long)width*height>16_777_216) throw new Unsupported("Texture dimensions exceed budget");
                 var pixels=reader.read(0);
-                // Snapshot the first frame of vertical animated strips. Non-animated rectangular PNGs remain intact.
+                // Keep the active pack's animation, including functional-block
+                // sprites and custom frame lists, rather than freezing frame 0.
                 byte[] meta;
                 try { meta=read(resource(texture,"textures/",".png.mcmeta"),65536); } catch(Unsupported missing) { meta=null; }
-                if(meta!=null && height>width) {
+                if(meta!=null) {
                     JsonObject animation=JsonParser.parseString(new String(meta,StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonObject("animation");
                     if(animation!=null) {
-                        int fw=animation.has("width") ? animation.get("width").getAsInt() : width;
-                        int fh=animation.has("height") ? animation.get("height").getAsInt() : fw;
-                        if(fw<1 || fh<1 || fw>width || fh>height) throw new Unsupported("Invalid animation frame size");
-                        if(fluidTexture) {frameCount=height/fh;frameTime=animation.has("frametime") ? Math.max(1,animation.get("frametime").getAsInt()) : 1;}
-                        else {pixels=pixels.getSubimage(0,0,fw,fh);var out=new ByteArrayOutputStream();
+                        var strip=TextureAnimation.bake(pixels,animation);pixels=strip.pixels();
+                        frameCount=strip.frames();frameTime=strip.ticks();shaderInterpolation=strip.shaderInterpolation();var out=new ByteArrayOutputStream();
                         if(!ImageIO.write(pixels,"png",out)) throw new IOException("PNG writer unavailable");
-                        png=out.toByteArray(); width=fw; height=fh;}
+                        png=out.toByteArray();width=pixels.getWidth();height=pixels.getHeight();
                     }
                 }
                 boolean cutout=false,translucent=false;
                 for(int y=0;y<height && !translucent;y++) for(int x=0;x<width;x++) {
                     int alpha=pixels.getRGB(x,y)>>>24;if(alpha==0) cutout=true;else if(alpha!=255) {translucent=true;break;}
                 }
-                if(texture.contains("/water_")) {
-                    var out=new ByteArrayOutputStream();
-                    for(int y=0;y<height;y++) for(int x=0;x<width;x++) pixels.setRGB(x,y,(pixels.getRGB(x,y)&0xffffff)|0xb0000000);
-                    ImageIO.write(pixels,"png",out);png=out.toByteArray();translucent=true;
-                }
                 alphaMode=translucent ? "translucent" : cutout ? "cutout" : "opaque";
             } finally { reader.dispose(); }
         }
-        if(height>2048) throw new Unsupported("Static texture height exceeds UE import budget");
+        if(height>2048 && frameCount==1) throw new Unsupported("Static texture height exceeds UE import budget");
         String n=id(texture); int colon=n.indexOf(':'); String relative="assets/"+n.substring(0,colon)+"/textures/"+n.substring(colon+1)+".png";
         Path target=directory.resolve(relative).normalize(); if(!target.startsWith(directory)) throw new IOException("Texture path escapes export");
         writtenBytes+=png.length; if(writtenBytes>128L*1024*1024) throw new IOException("Texture write budget exceeded");
         Files.createDirectories(target.getParent()); Files.write(target,png,StandardOpenOption.CREATE_NEW);
         JsonObject metadata=new JsonObject(); metadata.addProperty("file",relative); metadata.addProperty("width",width); metadata.addProperty("height",height);
         metadata.addProperty("alphaMode",alphaMode);
-        if(fluidTexture) {metadata.addProperty("animationFrames",frameCount);metadata.addProperty("animationFrameTime",frameTime);}
+        if(frameCount>1 || fluidTexture) {metadata.addProperty("animationFrames",frameCount);metadata.addProperty("animationFrameTime",frameTime);}
+        if(shaderInterpolation) metadata.addProperty("animationInterpolate",true);
         try { metadata.addProperty("sha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(png))); }
         catch(NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
         textures.add(texture,metadata);
@@ -252,7 +246,7 @@ public final class TextureExport {
             boolean fluid=block.id.equals("minecraft:water") || block.id.equals("minecraft:lava") || block.id.equals("minecraft:bubble_column");
             boolean invisible=Set.of("minecraft:air","minecraft:cave_air","minecraft:void_air","minecraft:barrier","minecraft:light","minecraft:structure_void").contains(block.id);
             boolean fallback=false;Faces faces;
-            if(fluid) {String base=block.id.equals("minecraft:lava") ? "minecraft:block/lava_still" : "minecraft:block/water_still";faces=new Faces(new Face(base,!block.id.equals("minecraft:lava")),new Face(base,!block.id.equals("minecraft:lava")),new Face(base,!block.id.equals("minecraft:lava")),new Face(base,false));}
+            if(fluid) {String base=block.id.equals("minecraft:lava") ? "minecraft:block/lava_still" : "minecraft:block/water_still";faces=new Faces(new Face(base,!block.id.equals("minecraft:lava")),new Face(base.replace("_still","_flow"),!block.id.equals("minecraft:lava")),new Face(base,!block.id.equals("minecraft:lava")),new Face(base,false));}
             else try {faces=resolve(block);} catch(Unsupported missing) {fallback=true;faces=new Faces(new Face("minecraft:block/stone",false),new Face("minecraft:block/stone",false),new Face("minecraft:block/stone",false),new Face("minecraft:block/stone",false));} exportTexture(faces.top.texture); exportTexture(faces.side.texture); exportTexture(faces.bottom.texture); exportTexture(faces.particle.texture);
             JsonObject p=new JsonObject(); p.add("top",faceJson(faces.top)); p.add("side",faceJson(faces.side)); p.add("bottom",faceJson(faces.bottom));
             JsonObject particle=faceJson(faces.particle);
@@ -288,7 +282,9 @@ public final class TextureExport {
                     int level=fluid ? Integer.parseInt(state.properties.getOrDefault("level","0")) : 0;
                     double height=fluid ? (level>=8 ? 8./9 : (8-level)/9.) : 1;to.add(height*16);to.add(16);element.add("from",from);element.add("to",to);
                     JsonObject nativeFaces=new JsonObject();
-                    for(String side:List.of("up","down","north","south","east","west")) {JsonObject face=new JsonObject();face.addProperty("texture",faces.top.texture);if(fluid && !block.id.equals("minecraft:lava")) face.addProperty("tintindex",0);face.addProperty("cullface",side);nativeFaces.add(side,face);}
+                    for(String side:List.of("up","down","north","south","east","west")) {JsonObject face=new JsonObject();face.addProperty("texture",side.equals("up") ? faces.top.texture : side.equals("down") ? faces.bottom.texture : faces.side.texture);
+                        if(fluid && !side.equals("up") && !side.equals("down")) {JsonArray uv=new JsonArray();uv.add(0);uv.add((1-height)*8);uv.add(8);uv.add(8);face.add("uv",uv);}
+                        if(fluid && !block.id.equals("minecraft:lava")) face.addProperty("tintindex",0);face.addProperty("cullface",side);nativeFaces.add(side,face);}
                     element.add("faces",nativeFaces);JsonArray elements=new JsonArray();if(!invisible) elements.add(element);model.add("elements",elements);model.add("textures",new JsonObject());exportedModels.add(modelName,model);
                     JsonObject apply=new JsonObject();apply.addProperty("model",modelName);variants.add(key,apply);
                 }

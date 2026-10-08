@@ -80,7 +80,7 @@ public final class MobModelExport {
         manifest.add("templates",templates);
         if(appearances.isEmpty()) throw new IOException("No exportable ground-mob templates or nearby mobs. See exclusions for unsupported models.");
         manifest.add("appearances",appearances); manifest.add("entities",entities); manifest.add("skipped",skipped);
-        manifest.addProperty("renderFeatures", "body plus dyed sheep wool; armor, saddles, eyes and other feature layers are not captured");
+        manifest.addProperty("renderFeatures", "body and original model feature draw commands: clothing, professions, wool, collars, saddles, armor and eyes; item/beam effects are separate");
         Path path=directory.resolve("manifest.json");
         byte[] json=new GsonBuilder().setPrettyPrinting().create().toJson(manifest).getBytes(StandardCharsets.UTF_8);
         if(json.length>32*1024*1024) throw new IOException("Mob geometry exceeds export budget");
@@ -97,25 +97,34 @@ public final class MobModelExport {
                 int width,height;
                 try (NativeImage image = NativeImage.read(png)) { width=image.getWidth(); height=image.getHeight(); }
                 if(width<1 || height<1 || width>2048 || height>2048) throw new IOException("Texture dimensions exceed 2048");
-                if(model.has("woolStart")) {
-                    int start=model.remove("woolStart").getAsInt(), tint=model.remove("woolColor").getAsInt();
-                    byte[] wool;
-                    var woolResource=client.getResourceManager().getResource(net.minecraft.util.Identifier.ofVanilla("textures/entity/sheep/sheep_wool.png"))
-                        .orElseThrow(() -> new IOException("Missing active-pack sheep wool texture"));
-                    try(var stream=woolResource.getInputStream()) {wool=stream.readNBytes(4*1024*1024+1);}
-                    if(wool.length>4*1024*1024) throw new IOException("Wool texture too large");
-                    BufferedImage body=ImageIO.read(new java.io.ByteArrayInputStream(png)), layer=ImageIO.read(new java.io.ByteArrayInputStream(wool));
-                    if(body==null || layer==null) throw new IOException("Invalid sheep texture");
-                    int atlasWidth=Math.max(width,layer.getWidth()), atlasHeight=height+layer.getHeight();
-                    if(atlasWidth>2048 || atlasHeight>2048) throw new IOException("Sheep texture atlas exceeds 2048");
-                    BufferedImage atlas=new BufferedImage(atlasWidth,atlasHeight,BufferedImage.TYPE_INT_ARGB);
-                    for(int y=0;y<height;y++) for(int x=0;x<width;x++) atlas.setRGB(x,y,body.getRGB(x,y));
-                    for(int y=0;y<layer.getHeight();y++) for(int x=0;x<layer.getWidth();x++) atlas.setRGB(x,height+y,MobTextureAtlas.tint(layer.getRGB(x,y),tint));
+                if(model.has("featureLayers")) {
+                    JsonArray layers=model.remove("featureLayers").getAsJsonArray();int bodyEnd=model.remove("bodyEnd").getAsInt();
+                    BufferedImage body=ImageIO.read(new java.io.ByteArrayInputStream(png));
+                    if(body==null) throw new IOException("Invalid mob body texture");
+                    List<BufferedImage> images=new ArrayList<>();images.add(body);int atlasWidth=width,atlasHeight=height;
+                    for(var value:layers) {
+                        JsonObject layer=value.getAsJsonObject();
+                        var resourceLayer=client.getResourceManager().getResource(net.minecraft.util.Identifier.of(layer.get("texture").getAsString()))
+                            .orElseThrow(()->new IOException("Missing mob feature texture: "+layer.get("texture")));
+                        byte[] bytes;try(var stream=resourceLayer.getInputStream()) {bytes=stream.readNBytes(4*1024*1024+1);}
+                        if(bytes.length>4*1024*1024) throw new IOException("Mob feature texture byte limit");
+                        BufferedImage image=ImageIO.read(new java.io.ByteArrayInputStream(bytes));
+                        if(image==null || image.getWidth()>2048 || image.getHeight()>2048) throw new IOException("Invalid mob feature texture");
+                        images.add(image);atlasWidth=Math.max(atlasWidth,image.getWidth());atlasHeight+=image.getHeight();
+                    }
+                    if(atlasWidth>2048 || atlasHeight>2048) throw new IOException("Mob feature atlas exceeds 2048");
+                    BufferedImage atlas=new BufferedImage(atlasWidth,atlasHeight,BufferedImage.TYPE_INT_ARGB);int offset=0;
                     JsonArray parts=model.getAsJsonArray("parts");
-                    for(int i=0;i<parts.size();i++) for(var quad:parts.get(i).getAsJsonObject().getAsJsonArray("quads")) for(var vertex:quad.getAsJsonArray()) {
-                        var v=vertex.getAsJsonArray(); boolean outer=i>=start;
-                        v.set(3,new JsonPrimitive(MobTextureAtlas.u(v.get(3).getAsDouble(),outer?layer.getWidth():width,atlasWidth)));
-                        v.set(4,new JsonPrimitive(MobTextureAtlas.v(v.get(4).getAsDouble(),outer?layer.getHeight():height,outer?height:0,atlasHeight)));
+                    for(int index=0;index<images.size();index++) {
+                        BufferedImage image=images.get(index);JsonObject layer=index==0 ? null : layers.get(index-1).getAsJsonObject();
+                        int tint=layer==null ? 0xffffff : layer.get("color").getAsInt();
+                        for(int y=0;y<image.getHeight();y++) for(int x=0;x<image.getWidth();x++) atlas.setRGB(x,offset+y,MobTextureAtlas.tint(image.getRGB(x,y),tint));
+                        int first=layer==null ? 0 : layer.get("first").getAsInt(),end=layer==null ? bodyEnd : layer.get("end").getAsInt();
+                        for(int p=first;p<end;p++) for(var quad:parts.get(p).getAsJsonObject().getAsJsonArray("quads")) for(var vertex:quad.getAsJsonArray()) {
+                            var v=vertex.getAsJsonArray();v.set(3,new JsonPrimitive(MobTextureAtlas.u(v.get(3).getAsDouble(),image.getWidth(),atlasWidth)));
+                            v.set(4,new JsonPrimitive(MobTextureAtlas.v(v.get(4).getAsDouble(),image.getHeight(),offset,atlasHeight)));
+                        }
+                        offset+=image.getHeight();
                     }
                     ByteArrayOutputStream encoded=new ByteArrayOutputStream();ImageIO.write(atlas,"png",encoded);png=encoded.toByteArray();width=atlasWidth;height=atlasHeight;
                 }
@@ -146,11 +155,7 @@ public final class MobModelExport {
         EntityModel model=living instanceof AgeableMobModelAccessor ageable
             ? (state.baby ? ageable.bridgeBabyModel() : ageable.bridgeAdultModel()) : living.getModel();
         ModelPart root=model.getRootPart();
-        SheepWoolEntityModel wool=null;int woolColor=0xffffff;
-        if(state instanceof SheepEntityRenderState sheep && !sheep.sheared && !sheep.invisible) {
-            wool=new SheepWoolEntityModel(client.getLoadedEntityModels().getModelPart(state.baby ? EntityModelLayers.SHEEP_BABY_WOOL : EntityModelLayers.SHEEP_WOOL));
-            woolColor=sheep.getRgbColor();
-        }
+        // Original feature renderers select baby wool and all clothing layers.
         state.deathTime=0;state.hurt=false;state.relativeHeadYaw=0;state.pitch=0;
         state.limbSwingAmplitude=0;state.limbSwingAnimationProgress=0;state.age=0;
         // Bat animations run by age, independently of walking speed. Capture
@@ -159,15 +164,19 @@ public final class MobModelExport {
         model.setAngles(state);
         JsonArray parts=new JsonArray();List<ModelPart> nodes=new ArrayList<>();
         capturePart(root,"root",-1,parts,nodes,true);
-        int woolStart=parts.size();
-        if(wool!=null) {wool.setAngles((SheepEntityRenderState)state);capturePart(wool.getRootPart(),"wool.root",-1,parts,nodes,true);}
+        int bodyEnd=parts.size();var featureRest=MobFeatureCapture.capture(living,state);
+        for(var value:featureRest.parts) {var part=value.getAsJsonObject();MobFeatureCapture.separateOverlay(part);int parent=part.get("parent").getAsInt();if(parent>=0) part.addProperty("parent",parent+bodyEnd);parts.add(part);}
+        if(parts.size()>MAX_PARTS) throw new IOException("Body plus feature part budget exceeded");
         if(parts.asList().stream().allMatch(part -> part.getAsJsonObject().getAsJsonArray("quads").isEmpty())) throw new IOException("Native model has no visible cuboids");
         JsonArray frames=new JsonArray();
         if(state instanceof BatEntityRenderState bat) {bat.roosting=false;bat.roostingAnimationState.stop();bat.flyingAnimationState.start(0);}
         for(int i=0;i<WALK_FRAMES;i++) {
             state.limbSwingAmplitude=1f;state.limbSwingAnimationProgress=(float)(i*Math.PI*2/WALK_FRAMES / 0.6662);
-            state.age=state instanceof BatEntityRenderState ? i*10f/WALK_FRAMES : i*2f;model.setAngles(state);if(wool!=null) wool.setAngles((SheepEntityRenderState)state);JsonArray frame=new JsonArray();
-            for(ModelPart node:nodes) frame.add(transform(node));frames.add(frame);
+            state.age=state instanceof BatEntityRenderState ? i*10f/WALK_FRAMES : i*2f;model.setAngles(state);JsonArray frame=new JsonArray();
+            for(ModelPart node:nodes) frame.add(transform(node));
+            var features=MobFeatureCapture.capture(living,state);
+            if(features.transforms.size()!=featureRest.transforms.size()) throw new IOException("Feature topology changes across walk animation");
+            features.transforms.forEach(frame::add);frames.add(frame);
         }
         // Restore the shared renderer model using a freshly sampled actual entity state.
         model.setAngles(living.getAndUpdateRenderState(mob,1f));
@@ -186,10 +195,13 @@ public final class MobModelExport {
         stats.addProperty("armor",mob.getAttributeValue(net.minecraft.entity.attribute.EntityAttributes.ARMOR));
         stats.addProperty("armorToughness",mob.getAttributeValue(net.minecraft.entity.attribute.EntityAttributes.ARMOR_TOUGHNESS));
         stats.addProperty("damage",mob.getAttributes().hasAttribute(net.minecraft.entity.attribute.EntityAttributes.ATTACK_DAMAGE) ? mob.getAttributeValue(net.minecraft.entity.attribute.EntityAttributes.ATTACK_DAMAGE) : 0);
-        if(wool!=null) {result.addProperty("woolStart",woolStart);result.addProperty("woolColor",woolColor);}
+        if(!featureRest.layers.isEmpty()) {
+            for(var value:featureRest.layers) {var layer=value.getAsJsonObject();layer.addProperty("first",layer.get("first").getAsInt()+bodyEnd);layer.addProperty("end",layer.get("end").getAsInt()+bodyEnd);}
+            result.add("featureLayers",featureRest.layers);result.addProperty("bodyEnd",bodyEnd);
+        }
         result.add("stats",stats);result.add("parts",parts);result.add("walkFrames",frames);return result;
     }
-    private static void capturePart(ModelPart node,String name,int parent,JsonArray parts,List<ModelPart> nodes,boolean ancestorsVisible) throws IOException {
+    static void capturePart(ModelPart node,String name,int parent,JsonArray parts,List<ModelPart> nodes,boolean ancestorsVisible) throws IOException {
         if(nodes.size()>=MAX_PARTS) throw new IOException("Model part limit exceeded");
         int index=nodes.size();nodes.add(node);
         JsonObject part=new JsonObject();part.addProperty("name",name);part.addProperty("parent",parent);

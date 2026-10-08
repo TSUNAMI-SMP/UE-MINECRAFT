@@ -192,7 +192,14 @@ class TextureManifestTest(unittest.TestCase):
         data=copy.deepcopy(self.manifest);entry=data['textures']['minecraft:block/stone']
         entry.update(animationFrames=1,animationFrameTime=2)
         self.assertEqual(2,self.load(data)['textures']['minecraft:block/stone']['animationFrameTime'])
-        for field,value in (('animationFrames',True),('animationFrames',0),('animationFrames',3),('animationFrameTime',None),('animationFrameTime',2049)):
+        entry['animationFrameTime']=32767
+        entry['animationInterpolate']=True
+        self.assertEqual(32767,self.load(data)['textures']['minecraft:block/stone']['animationFrameTime'])
+        self.assertTrue(self.load(data)['textures']['minecraft:block/stone']['animationInterpolate'])
+        for flag in ('true',1,None):
+            invalid=copy.deepcopy(data);invalid['textures']['minecraft:block/stone']['animationInterpolate']=flag
+            with self.assertRaisesRegex(ValueError,'interpolation flag'): self.load(invalid)
+        for field,value in (('animationFrames',True),('animationFrames',0),('animationFrames',3),('animationFrameTime',None),('animationFrameTime',32768)):
             invalid=copy.deepcopy(data);invalid['textures']['minecraft:block/stone'][field]=value
             with self.subTest(field=field,value=value),self.assertRaises(ValueError): self.load(invalid)
 
@@ -243,7 +250,7 @@ class MaterialGraphTest(unittest.TestCase):
             MaterialParameterCollection=Collection, MaterialParameterCollectionFactoryNew=lambda: None,
             CollectionScalarParameter=Property, CollectionVectorParameter=Property, Guid=lambda *args: args,
             CustomMaterialOutputType=types.SimpleNamespace(CMOT_FLOAT3='float3', CMOT_FLOAT2='float2'), CustomInput=CustomInput)
-        for name in ("TextureSampleParameter2D", "VectorParameter", "ScalarParameter", "Constant3Vector", "LinearInterpolate", "Multiply", "Constant", 'CollectionParameter', 'Add', 'VertexColor', 'Custom', 'PixelNormalWS', 'Time', 'TextureCoordinate', 'Frac', 'AppendVector', 'ComponentMask'):
+        for name in ("TextureSampleParameter2D", "TextureObjectParameter", "VectorParameter", "ScalarParameter", "Constant3Vector", "LinearInterpolate", "Multiply", "Constant", 'CollectionParameter', 'Add', 'VertexColor', 'Custom', 'PixelNormalWS', 'Time', 'TextureCoordinate', 'Frac', 'AppendVector', 'ComponentMask'):
             setattr(self.unreal, "MaterialExpression" + name, type(name, (), {}))
         self.assets = types.SimpleNamespace(does_asset_exist=lambda path: path in self.assets_by_path,
             save_loaded_asset=lambda material, force: self.saved.append(material) is None)
@@ -281,6 +288,10 @@ class MaterialGraphTest(unittest.TestCase):
         self.assertEqual('Time',animation.inputs['Clock'][0].kind)
         for pin,name in (('Frames','AnimationFrames'),('Duration','AnimationFrameTime'),('Revision','BridgeAnimationRevision_v1')):
             self.assertEqual(name,animation.inputs[pin][0].properties['parameter_name'])
+        interpolation=next(n for n in material.nodes if n.kind=='Custom' and 'Current' in n.inputs)
+        self.assertEqual(0.0,interpolation.inputs['Enabled'][0].properties['default_value'])
+        self.assertIn('floor(Clock*20)',interpolation.properties['code'])
+        self.assertIn('255',interpolation.properties['code'])
         self.assertIs(material,self.build('translucent'))
 
     def test_glass_alpha_is_connected_to_opacity_and_cutouts_to_mask(self):
@@ -316,7 +327,10 @@ class MaterialGraphTest(unittest.TestCase):
         # Base colour and emissive each decode once, with native lightmap
         # multiplication between display-space pixel and final emissive decode.
         base_decode=base.inputs['A'][0]
-        lit_decode=emissive.inputs['B'][0]
+        glint=emissive.inputs['B'][0]
+        lit_decode=glint.inputs['Pixel'][0]
+        self.assertEqual('BridgeGlint',glint.inputs['Enabled'][0].properties['parameter_name'])
+        self.assertEqual(0.0,glint.inputs['Enabled'][0].properties['default_value'])
         display_pixel=base_decode.inputs['Color'][0]
         display_lit=lit_decode.inputs['Color'][0]
         self.assertIs(display_pixel,display_lit.inputs['A'][0])

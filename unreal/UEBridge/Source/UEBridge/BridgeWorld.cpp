@@ -18,6 +18,7 @@ void ABridgeWorld::Clear(uint64 Barrier) {
     ++MutationSerial;NativeFluidsEnabled=false;FluidUpdates.Empty();FluidClock=0;
     for (auto& Pair:Cells) if (IsValid(Pair.Value)) { Pair.Value->Clear(); Pair.Value->Destroy(); }
     for(auto& Box:Boundary) if(Box) Box->DestroyComponent(); Boundary.Empty();
+    for(auto& Fall:NativeFalls) if(Fall.Visual.IsValid()) Fall.Visual->Destroy();NativeFalls.Empty();RuleQueue.Empty();RuleDelayed.Empty();GrassSections.Empty();ComparatorPower.Empty();NativeRules=false;NativeRuleTick=0;NativeRuleClock=0;
     Sealed=false;ImportId.Empty();Stored.Empty();ButtonRelease.Empty();ButtonTimerOwners.Empty();LastModelError.Empty();SurfaceReason=TEXT("not_sampled");
     Cells.Empty(); Counts.Empty(); Revisions.Empty(); Stages.Empty(); Shapes=0; Scoped=false; ScopeSequence=0; ClearBarrier=Barrier;
     OpaqueCells.Empty();RebuildQueue.Empty();LightQueue.Empty();EditedBlocks.Empty();EditedCellOwners.Empty();RemovedBlocks.Empty();SkyTops.Empty();WaterCells.Empty();BiomeTintCells.Empty();PhysicsCells.Empty();AdditionalCollisionPositions.Empty();HasCollisionCenter=false;
@@ -25,7 +26,7 @@ void ABridgeWorld::Clear(uint64 Barrier) {
 }
 void ABridgeWorld::EndPlay(const EEndPlayReason::Type Reason) { Clear(); Super::EndPlay(Reason); }
 void ABridgeWorld::Tick(float DeltaSeconds) {
-    Super::Tick(DeltaSeconds);if(NativeFluidsEnabled && Sealed && GetWorld() && !GetWorld()->IsPaused()) TickFluids(DeltaSeconds); const double Now=FPlatformTime::Seconds();
+    Super::Tick(DeltaSeconds);if(NativeRules && Sealed && GetWorld() && !GetWorld()->IsPaused()) TickNativeRules(DeltaSeconds);if(NativeFluidsEnabled && Sealed && GetWorld() && !GetWorld()->IsPaused()) TickFluids(DeltaSeconds); const double Now=FPlatformTime::Seconds();
     for (auto It=Stages.CreateIterator();It;++It) if (Now>It.Value().Deadline) It.RemoveCurrent();
     if(GetWorld()) TickButtonTimers(GetWorld()->GetTimeSeconds());
     if(Lighting && Sealed) {Lighting->Tick(100000);LightQueue.Append(Lighting->ConsumeChangedCells());}
@@ -193,6 +194,7 @@ int32 ABridgeWorld::RemoveBlocksInSphere(FVector Position,float RemovalRadius) {
     for(auto& Pair:Stored) {
         const int32 Before=Pair.Value.Num();
         TSet<FIntVector> Targets;for(const auto& B:Pair.Value) if(FVector::DistSquared(BlockCenter(OwnerOf(B)),Position)<=RemovalRadius*RemovalRadius) Targets.Add(OwnerOf(B));
+        if(NativeBlockRemoving) for(auto It=Targets.CreateIterator();It;++It) if(!NativeBlockRemoving(*It)) It.RemoveCurrent();
         Pair.Value.RemoveAll([&](const FBridgeBlock& B){ return Targets.Contains(OwnerOf(B)); });
         const int32 Difference=Before-Pair.Value.Num(); if(!Difference) continue;
         Removed+=Difference; Shapes-=Difference;
@@ -432,6 +434,7 @@ void ABridgeWorld::BeginLightingRecenter() {
         for(int32 Z=0;Z<8;++Z) for(int32 X=0;X<8;++X) PendingLighting->SetSkyBoundary(Pair.Key.X*8+X,Pair.Key.Z*8+Z,Pair.Value[X+(Z<<3)]);
 }
 void ABridgeWorld::MarkEdited(const FIntVector& Block) {
+    if(NativeRules) QueueNativeRule(Block);
     ++MutationSerial;if(NativeFluidsEnabled) QueueFluid(Block);
     const auto* Rows=Stored.Find(CellOf(Block));TArray<FBridgeBlock> Edited;
     if(Rows) for(const auto& Row:*Rows) if(OwnerOf(Row)==Block) Edited.Add(Row);
@@ -533,6 +536,7 @@ bool ABridgeWorld::BreakBlock(const FIntVector& Block) {
     if(!Sealed) return false;
     const FIntVector CellKey=CellOf(Block);auto* Data=Stored.Find(CellKey); if(!Data) return false;
     const FBridgeBlock* Visual=FindVisual(Block); FString PartnerId; FIntVector Partner=Block;
+    if(!Visual || (NativeBlockRemoving && !NativeBlockRemoving(Block))) return false;
     const bool LeaveWater=NativeFluidsEnabled && Visual && Visual->StateKey.Contains(TEXT("waterlogged=true"));
     if(Visual) { const auto Properties=StateProperties(Visual->StateKey); const FString Half=Properties.FindRef(TEXT("half"));
         if(Half==TEXT("upper") || Half==TEXT("lower")) {Partner.Y+=Half==TEXT("lower") ? 1 : -1;PartnerId=Visual->BlockId;}
@@ -558,6 +562,7 @@ const FBridgeBlock* ABridgeWorld::FindVisual(const FIntVector& Block) const {
 bool ABridgeWorld::AppendState(const FIntVector& Block,const FString& BlockId,int32 Color,const FString& Key,TArray<FBridgeBlock>& Out) const {
     if(!SavedPalette || SavedPalette->BlockstateDefinitions.IsEmpty()) {
         FBridgeBlock Shape;Shape.Position=FVector(Block)+FVector(.5)-ImportOrigin;Shape.BlockId=BlockId;Shape.Color=Color;
+        Shape.StateKey=Key;
         Shape.Collision=true;Shape.SourceBlock=Block;Shape.HasSourceBlock=true;Out.Add(Shape);return true;
     }
     TArray<FBox> Collision,Outline; if(!SavedPalette->GetStateBoxes(BlockId,Key,Collision,Outline)) return false;

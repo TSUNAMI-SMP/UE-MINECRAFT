@@ -211,9 +211,11 @@ def load_texture_manifest(filename):
         _identifier(name)
         if not isinstance(entry, dict) or not isinstance(entry.get("file"), str):
             raise ValueError("Invalid texture entry")
-        for key in ('animationFrames', 'animationFrameTime'):
-            if key in entry and (type(entry[key]) is not int or not 1 <= entry[key] <= 2048):
+        for key, limit in (('animationFrames', 16384), ('animationFrameTime', 32767)):
+            if key in entry and (type(entry[key]) is not int or not 1 <= entry[key] <= limit):
                 raise ValueError('Invalid texture animation')
+        if 'animationInterpolate' in entry and type(entry['animationInterpolate']) is not bool:
+            raise ValueError('Invalid texture animation interpolation flag')
         if entry.get("alphaMode", "cutout") not in ("opaque", "cutout", "translucent"):
             raise ValueError("Invalid texture alpha mode")
         relative = pathlib.PurePosixPath(entry["file"])
@@ -226,8 +228,11 @@ def load_texture_manifest(filename):
         if total > 128 * 1024 * 1024:
             raise ValueError("Texture byte budget exceeded")
         for key in ("width", "height"):
-            if type(entry.get(key)) is not int or not 1 <= entry[key] <= 2048:
+            limit = 16384 if key == 'height' and entry.get('animationFrames', 1) > 1 else 2048
+            if type(entry.get(key)) is not int or not 1 <= entry[key] <= limit:
                 raise ValueError("Invalid texture dimensions")
+        if entry['width'] * entry['height'] > 16_777_216:
+            raise ValueError('Texture pixel budget exceeded')
         if entry["height"] % entry.get("animationFrames",1) != 0:
             raise ValueError("Animation frame count does not divide the texture strip")
         if not isinstance(entry.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]):
@@ -288,7 +293,7 @@ def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mo
     scalar_names = {str(value) for value in editing.get_scalar_parameter_names(parent)}
     texture_names = {str(value) for value in editing.get_texture_parameter_names(parent)}
     use_vertex = not root.endswith('/Items')
-    required_scalars = {'FaceTint', 'BridgeUnlit', 'BridgeSpecular', 'BridgeLightingRevision_v5', 'AnimationFrames', 'AnimationFrameTime', 'BridgeAnimationRevision_v1'}
+    required_scalars = {'FaceTint', 'BridgeUnlit', 'BridgeSpecular', 'BridgeLightingRevision_v5', 'AnimationFrames', 'AnimationFrameTime', 'AnimationInterpolate', 'BridgeAnimationRevision_v1', 'BridgeGlint'}
     if use_vertex:
         required_scalars.add('BridgeUseVertexLight')
     if required_scalars.issubset(scalar_names) and 'FaceTexture' in texture_names:
@@ -321,7 +326,7 @@ def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mo
     duration = expression(unreal.MaterialExpressionScalarParameter); duration.set_editor_property('parameter_name', 'AnimationFrameTime'); duration.set_editor_property('default_value', 1.0)
     revision = expression(unreal.MaterialExpressionScalarParameter); revision.set_editor_property('parameter_name', 'BridgeAnimationRevision_v1'); revision.set_editor_property('default_value', 1.0)
     animation = expression(unreal.MaterialExpressionCustom); animation.set_editor_property('output_type', unreal.CustomMaterialOutputType.CMOT_FLOAT2)
-    animation.set_editor_property('code', 'return float2(UV.x,(UV.y+floor(fmod(Clock*20/max(Duration,1),max(Frames*Revision,1))))/max(Frames*Revision,1));')
+    animation.set_editor_property('code', 'return float2(UV.x,(clamp(UV.y,0,0.99999)+floor(fmod(Clock*20/max(Duration,1),max(Frames*Revision,1))))/max(Frames*Revision,1));')
     names = ['UV','Clock','Frames','Duration','Revision']; inputs = []
     for name in names:
         entry = unreal.CustomInput(); entry.set_editor_property('input_name', name); inputs.append(entry)
@@ -337,6 +342,27 @@ def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mo
     connect(white, blend, 'A'); connect(color, blend, 'B'); connect(tint, blend, 'Alpha')
     colored = expression(unreal.MaterialExpressionMultiply)
     display_sample = lighting['texture_display_rgb'](unreal, editing, parent, sample)
+    interpolate=expression(unreal.MaterialExpressionScalarParameter);interpolate.set_editor_property('parameter_name','AnimationInterpolate');interpolate.set_editor_property('default_value',0.0)
+    next_uv=expression(unreal.MaterialExpressionCustom);next_uv.set_editor_property('output_type',unreal.CustomMaterialOutputType.CMOT_FLOAT2)
+    next_uv.set_editor_property('code','return float2(UV.x,(clamp(UV.y,0,0.99999)+fmod(floor(Clock*20/max(Duration,1))+1,max(Frames,1)))/max(Frames,1));')
+    next_sources=[('UV',coordinate),('Clock',clock),('Frames',frames),('Duration',duration)]
+    next_inputs=[]
+    for name,value in next_sources:
+        entry=unreal.CustomInput();entry.set_editor_property('input_name',name);next_inputs.append(entry)
+    next_uv.set_editor_property('inputs',next_inputs)
+    for name,value in next_sources: connect(value,next_uv,name)
+    next_sample=expression(unreal.MaterialExpressionTextureSampleParameter2D);next_sample.set_editor_property('parameter_name','FaceTexture');next_sample.set_editor_property('texture',sample_texture)
+    connect(next_uv,next_sample,'UVs')
+    next_display=lighting['texture_display_rgb'](unreal,editing,parent,next_sample)
+    animated=expression(unreal.MaterialExpressionCustom);animated.set_editor_property('output_type',unreal.CustomMaterialOutputType.CMOT_FLOAT3)
+    animated.set_editor_property('code','if(Enabled<.5) return Current;float amount=fmod(floor(Clock*20),max(Duration,1))/max(Duration,1);return floor(saturate(lerp(Current,Next,amount))*255+.0001)/255;')
+    animation_sources=[('Current',display_sample),('Next',next_display),('Clock',clock),('Duration',duration),('Enabled',interpolate)]
+    animation_inputs=[]
+    for name,value in animation_sources:
+        entry=unreal.CustomInput();entry.set_editor_property('input_name',name);animation_inputs.append(entry)
+    animated.set_editor_property('inputs',animation_inputs)
+    for name,value in animation_sources: connect(value,animated,name)
+    display_sample=animated
     connect(display_sample, colored, 'A'); connect(blend, colored, 'B')
     lighting['wire_vanilla_lighting'](unreal, editing, parent, colored,
         use_vertex=use_vertex, pixel_display=True)
@@ -612,10 +638,13 @@ def import_minecraft_textures(filename, asset_root="/Game/Bridge/Minecraft"):
                 if not isinstance(instance, unreal.MaterialInstanceConstant):
                     raise RuntimeError("Cannot create model-face instance")
                 editing.set_material_instance_parent(instance, face_parent)
-                editing.set_material_instance_scalar_parameter_value(instance, 'AnimationFrames', float(manifest['textures'][identifier].get('animationFrames', 1)))
-                editing.set_material_instance_scalar_parameter_value(instance, 'AnimationFrameTime', float(manifest['textures'][identifier].get('animationFrameTime', 1)))
                 instance.set_editor_property("texture_parameter_values", [unreal.TextureParameterValue(parameter_info=unreal.MaterialParameterInfo(name="FaceTexture"), parameter_value=texture)])
-                instance.set_editor_property("scalar_parameter_values", [unreal.ScalarParameterValue(parameter_info=unreal.MaterialParameterInfo(name="FaceTint"), parameter_value=float(tinted))])
+                # Assign the complete list together: replacing scalar values
+                # with FaceTint alone used to erase the animation parameters.
+                scalars={'FaceTint':float(tinted),'AnimationFrames':float(manifest['textures'][identifier].get('animationFrames',1)),
+                         'AnimationFrameTime':float(manifest['textures'][identifier].get('animationFrameTime',1)),
+                         'AnimationInterpolate':float(manifest['textures'][identifier].get('animationInterpolate',False))}
+                instance.set_editor_property("scalar_parameter_values",[unreal.ScalarParameterValue(parameter_info=unreal.MaterialParameterInfo(name=key),parameter_value=value) for key,value in scalars.items()])
                 editing.update_material_instance(instance)
                 if editing.get_material_instance_texture_parameter_value(instance, "FaceTexture") != texture or not assets.save_loaded_asset(instance, False):
                     raise RuntimeError("Cannot save/read back model-face instance")

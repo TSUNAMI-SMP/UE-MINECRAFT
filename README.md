@@ -1,5 +1,7 @@
 # Minecraft ↔ Unreal Engine bridge MVP
 
+**UE単独の描画・クラフト・基本回路更新0.17.0：** [MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.17.0.jar) / [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.17.0.zip) / [一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UE-Minecraft-MVP-0.17.0.zip) / [更新手順と対応範囲](docs/UPGRADE_0.17.0.md) / [検証](docs/AUDIT_0.17.0.md)。一人称の手の合成、モブの服、防具・glint・素材アニメーション、クラフト・精錬・収納、ホッパー搬送、草・重力ブロック・基本レッドストーンを追加。Minecraftは書き出し後に終了できます。MOD交換・新しい書き出し・UE再ビルド・再取り込みが必要です。Windows UE実ビルド・描画は未検証で、全特殊機能とバニラ完全一致は未完成です。
+
 **地形読み込みのクラッシュ修正0.16.2：** [修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.16.2.zip) / [適用手順](docs/UPGRADE_0.16.2.md)。液体などの裏面追加時のTArray自己参照Assertionを修正。0.16.1も含みます。MODは0.16.0のまま、UEだけを再ビルドしてください。修正後のWindows実起動は未検証です。
 
 **0.16.0のUEビルド修正0.16.1：** [修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.16.1.zip) / [適用手順](docs/UPGRADE_0.16.1.md)。ヘッダー・変数名・流体の共通関数・配列APIによるビルド停止を修正。MODは0.16.0のまま、今回の書き出しを使用してUEを再ビルドします。修正後のWindowsビルドは未検証です。
@@ -80,10 +82,10 @@ UE5.8ビルド・描画はWindows実機での確認が必要です。
 
 ## 現在の状態
 
-- 0.16.0ではMinecraftを素材・地形の書き出しに使い、UEで直接入力・HUD描画・プレイ・保存します。Minecraftへの映像配信を省くため、その経路の圧縮・転送待ちは発生しません。UE自体の実FPSは実機で確認します。
+- 0.17.0ではMinecraftを素材・地形・レシピの書き出しに使い、UEで直接入力・HUD描画・プレイ・保存します。地形はビューポートへ、一人称の手だけはローカルGPUで合成します。Minecraftへの圧縮・転送待ちは発生しません。UE自体の実FPSは実機で確認します。
 - 1回の書き出しパッケージのハッシュ・素材・Paletteを検証し、専用nativeマップを作成します。既存UEレベルとMinecraftの元ワールドは保持します。
 - 地形・プレイヤー・インベントリ・モブ・投下物・着火済みTNTを同じUE保存ファイルへ記録します。書き出しは水平4～6チャンク・上下104ブロックの有限範囲です。
-- MODビルド、Java210件・bridge Python119件・native形式/UIと独立C++計算の検証が成功。[0.16.0検証記録](docs/AUDIT_0.16.0.md)を参照してください。UEモジュールビルド、実エディター取り込み、実描画、Windows入力・IME・性能は未確認です。[対応範囲と実機確認](docs/NATIVE_PLAY.md)を参照してください。
+- MODビルド、Java218件・bridge Python119件・native形式/UI54件・独立C++計算の検証が成功。[0.17.0検証記録](docs/AUDIT_0.17.0.md)を参照してください。UEモジュールビルド、実エディター取り込み、実描画、Windows入力・IME・性能は未確認です。[対応範囲と実機確認](docs/NATIVE_PLAY.md)を参照してください。
 
 ### 過去版の確認記録
 

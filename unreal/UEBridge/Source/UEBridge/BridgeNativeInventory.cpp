@@ -29,6 +29,7 @@ void UBridgeNativeInventory::Initialize(UBridgeNativeUiPalette* Resources, const
     // SetNum alone retains elements when a UObject is reused for another
     // profile. Establish an empty inventory before attempting any profile load.
     Profile = SafeName; Slots.Empty(36); Slots.SetNum(36); CursorStack.Clear(); OffhandStack.Clear(); ArmorStacks.Empty(4);ArmorStacks.SetNum(4); SelectedSlot = 0;
+    CraftGrid.Empty(9);CraftGrid.SetNum(9);LoadGameplay();
     Initialized = true; StandaloneProfile = UseStandaloneProfile; LastSaveAttempt = -1;
     if (!StandaloneProfile) PersistenceError.Reset();
     LoadedExistingProfile = StandaloneProfile && LoadProfile(); PreserveInvalidProfile = StandaloneProfile && !LoadedExistingProfile && FPaths::FileExists(ProfilePath()); InitialSettingsApplied = false;
@@ -84,11 +85,15 @@ void UBridgeNativeInventory::SeedCreativeHotbar() {
 
 const FBridgeNativeStack& UBridgeNativeInventory::Selected() const { return Slots.IsValidIndex(SelectedSlot) ? Slots[SelectedSlot] : EmptyNativeStack; }
 const FBridgeNativeStack& UBridgeNativeInventory::GetStack(int32 Slot) const {
+    if(Slot>=CraftBegin && Slot<CraftBegin+9) return CraftGrid.IsValidIndex(Slot-CraftBegin) ? CraftGrid[Slot-CraftBegin] : EmptyNativeStack;
+    if(Slot>=ContainerBegin && Slot<ContainerOutput) {const auto* Data=Stations.Find(StationKey);return Data && Data->Slots.IsValidIndex(Slot-ContainerBegin) ? Data->Slots[Slot-ContainerBegin] : EmptyNativeStack;}
     if(Slot>=ArmorBegin && Slot<ArmorEnd) return ArmorStacks.IsValidIndex(Slot-ArmorBegin) ? ArmorStacks[Slot-ArmorBegin] : EmptyNativeStack;
     return Slot == OffhandSlot ? OffhandStack : (Slots.IsValidIndex(Slot) ? Slots[Slot] : EmptyNativeStack);
 }
 FBridgeNativeStack* UBridgeNativeInventory::MutableStack(int32 Slot) {
     if (!Initialized) return nullptr;
+    if(Slot>=CraftBegin && Slot<CraftBegin+9) return CraftGrid.IsValidIndex(Slot-CraftBegin) ? &CraftGrid[Slot-CraftBegin] : nullptr;
+    if(Slot>=ContainerBegin && Slot<ContainerOutput) {auto* Data=Stations.Find(StationKey);return Data && Data->Slots.IsValidIndex(Slot-ContainerBegin) ? &Data->Slots[Slot-ContainerBegin] : nullptr;}
     if(Slot>=ArmorBegin && Slot<ArmorEnd) return ArmorStacks.IsValidIndex(Slot-ArmorBegin) ? &ArmorStacks[Slot-ArmorBegin] : nullptr;
     return Slot == OffhandSlot ? &OffhandStack : (Slots.IsValidIndex(Slot) ? &Slots[Slot] : nullptr);
 }
@@ -109,9 +114,12 @@ int32 UBridgeNativeInventory::EquipmentSlotFor(const FString& ItemId) const {
 }
 bool UBridgeNativeInventory::CanInsertIntoSlot(int32 Slot,const FString& ItemId) const {
     if(Slot>=ArmorBegin && Slot<ArmorEnd) return EquipmentSlotFor(ItemId)==Slot;
+    if(Slot>=CraftBegin && Slot<CraftBegin+9) {const int32 I=Slot-CraftBegin;return I%3<GetCraftWidth() && I/3<GetCraftWidth();}
+    if(Slot>=ContainerBegin && Slot<ContainerOutput) {const auto* Data=Stations.Find(StationKey);const int32 I=Slot-ContainerBegin;
+        return Data && Data->Slots.IsValidIndex(I) && (Data->Kind==TEXT("chest") || Data->Kind==TEXT("hopper") || Data->Kind==TEXT("dropper") || Data->Kind==TEXT("dispenser") || (I==0) || (I==1 && Data->Kind!=TEXT("stonecutter") && (Fuels.Contains(ItemId) || ItemId==TEXT("minecraft:bucket"))));}
     return Slots.IsValidIndex(Slot) || Slot==OffhandSlot;
 }
-int32 UBridgeNativeInventory::SlotCapacity(int32 Slot,const FString& ItemId) const {return CanInsertIntoSlot(Slot,ItemId) ? (Slot>=ArmorBegin ? 1 : MaxCount(ItemId)) : 0;}
+int32 UBridgeNativeInventory::SlotCapacity(int32 Slot,const FString& ItemId) const {return CanInsertIntoSlot(Slot,ItemId) ? (Slot>=ArmorBegin && Slot<ArmorEnd ? 1 : MaxCount(ItemId)) : 0;}
 float UBridgeNativeInventory::GetArmorPoints() const {float Total=0;for(const auto& Stack:ArmorStacks) if(!Stack.IsEmpty()) if(const auto* Entry=Palette ? Palette->FindItem(Stack.ItemId) : nullptr) Total+=Entry->Armor;return Total;}
 float UBridgeNativeInventory::GetArmorToughness() const {float Total=0;for(const auto& Stack:ArmorStacks) if(!Stack.IsEmpty()) if(const auto* Entry=Palette ? Palette->FindItem(Stack.ItemId) : nullptr) Total+=Entry->ArmorToughness;return Total;}
 float UBridgeNativeInventory::GetArmorKnockbackResistance() const {float Total=0;for(const auto& Stack:ArmorStacks) if(!Stack.IsEmpty()) if(const auto* Entry=Palette ? Palette->FindItem(Stack.ItemId) : nullptr) Total+=Entry->ArmorKnockbackResistance;return FMath::Clamp(Total,0.f,1.f);}
@@ -167,10 +175,23 @@ bool UBridgeNativeInventory::QuickMove(int32 Slot) {
     auto* Target = MutableStack(Slot); if (!Target || Target->IsEmpty()) return false;
     auto& Stack = *Target;
     const int32 Equip=EquipmentSlotFor(Stack.ItemId);
-    if(Slot<ArmorBegin && Equip>=ArmorBegin && GetStack(Equip).IsEmpty()) {
+    if(Station.IsEmpty() && Slot<ArmorBegin && Equip>=ArmorBegin && GetStack(Equip).IsEmpty()) {
         if(auto* Armor=MutableStack(Equip)) {Armor->ItemId=Stack.ItemId;Armor->Count=1;if(--Stack.Count<=0) Stack.Clear();Changed();return true;}
     }
-    const int32 Remaining = InsertRange(Stack.ItemId, Stack.Count, Slot < 9 ? 9 : 0, Slot < 9 || Slot >= OffhandSlot ? 36 : 9);
+    int32 Remaining=Stack.Count;
+    if(!Station.IsEmpty() && Slot>=0 && Slot<36 && Station!=TEXT("crafting_table")) {
+        auto* Container=Stations.Find(StationKey);if(!Container) return false;
+        for(bool Empty:{false,true}) for(int32 I=0;I<Container->Slots.Num() && Remaining>0;++I) {
+            if(!CanInsertIntoSlot(ContainerBegin+I,Stack.ItemId)) continue;
+            if(I==0 && (Container->Kind==TEXT("furnace") || Container->Kind==TEXT("smoker") || Container->Kind==TEXT("blast_furnace")) && Fuels.Contains(Stack.ItemId)) {
+                FStation Probe=*Container;Probe.Slots[0]=Stack;if(!MatchingSingle(Probe)) continue;
+            }
+            auto& Destination=Container->Slots[I];
+            if(Empty ? !Destination.IsEmpty() : Destination.IsEmpty() || Destination.ItemId!=Stack.ItemId) continue;
+            const int32 Moved=FMath::Min(Remaining,MaxCount(Stack.ItemId)-Destination.Count);
+            if(Moved>0) {Destination.ItemId=Stack.ItemId;Destination.Count+=Moved;Remaining-=Moved;}
+        }
+    } else Remaining=InsertRange(Stack.ItemId,Stack.Count,Slot<9 ? 9 : 0,Slot<9 || Slot>=OffhandSlot ? 36 : 9);
     if (Remaining == Stack.Count) return false;
     Stack.Count = Remaining; if (!Remaining) Stack.Clear(); Changed(); return true;
 }
@@ -317,7 +338,7 @@ FString UBridgeNativeInventory::ProfilePath() const { return FPaths::Combine(FPa
 bool UBridgeNativeInventory::LoadProfile() {
     FString Text;
     if (!FPaths::FileExists(ProfilePath())) { PersistenceError.Reset(); return false; }
-    if (IFileManager::Get().FileSize(*ProfilePath()) > 128 * 1024 || !FFileHelper::LoadFileToString(Text, *ProfilePath())) { PersistenceError = TEXT("inventory_read_failed"); return false; }
+    if (IFileManager::Get().FileSize(*ProfilePath()) > 32 * 1024 * 1024 || !FFileHelper::LoadFileToString(Text, *ProfilePath())) { PersistenceError = TEXT("inventory_read_failed"); return false; }
     TSharedPtr<FJsonObject> Json;
     if (!FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Text), Json) || !Json.IsValid()) { PersistenceError = TEXT("inventory_invalid_json"); return false; }
     if (!ImportRuntimeState(Json)) return false;
@@ -350,6 +371,26 @@ bool UBridgeNativeInventory::ImportRuntimeState(const TSharedPtr<FJsonObject>& J
         if(!ArmorValue->TryGetArray(ArmorValues) || ArmorValues->Num()!=4) {PersistenceError=TEXT("inventory_invalid_equipment");return false;}
         for(int32 I=0;I<4;++I) if(!ReadStack((*ArmorValues)[I],LoadedArmor[I]) || (!LoadedArmor[I].IsEmpty() && (LoadedArmor[I].Count!=1 || !CanInsertIntoSlot(ArmorBegin+I,LoadedArmor[I].ItemId)))) {PersistenceError=TEXT("inventory_invalid_equipment");return false;}
     }
+    TArray<FBridgeNativeStack> LoadedGrid;LoadedGrid.SetNum(9);TMap<FString,FStation> LoadedStations=Stations;
+    if(const auto Value=Json->TryGetField(TEXT("craftGrid"));Value.IsValid()) {
+        const TArray<TSharedPtr<FJsonValue>>* Grid=nullptr;if(!Value->TryGetArray(Grid) || Grid->Num()!=9) return false;
+        for(int32 I=0;I<9;++I) if(!ReadStack((*Grid)[I],LoadedGrid[I])) return false;
+    }
+    if(const auto Value=Json->TryGetField(TEXT("stations"));Value.IsValid()) {
+        LoadedStations.Empty();const TArray<TSharedPtr<FJsonValue>>* Table=nullptr;if(!Value->TryGetArray(Table) || Table->Num()>4096) return false;
+        for(const auto& StationValue:*Table) {
+            const TSharedPtr<FJsonObject>* Entry=nullptr;FString Key,Kind;const TArray<TSharedPtr<FJsonValue>>* Items=nullptr;double Burn=0,Total=0,Cook=0;
+            if(!StationValue->TryGetObject(Entry) || !(*Entry)->TryGetStringField(TEXT("key"),Key) || Key.Len()>128 || LoadedStations.Contains(Key) || !(*Entry)->TryGetStringField(TEXT("kind"),Kind)
+                || !(*Entry)->TryGetArrayField(TEXT("slots"),Items) || Items->Num()!=ContainerSize(Kind)
+                || !(*Entry)->TryGetNumberField(TEXT("burn"),Burn) || !(*Entry)->TryGetNumberField(TEXT("burnTotal"),Total) || !(*Entry)->TryGetNumberField(TEXT("cook"),Cook)) return false;
+            if(Kind!=TEXT("chest") && Kind!=TEXT("stonecutter") && Kind!=TEXT("furnace") && Kind!=TEXT("blast_furnace") && Kind!=TEXT("smoker") && Kind!=TEXT("hopper") && Kind!=TEXT("dropper") && Kind!=TEXT("dispenser")) return false;
+            for(double N:{Burn,Total,Cook}) if(!FMath::IsFinite(N) || N<0 || N>1000000 || FMath::FloorToDouble(N)!=N) return false;
+            FStation Data;Data.Kind=Kind;Data.Burn=int32(Burn);Data.BurnTotal=int32(Total);Data.Cook=int32(Cook);(*Entry)->TryGetStringField(TEXT("recipe"),Data.RecipeId);Data.Slots.SetNum(Items->Num());
+            for(int32 I=0;I<Items->Num();++I) if(!ReadStack((*Items)[I],Data.Slots[I])) return false;
+            LoadedStations.Add(Key,MoveTemp(Data));
+        }
+    }
+    CraftGrid=MoveTemp(LoadedGrid);Stations=MoveTemp(LoadedStations);
     Slots = MoveTemp(Loaded); CursorStack = MoveTemp(LoadedCursor); OffhandStack = MoveTemp(LoadedOffhand);ArmorStacks=MoveTemp(LoadedArmor); SelectedSlot = int32(SavedSelection);
     LoadedExistingProfile = true; InitialSettingsApplied = true; Changed(); PersistenceError.Reset(); return true;
 }
@@ -361,6 +402,12 @@ TSharedPtr<FJsonObject> UBridgeNativeInventory::ExportRuntimeState() const {
     TArray<TSharedPtr<FJsonValue>> Values; for (const auto& Stack : Slots) Values.Add(WriteStack(Stack)); Json->SetArrayField(TEXT("slots"), Values); Json->SetField(TEXT("cursor"), WriteStack(CursorStack));
     Json->SetField(TEXT("offhand"), WriteStack(OffhandStack));
     TArray<TSharedPtr<FJsonValue>> Equipment;for(const auto& Stack:ArmorStacks) Equipment.Add(WriteStack(Stack));Json->SetArrayField(TEXT("equipment"),Equipment);
+    TArray<TSharedPtr<FJsonValue>> Grid;for(const auto& Stack:CraftGrid) Grid.Add(WriteStack(Stack));Json->SetArrayField(TEXT("craftGrid"),Grid);
+    TArray<TSharedPtr<FJsonValue>> Table;
+    for(const auto& Pair:Stations) {auto Row=MakeShared<FJsonObject>();Row->SetStringField(TEXT("key"),Pair.Key);Row->SetStringField(TEXT("kind"),Pair.Value.Kind);
+        Row->SetStringField(TEXT("recipe"),Pair.Value.RecipeId);Row->SetNumberField(TEXT("burn"),Pair.Value.Burn);Row->SetNumberField(TEXT("burnTotal"),Pair.Value.BurnTotal);Row->SetNumberField(TEXT("cook"),Pair.Value.Cook);
+        TArray<TSharedPtr<FJsonValue>> Items;for(const auto& Stack:Pair.Value.Slots) Items.Add(WriteStack(Stack));Row->SetArrayField(TEXT("slots"),Items);Table.Add(MakeShared<FJsonValueObject>(Row));}
+    Json->SetArrayField(TEXT("stations"),Table);
     return Json;
 }
 

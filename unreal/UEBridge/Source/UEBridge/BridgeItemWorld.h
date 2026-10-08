@@ -16,6 +16,9 @@ public:
     TFunction<void(const FVector& Position)> PickupSound;
     FString Drop(const FString& Tx,const FString& Item,const FString& Model,int32 Count,int32 MaxCount,const FVector& Position,const FVector& Velocity);
     void SetPickupDelay(const FString& Tx,float Seconds);
+    /** Native spawn rollback only: no pickup/merged population can be cancelled. */
+    bool CancelNativeDrop(const FString& Tx);
+    bool CollectNativeItems(const FBox& Bounds,const TFunction<int32(const FString&,int32)>& Accept);
     bool Resolve(const FString& Tx,int32 Revision,int32 Accepted);
     /** Pause physics/pickup without releasing escrow. Full control/session exit calls Clear. */
     void SetAuthority(bool Active,class ACharacter* Player);

@@ -202,6 +202,18 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
         wire(source, lightmap, name)
     display_lit = node(unreal.MaterialExpressionMultiply); wire(display_pixel, display_lit, 'A'); wire(lightmap, display_lit, 'B')
     vanilla = _color_transfer(unreal, editing, material, display_lit, DISPLAY_TO_LINEAR)
+    # The active pack supplies the glint texture locally. Disabled for terrain
+    # and ordinary items; first-person and equipment instances opt in.
+    glint_texture=node(unreal.MaterialExpressionTextureObjectParameter)
+    glint_texture.set_editor_property('parameter_name','BridgeGlintTexture')
+    glint_texture.set_editor_property('texture',unreal.load_asset('/Engine/EngineResources/DefaultTexture.DefaultTexture'))
+    glint_uv=node(unreal.MaterialExpressionTextureCoordinate);glint_clock=node(unreal.MaterialExpressionTime)
+    glint=node(unreal.MaterialExpressionCustom);glint.set_editor_property('output_type',unreal.CustomMaterialOutputType.CMOT_FLOAT3)
+    glint.set_editor_property('code','float2 uv=UV.xy*8;float2 a=float2(.6428*uv.x-.7660*uv.y,.7660*uv.x+.6428*uv.y)+float2(Clock*.02,0);float2 b=float2(.6428*uv.x+.7660*uv.y,-.7660*uv.x+.6428*uv.y)-float2(Clock*.015,0);float3 ga=Texture2DSample(Glint,GlintSampler,frac(a)).rgb;float3 gb=Texture2DSample(Glint,GlintSampler,frac(b)).rgb;return Pixel.rgb+Enabled*(ga*ga+gb*gb)*float3(.28,.12,.42);')
+    sources=[('UV',glint_uv),('Clock',glint_clock),('Glint',glint_texture),('Pixel',vanilla),('Enabled',parameter('BridgeGlint',0.0))]
+    glint.set_editor_property('inputs',[custom_input(name) for name,_ in sources])
+    for name,source in sources: wire(source,glint,name)
+    vanilla=glint
     zero = node(unreal.MaterialExpressionConstant); zero.set_editor_property('r', 0.0)
     base = node(unreal.MaterialExpressionLinearInterpolate)
     wire(pixel_rgb, base, 'A'); wire(zero, base, 'B'); wire(mode_sum, base, 'Alpha')
@@ -361,7 +373,7 @@ def ensure_native_sky_materials(unreal, editing=None):
 def ensure_native_inverse_hud_material(unreal, editing=None):
     """Minecraft CROSSHAIR/GUI_INVERT composition after scene colour output."""
     editing = editing or unreal.MaterialEditingLibrary
-    path = '/Game/Bridge/Minecraft/M_NativeInverseHud_v2'
+    path = '/Game/Bridge/Minecraft/M_NativeInverseHud_v3'
     assets = unreal.EditorAssetLibrary
     default_texture = unreal.load_asset('/Engine/EngineResources/DefaultTexture.DefaultTexture')
     if default_texture is None:
@@ -369,7 +381,7 @@ def ensure_native_inverse_hud_material(unreal, editing=None):
     material = unreal.load_asset(path) if assets.does_asset_exist(path) else None
     if material is None:
         material = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
-            'M_NativeInverseHud_v2', '/Game/Bridge/Minecraft', unreal.Material, unreal.MaterialFactoryNew())
+            'M_NativeInverseHud_v3', '/Game/Bridge/Minecraft', unreal.Material, unreal.MaterialFactoryNew())
     if not isinstance(material, unreal.Material):
         raise RuntimeError('Generated inverse HUD path is occupied by another asset')
     editing.delete_all_material_expressions(material)
@@ -398,7 +410,23 @@ def ensure_native_inverse_hud_material(unreal, editing=None):
     connections = [('Scene', scene, 'Color'), ('UV', uv, 'ViewportUV'), ('ViewportSize', size, '')]
     tint=node(unreal.MaterialExpressionVectorParameter);tint.set_editor_property('parameter_name','NativeSceneTint');tint.set_editor_property('default_value',unreal.LinearColor(1,1,1,1))
     connections.append(('SceneTint',tint,'RGB'))
-    code = 'float3 destination=Scene.rgb*SceneTint.rgb;\n'
+    hands=node(unreal.MaterialExpressionTextureObjectParameter);hands.set_editor_property('parameter_name','NativeHandsTexture');hands.set_editor_property('texture',default_texture)
+    enabled=node(unreal.MaterialExpressionScalarParameter);enabled.set_editor_property('parameter_name','NativeHandsEnabled');enabled.set_editor_property('default_value',0.0)
+    connections.extend([('Hands',hands,''),('HandsEnabled',enabled,'')])
+    # SceneColor HDR alpha stores inverse opacity. Its RGB is premultiplied;
+    # the hand pass preserves item self-occlusion while ignoring terrain depth.
+    code = '''float3 destination=Scene.rgb;
+if(HandsEnabled>.5) {
+float4 hand=Texture2DSample(Hands,HandsSampler,UV.xy);
+float opacity=1-saturate(hand.a);
+float3 color=max(hand.rgb/max(opacity,.00001),0);
+// The capture is linear HDR; this postprocess input has already passed the
+// native gamma-only output. Composite both in the same display colour space.
+float3 display=lerp(color*12.92,1.055*pow(color,1.0/2.4)-.055,step(.0031308,color));
+destination=display*opacity+destination*(1-opacity);
+}
+destination*=SceneTint.rgb;
+'''
     for slot in range(3):
         texture = node(unreal.MaterialExpressionTextureObjectParameter)
         texture.set_editor_property('parameter_name', 'InverseTexture' + str(slot))
@@ -450,3 +478,35 @@ def load_material_helpers(unreal, namespace=None):
     if not path.is_file():
         raise RuntimeError('Copy bridge_lighting_materials.py next to UEBridge.uproject first')
     return runpy.run_path(str(path))
+
+
+def ensure_native_icon_glint_material(unreal, assets, editing):
+    root='/Game/Bridge/Minecraft/NativeUI';name='M_NativeIconGlint_v1';path=root+'/'+name
+    material=unreal.load_asset(path) if assets.does_asset_exist(path) else None
+    if material is None:
+        material=unreal.AssetToolsHelpers.get_asset_tools().create_asset(name,root,unreal.Material,unreal.MaterialFactoryNew())
+    if not isinstance(material,unreal.Material): raise RuntimeError('Cannot create native icon glint material')
+    if not editing.get_material_property_input_node(material,unreal.MaterialProperty.MP_EMISSIVE_COLOR):
+        material.set_editor_property('material_domain',unreal.MaterialDomain.MD_UI)
+        material.set_editor_property('blend_mode',unreal.BlendMode.BLEND_TRANSLUCENT)
+        def node(cls): return editing.create_material_expression(material,cls,0,0)
+        sources=[]
+        for parameter in ('NativeIconTexture','NativeGlintTexture'):
+            texture=node(unreal.MaterialExpressionTextureObjectParameter);texture.set_editor_property('parameter_name',parameter)
+            texture.set_editor_property('texture',unreal.load_asset('/Engine/EngineResources/DefaultTexture.DefaultTexture'));sources.append(texture)
+        uv=node(unreal.MaterialExpressionTextureCoordinate);clock=node(unreal.MaterialExpressionTime)
+        shader=node(unreal.MaterialExpressionCustom);shader.set_editor_property('output_type',unreal.CustomMaterialOutputType.CMOT_FLOAT4)
+        shader.set_editor_property('code','float4 icon=Texture2DSample(Icon,IconSampler,UV.xy);float2 u=UV.xy*8;float3 a=Texture2DSample(Glint,GlintSampler,frac(float2(.6428*u.x-.766*u.y,.766*u.x+.6428*u.y)+float2(Clock*.02,0))).rgb;float3 b=Texture2DSample(Glint,GlintSampler,frac(float2(.6428*u.x+.766*u.y,-.766*u.x+.6428*u.y)-float2(Clock*.015,0))).rgb;return float4(icon.rgb+(a*a+b*b)*float3(.28,.12,.42),icon.a);')
+        inputs=[]
+        for key,source in zip(('Icon','Glint','UV','Clock'),sources+[uv,clock]):
+            input_value=unreal.CustomInput();input_value.set_editor_property('input_name',key);inputs.append(input_value)
+        shader.set_editor_property('inputs',inputs)
+        for key,source in zip(('Icon','Glint','UV','Clock'),sources+[uv,clock]):
+            if not editing.connect_material_expressions(source,'',shader,key): raise RuntimeError('Cannot connect icon glint '+key)
+        for prop,channel in ((unreal.MaterialProperty.MP_EMISSIVE_COLOR,'RGB'),(unreal.MaterialProperty.MP_OPACITY,'A')):
+            mask=node(unreal.MaterialExpressionComponentMask)
+            for name in ('r','g','b','a'): mask.set_editor_property(name,(name!='a') if channel=='RGB' else name=='a')
+            editing.connect_material_expressions(shader,'',mask,'');editing.connect_material_property(mask,'',prop)
+        editing.recompile_material(material)
+    if not assets.save_loaded_asset(material,False): raise RuntimeError('Cannot save native icon glint material')
+    return material

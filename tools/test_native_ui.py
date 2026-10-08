@@ -55,6 +55,63 @@ class NativeUiValidation(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"weapon attributes"):
             self.load()
 
+    def gameplay(self):
+        return dict(version=1,tickRate=20,randomTickSpeed=3,recipes=[dict(id="minecraft:stone_recipe",type="minecraft:crafting_shaped",width=1,height=1,ingredients=[["minecraft:stone","minecraft:dirt"]],result="minecraft:stone",count=1)],fuels={"minecraft:coal":1600},remainders={"minecraft:lava_bucket":"minecraft:bucket"})
+
+    def test_gameplay_registry_retains_resolved_tags_fuel_and_remainders(self):
+        self.manifest["gameplay"]=self.gameplay()
+        result=self.load()["gameplay"]
+        self.assertEqual(["minecraft:stone","minecraft:dirt"],result["recipes"][0]["ingredients"][0])
+        self.assertEqual(1600,result["fuels"]["minecraft:coal"])
+        self.assertEqual("minecraft:bucket",result["remainders"]["minecraft:lava_bucket"])
+
+    def test_invalid_recipe_layout_and_duplicate_ids_rejected(self):
+        self.manifest["gameplay"]=self.gameplay()
+        recipe=self.manifest["gameplay"]["recipes"][0]
+        recipe["width"]=2
+        with self.assertRaisesRegex(ValueError,"shaped recipe grid"): self.load()
+        recipe["width"]=1
+        self.manifest["gameplay"]["recipes"].append(dict(recipe))
+        with self.assertRaisesRegex(ValueError,"duplicate native recipe"): self.load()
+
+    def test_invalid_gameplay_clock_and_fuel_are_rejected(self):
+        for field,value in (("version",True),("randomTickSpeed",-1),("randomTickSpeed",float('nan')),("tickRate",30)):
+            self.manifest["gameplay"]=self.gameplay();self.manifest["gameplay"][field]=value
+            with self.assertRaisesRegex(ValueError,"native.*(?:version|tick|rate)"): self.load()
+        self.manifest["gameplay"]=self.gameplay();self.manifest["gameplay"]["fuels"]["minecraft:coal"]=True
+        with self.assertRaisesRegex(ValueError,"fuel/remainder"): self.load()
+
+    def test_container_layouts_counts_and_coordinates_validated(self):
+        self.manifest["gameplay"]=self.gameplay()
+        for kind,size in (("chest",27),("furnace",3),("hopper",5),("dropper",9),("dispenser",9)):
+            container=dict(key="-8,64,9",kind=kind,slots=[dict(item="",count=0) for _ in range(size)],burn=0,burnTotal=0,cook=0)
+            container["slots"][0]=dict(item="minecraft:stone",count=32)
+            self.manifest["gameplay"]["containers"]=[container]
+            self.assertEqual(32,self.load()["gameplay"]["containers"][0]["slots"][0]["count"])
+            container["slots"][0]["count"]=100
+            with self.assertRaisesRegex(ValueError,"container stack"): self.load()
+            container["slots"][0]["count"]=32;container["slots"].pop()
+            with self.assertRaisesRegex(ValueError,"container slots"): self.load()
+        self.manifest["gameplay"]["containers"]=[dict(key="40000000,0,0",kind="furnace",slots=[dict(item="",count=0)]*3,burn=0,burnTotal=0,cook=0)]
+        with self.assertRaisesRegex(ValueError,"world bounds"): self.load()
+
+    def test_armor_sprite_and_default_glint_use_verified_assets(self):
+        self.manifest["sprites"]["equipment/minecraft/iron_chestplate"]=dict(self.entry)
+        item=self.manifest["items"][0];item.update(armorSprite="equipment/minecraft/iron_chestplate",glint=True)
+        self.assertTrue(self.load()["items"][0]["glint"])
+        item["armorSprite"]="equipment/missing/iron_chestplate"
+        with self.assertRaisesRegex(ValueError,"armor sprite"): self.load()
+
+    def test_particle_frame_order_repeats_and_asset_validation(self):
+        self.manifest["sprites"]["particle/generic_7"]=dict(self.entry)
+        self.manifest["sprites"]["particle/generic_6"]=dict(self.entry)
+        frames=["particle/generic_7","particle/generic_7","particle/generic_6"]
+        self.manifest["particleFrames"]={"minecraft:smoke":frames}
+        self.assertEqual(frames,self.load()["particleFrames"]["minecraft:smoke"])
+        for invalid in ({"minecraft:smoke":["particle/missing"]},{"bad id":frames},{"minecraft:smoke":True},{"minecraft:smoke":frames*100}):
+            self.manifest["particleFrames"]=invalid
+            with self.assertRaisesRegex(ValueError,"particle frame"): self.load()
+
     def creative_group(self):
         return dict(id="minecraft:building_blocks", name="建築ブロック", type="category", icon="minecraft:stone",
                     texture="hud/hotbar", row=0, column=0, special=False, scrollbar=True, renderName=True, items=["minecraft:stone"])

@@ -37,6 +37,23 @@ FString ABridgeItemWorld::Drop(const FString& Tx,const FString& Item,const FStri
     if(Lighting) Lighting(Actor);return LastReason=TEXT("item_spawned");
 }
 void ABridgeItemWorld::SetPickupDelay(const FString& Tx,float Seconds) {if(auto* Entry=Entries.Find(Tx)) if(auto* Actor=Entry->Actor.Get()) Actor->SetPickupDelay(Seconds);}
+bool ABridgeItemWorld::CancelNativeDrop(const FString& Tx) {
+    auto* Entry=Entries.Find(Tx);if(!NativeLocal || !Entry || Entry->Revision!=0) return false;
+    auto* Actor=Entry->Actor.Get();
+    if(Actor) {for(const auto& Pair:Entries) if(Pair.Key!=Tx && Pair.Value.Actor.Get()==Actor) return false;
+        Actor->Destroy();Actors.Remove(Actor);}
+    Entries.Remove(Tx);return true;
+}
+bool ABridgeItemWorld::CollectNativeItems(const FBox& Bounds,const TFunction<int32(const FString&,int32)>& Accept) {
+    if(!NativeLocal || !Authority || !Accept) return false;bool Moved=false;
+    for(auto& Pair:Entries) {auto& Entry=Pair.Value;auto* Actor=Entry.Actor.Get();
+        if(!Actor || !Entry.Spawned || Entry.Pending || Entry.Count<=0 || !Bounds.IsInsideOrOn(Actor->GetActorLocation())) continue;
+        const int32 Remaining=Accept(Entry.Item,Entry.Count);
+        if(Remaining<0 || Remaining>Entry.Count) continue;
+        if(Remaining!=Entry.Count) {Entry.Count=Remaining;Refresh(Actor);Moved=true;}
+    }
+    return Moved;
+}
 void ABridgeItemWorld::SetAuthority(bool Active,ACharacter* NewPlayer) {
     Authority=Active;Player=NewPlayer;for(ABridgeDroppedItem* Actor:Actors) if(IsValid(Actor)) Actor->SetActive(Active);
 }

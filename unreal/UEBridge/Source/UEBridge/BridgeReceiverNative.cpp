@@ -8,6 +8,7 @@
 #include "BridgeCharacter.h"
 #include "BridgePlayerAppearance.h"
 #include "BridgeBlockPalette.h"
+#include "BridgeBlockPreview.h"
 #include "BridgeMobWorld.h"
 #include "BridgeMobCharacter.h"
 #include "BridgeItemWorld.h"
@@ -22,6 +23,8 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -54,6 +57,7 @@ float ABridgeReceiver::GetNativeHealth() const {return IsValid(MobWorld) ? MobWo
 bool ABridgeReceiver::IsNativeSaving() const {return NativePlayActive && NativeStore.IsValid() && NativeStore->IsSaving();}
 
 void ABridgeReceiver::BeginNativePlay() {
+    NativeLighting=false;
     NativeTimeOfDay=6000;NativeWorldTime=0;NativeTimeAccumulator=0;NativeDaylightCycle=true;NativeSubmergedSeconds=0;NativeEyeInWater=false;NativeLastFluidDamage=-100;
     NativePlayActive=true;NativeInitialized=false;Connected=false;Anchor=FVector::ZeroVector;
     NativeTearDownHandle=FWorldDelegates::OnWorldBeginTearDown.AddUObject(this,&ABridgeReceiver::PrepareNativeExit);
@@ -90,7 +94,11 @@ void ABridgeReceiver::BeginNativePlay() {
     }
     LatestInput.Creative=NativeCreative;
     if(const auto& Runtime=NativeStore->GetMetadata().RuntimeState; Runtime.IsValid()) {
-        Runtime->TryGetBoolField(TEXT("lighting"),NativeLighting);
+        // Earlier saves persisted UE lighting as the implicit default. Migrate
+        // those saves to vanilla; preserve deliberate choices from this release.
+        double LightingPreference=0;
+        if(Runtime->TryGetNumberField(TEXT("lightingPreferenceVersion"),LightingPreference) && LightingPreference>=2)
+            Runtime->TryGetBoolField(TEXT("lighting"),NativeLighting);
         FVector Respawn;if(JsonVector(Runtime,TEXT("respawn"),Respawn)) NativeRespawnPosition=Respawn;
         if(EnsureMobWorld()) {double Health;if(Runtime->TryGetNumberField(TEXT("health"),Health)) MobWorld->PlayerHealth=FMath::Clamp(float(Health),0.f,20.f);}
     }
@@ -112,7 +120,7 @@ void ABridgeReceiver::BeginNativePlay() {
     Video->SetNativeSkyEnvironment(LatestInput.VanillaLight,NativeStore->GetMetadata().Dimension);
     NativeSetLighting(NativeLighting);
     NativeStatus=TEXT("Validating offline world...");
-    UE_LOG(LogTemp,Display,TEXT("Bridge 0.15.2 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
+    UE_LOG(LogTemp,Display,TEXT("Bridge 0.17.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
 }
 
 void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
@@ -200,11 +208,60 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
                         || !SyncedWorld->ContainsUEPosition(BridgeProtocol::ToUnreal(Position-SourceOrigin,Anchor))) {
                         NativeRestoreFailed=true;NativeStatus=TEXT("Saved TNT is invalid; save preserved");return;
                     }
-                    NativeFuses.Add({BridgeProtocol::ToUnreal(Position-SourceOrigin,Anchor),GetWorld()->GetTimeSeconds()+Remaining});
+                    FVector Velocity=FVector::ZeroVector;JsonVector(Value->AsObject(),TEXT("velocity"),Velocity);
+                    if(!PrimeNativeTnt(BridgeProtocol::ToUnreal(Position-SourceOrigin,Anchor),float(Remaining),Velocity,true)) {NativeRestoreFailed=true;NativeStatus=TEXT("TNT model unavailable");return;}
                 }
             }
         }
         SyncedWorld->EnableNativeFluids(Metadata.Dimension==TEXT("minecraft:the_nether"));
+        SyncedWorld->NativeRuleDrop=[this](const FString& Id,const FVector& Position) {return SpawnNativeDrop(Id,1,Position,FVector::ZeroVector,.5f);};
+        SyncedWorld->NativeBlockRemoving=[this](const FIntVector& Block) {return DropNativeContainer(Block);};
+        SyncedWorld->NativePrimeTnt=[this](const FIntVector& Block) {IgniteNativeTnt(Block);};
+        SyncedWorld->NativePlateOccupied=[this](const FIntVector& Block) {
+            const FVector C=SyncedWorld->BlockCenter(Block);
+            auto OnPlate=[&](const FVector& Feet) {return FMath::Abs(Feet.X-C.X)<80 && FMath::Abs(Feet.Y-C.Y)<80 && Feet.Z>C.Z-45 && Feet.Z<C.Z+20;};
+            if(auto* Character=Cast<ABridgeCharacter>(TargetCharacter)) if(OnPlate(Character->GetMinecraftFeetPosition())) return true;
+            if(MobWorld) for(const FVector& Feet:MobWorld->CollisionAnchors()) if(OnPlate(Feet)) return true;
+            return false;
+        };
+        SyncedWorld->NativeContainerPower=[this](const FIntVector& Block) {auto* Control=Controller(this);auto* Inventory=Control ? Control->GetNativeInventory() : nullptr;return Inventory ? Inventory->ContainerSignal(FString::Printf(TEXT("%d,%d,%d"),Block.X,Block.Y,Block.Z)) : 0;};
+        auto PrepareContainer=[this](UBridgeNativeInventory* Inventory,const FIntVector& Block,FString& Key) {
+            FString Id,State;if(!Inventory || !SyncedWorld->GetBlockState(Block,Id,State)) return false;
+            FString Kind=Id.Mid(Id.Find(TEXT(":"))+1);if(Kind==TEXT("barrel") || Kind==TEXT("trapped_chest")) Kind=TEXT("chest");
+            if(Kind==TEXT("stonecutter")) return false;
+            Key=FString::Printf(TEXT("%d,%d,%d"),Block.X,Block.Y,Block.Z);return Inventory->EnsureContainer(Key,Kind);
+        };
+        SyncedWorld->NativeHopperTransfer=[this,PrepareContainer](const FIntVector& Block,const FIntVector& Direction) {
+            auto* Control=Controller(this);auto* Inventory=Control ? Control->GetNativeInventory() : nullptr;FString Key,Output,Input;
+            if(!PrepareContainer(Inventory,Block,Key)) return false;
+            bool Moved=false;
+            if(PrepareContainer(Inventory,Block+Direction,Output)) Moved=Inventory->TransferContainer(Key,Output,Direction.Y,-Direction.Y);
+            const FIntVector Above=Block+FIntVector(0,1,0);
+            if(PrepareContainer(Inventory,Above,Input)) Moved=Inventory->TransferContainer(Input,Key,-1,1) || Moved;
+            else if(ItemWorld && !SyncedWorld->IsOpaqueVoxel(Above)) {
+                const FVector C=SyncedWorld->BlockCenter(Block);
+                Moved=ItemWorld->CollectNativeItems(FBox(C+FVector(-50,-50,20),C+FVector(50,50,150)),[Inventory,&Key](const FString& Id,int32 Count) {return Inventory->InsertContainer(Key,Id,Count,1);}) || Moved;
+            }
+            return Moved;
+        };
+        SyncedWorld->NativeDropperEmit=[this,PrepareContainer](const FIntVector& Block,const FIntVector& Direction) {
+            auto* Control=Controller(this);auto* Inventory=Control ? Control->GetNativeInventory() : nullptr;FString Key,Output;
+            if(!PrepareContainer(Inventory,Block,Key)) return false;
+            if(PrepareContainer(Inventory,Block+Direction,Output)) return Inventory->EmitContainerItem(Key,[Inventory,Output,Direction](const FBridgeNativeStack& Stack) {return Inventory->InsertContainer(Output,Stack.ItemId,1,-Direction.Y)==0;});
+            const FVector Axis(Direction.Z,-Direction.X,Direction.Y);
+            return Inventory->EmitContainerItem(Key,[this,&Block,Axis](const FBridgeNativeStack& Stack) {return SpawnNativeDrop(Stack.ItemId,1,SyncedWorld->BlockCenter(Block)+Axis*75,Axis*200+FVector(0,0,200));});
+        };
+        if(auto* Control=Controller(this)) if(auto* Inventory=Control->GetNativeInventory()) Inventory->FurnaceLitChanged=[this](const FString& Key,bool Lit) {
+            TArray<FString> Values;Key.ParseIntoArray(Values,TEXT(","));if(Values.Num()!=3) return;
+            const FIntVector Block(FCString::Atoi(*Values[0]),FCString::Atoi(*Values[1]),FCString::Atoi(*Values[2]));FString Id,State;
+            if(!SyncedWorld->GetBlockState(Block,Id,State) || (Id!=TEXT("minecraft:furnace") && Id!=TEXT("minecraft:smoker") && Id!=TEXT("minecraft:blast_furnace"))) return;
+            State=State.Replace(Lit ? TEXT("lit=false") : TEXT("lit=true"),Lit ? TEXT("lit=true") : TEXT("lit=false"));SyncedWorld->SetNativeBlockState(Block,Id,State);
+        };
+        int32 RandomTicks=3;TSharedPtr<FJsonObject> Gameplay;
+        if(NativeUiPalette && !NativeUiPalette->GameplayData.IsEmpty() && FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(NativeUiPalette->GameplayData),Gameplay) && Gameplay.IsValid()) {double N=3;if(Gameplay->TryGetNumberField(TEXT("randomTickSpeed"),N)) RandomTicks=FMath::Clamp(int32(N),0,4096);}
+        SyncedWorld->EnableNativeRules(RandomTicks);
+        if(Metadata.RuntimeState.IsValid()) {const TArray<TSharedPtr<FJsonValue>>* Falling=nullptr;if(Metadata.RuntimeState->TryGetArrayField(TEXT("falling"),Falling) && !SyncedWorld->ImportNativeFalling(*Falling)) {NativeRestoreFailed=true;NativeStatus=TEXT("Saved falling blocks invalid; save preserved");return;}}
+
         NativeInitialized=true;NativeLastAutosave=Now;
         UE_LOG(LogTemp,Display,TEXT("Bridge native terrain loaded: package=%s cells=%d spawn=%s save=%s"),
             *Metadata.PackageId,Metadata.Cells,*Metadata.Spawn.ToString(),*Metadata.SaveFile);
@@ -249,8 +306,9 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
         LightActor(Character);
     }
     if(!GetWorld()->IsPaused()) {
+        TickNativeTnt(DeltaSeconds);
         for(int32 I=NativeFuses.Num()-1;I>=0;--I) if(GetWorld()->GetTimeSeconds()>=NativeFuses[I].Deadline) {
-            const FVector Position=NativeFuses[I].Position;NativeFuses.RemoveAtSwap(I);
+            const FVector Position=NativeFuses[I].Position;if(NativeFuses[I].Visual.IsValid()) NativeFuses[I].Visual->Destroy();NativeFuses.RemoveAtSwap(I);
             if(!ExplosionSystem && !ABridgeNativeExplosion::Spawn(GetWorld(),Position,NativeUiPalette))
                 UE_LOG(LogTemp,Warning,TEXT("Bridge native explosion sprite unavailable; rerun native import"));
             Explode(Position);RemoveImportedBlocks(Position,ExplosionRadius);
@@ -430,9 +488,16 @@ void ABridgeReceiver::NativeAction(const FString& Action) {
         FString Id;FColor Tint;
         if(SyncedWorld->GetBlockInfo(Voxel,Id,Tint) && Id==TEXT("minecraft:tnt") && NativeFuses.Num()<64) {
             const FVector Position=SyncedWorld->BlockCenter(Voxel);
-            if(SyncedWorld->BreakBlock(Voxel)) {NativeFuses.Add({Position,GetWorld()->GetTimeSeconds()+4});Character->SwingHand();PlayNativeSound(TEXT("minecraft:entity.tnt.primed"),Position,1,1,TEXT("block"));}
+            if(IgniteNativeTnt(Voxel)) Character->SwingHand();
             return;
         }
+    }
+    if(Action==TEXT("place") && Inventory && !LatestInput.Sneak) {
+        FString Id;FColor Tint;if(Found && SyncedWorld->GetBlockInfo(Voxel,Id,Tint)) {
+            const FString Kind=Id.Mid(10);const FString Key=FString::Printf(TEXT("%d,%d,%d"),Voxel.X,Voxel.Y,Voxel.Z);
+            if(PC->OpenNativeStation(Kind==TEXT("trapped_chest") || Kind==TEXT("barrel") ? TEXT("chest") : Kind,Key)) {Character->SwingHand();return;}
+        }
+        if(Inventory->EquipSelected()) {NativeSelect(Inventory->GetSelectedItemId());Character->SwingHand();return;}
     }
     if(Action==TEXT("place") && !NativeCreative && (!Inventory || Inventory->Selected().IsEmpty())) return;
     FBridgePacket Packet=LatestInput;Packet.Kind=EBridgeKind::BlockAction;Packet.Action=Action==TEXT("attack") ? TEXT("break") : Action;
@@ -443,15 +508,27 @@ void ABridgeReceiver::NativeAction(const FString& Action) {
         Inventory->ConsumeSelected(1);NativeSelect(Inventory->GetSelectedItemId());
     }
 }
-bool ABridgeReceiver::SpawnNativeDrop(const FString& ItemId,int32 Count,const FVector& Position,const FVector& Velocity,float PickupDelay) {
+bool ABridgeReceiver::SpawnNativeDrop(const FString& ItemId,int32 Count,const FVector& Position,const FVector& Velocity,float PickupDelay,FString* Transaction) {
     const auto* Item=NativeUiPalette ? NativeUiPalette->FindItem(ItemId) : nullptr;
     if(!Item || Item->ModelKey.IsEmpty() || Count<1 || Count>Item->MaxCount || !EnsureItemWorld()) return false;
     const FString Tx=FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
     NativeDropItems.Add(Tx,ItemId);
     const FString Result=ItemWorld->Drop(Tx,ItemId,Item->ModelKey,Count,Item->MaxCount,Position,Velocity);
     ItemWorld->Resolve(Tx,0,0);
-    if(Result!=TEXT("item_spawned")) {NativeDropItems.Remove(Tx);LastAction=Result;return false;}
-    ItemWorld->SetPickupDelay(Tx,PickupDelay);return true;
+    if(Result!=TEXT("item_spawned")) {NativeDropItems.Remove(Tx);ItemWorld->CancelNativeDrop(Tx);LastAction=Result;return false;}
+    if(Transaction) *Transaction=Tx;ItemWorld->SetPickupDelay(Tx,PickupDelay);return true;
+}
+bool ABridgeReceiver::DropNativeContainer(const FIntVector& Block) {
+    auto* Control=Controller(this);auto* Inventory=Control ? Control->GetNativeInventory() : nullptr;if(!Inventory) return true;
+    const FString Key=FString::Printf(TEXT("%d,%d,%d"),Block.X,Block.Y,Block.Z);const auto Contents=Inventory->ContainerContents(Key);
+    TArray<FString> Spawned;
+    for(const auto& Stack:Contents) if(!Stack.IsEmpty()) {
+        FString Tx;bool SpawnedStack=false;
+        for(const FVector& Offset:{FVector(0,0,75),FVector(75,0,0),FVector(-75,0,0),FVector(0,75,0),FVector(0,-75,0)})
+            if(SpawnNativeDrop(Stack.ItemId,Stack.Count,SyncedWorld->BlockCenter(Block)+Offset,FVector(0,0,200),.5f,&Tx)) {SpawnedStack=true;Spawned.Add(Tx);break;}
+        if(!SpawnedStack) {for(const auto& Previous:Spawned) {ItemWorld->CancelNativeDrop(Previous);NativeDropItems.Remove(Previous);}LastAction=TEXT("Container contents retained: item drop failed");return false;}
+    }
+    Inventory->RemoveContainer(Key);return true;
 }
 bool ABridgeReceiver::NativeDrop(const FString& ItemId,int32 Count) {
     if(!IsNativeReady() || !UEControl || !TargetCharacter) return false;
@@ -477,6 +554,7 @@ bool ABridgeReceiver::NativeSave() {
         UE_LOG(LogTemp,Error,TEXT("Bridge native save refused: %s"),*NativeStatus);return false;
     }
     auto Runtime=MakeShared<FJsonObject>();Runtime->SetNumberField(TEXT("health"),GetNativeHealth());Runtime->SetBoolField(TEXT("lighting"),NativeLighting);
+    Runtime->SetNumberField(TEXT("lightingPreferenceVersion"),2);
     Runtime->SetArrayField(TEXT("respawn"),JsonVector(NativeRespawnPosition));Runtime->SetBoolField(TEXT("flying"),LatestInput.Flying);Runtime->SetNumberField(TEXT("perspective"),LatestInput.Perspective);
     Runtime->SetObjectField(TEXT("inventory"),Inventory);
     Runtime->SetNumberField(TEXT("timeOfDay"),NativeTimeOfDay);Runtime->SetNumberField(TEXT("worldTime"),NativeWorldTime);Runtime->SetBoolField(TEXT("daylightCycle"),NativeDaylightCycle);Runtime->SetBoolField(TEXT("creative"),NativeCreative);
@@ -486,9 +564,10 @@ bool ABridgeReceiver::NativeSave() {
     TArray<TSharedPtr<FJsonValue>> Fuses;
     for(const auto& Fuse:NativeFuses) {
         auto Object=MakeShared<FJsonObject>();Object->SetArrayField(TEXT("position"),JsonVector(SourceOrigin+MinecraftDelta(Fuse.Position-Anchor)));
+        Object->SetArrayField(TEXT("velocity"),JsonVector(Fuse.Velocity));
         Object->SetNumberField(TEXT("remainingSeconds"),FMath::Clamp(Fuse.Deadline-GetWorld()->GetTimeSeconds(),0.,4.));Fuses.Add(MakeShared<FJsonValueObject>(Object));
     }
-    Runtime->SetArrayField(TEXT("fuses"),Fuses);
+    Runtime->SetArrayField(TEXT("fuses"),Fuses);Runtime->SetArrayField(TEXT("falling"),SyncedWorld->ExportNativeFalling());
     const bool Started=NativeStore->BeginSave(SyncedWorld,SourceOrigin+MinecraftDelta(Character->GetMinecraftFeetPosition()-Anchor),PC->GetControlRotation(),Runtime);
     return Started;
 }
@@ -566,6 +645,8 @@ void ABridgeReceiver::TickNativeTime(float DeltaSeconds) {
     const double Sun=BridgeSkyMath::DefaultSunDegrees(NativeTimeOfDay);
     const double Day=FMath::Clamp(FMath::Cos(FMath::DegreesToRadians(Sun))*2+.5,0.,1.);
     double Rain=0;LatestInput.VanillaLight->TryGetNumberField(TEXT("rainGradient"),Rain);
+    double Thunder=0;LatestInput.VanillaLight->TryGetNumberField(TEXT("thunderGradient"),Thunder);
+    if(SyncedWorld) SyncedWorld->SetNativeSkyDarkness(FMath::FloorToInt((1-Day*(1-Rain*.3125)*(1-Thunder*.3125))*11));
     const double Sky=FMath::Lerp(.2,1.,Day)*(1-Rain*.3);
     LatestInput.VanillaLight->SetNumberField(TEXT("timeOfDay"),NativeTimeOfDay);
     LatestInput.VanillaLight->SetNumberField(TEXT("worldTime"),NativeWorldTime);

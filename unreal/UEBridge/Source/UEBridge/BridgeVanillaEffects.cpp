@@ -5,6 +5,9 @@
 #include "BridgeCharacter.h"
 #include "BridgeParticleMath.h"
 #include "BridgeProtocol.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -46,6 +49,10 @@ ABridgeVanillaEffects::ABridgeVanillaEffects() {
 void ABridgeVanillaEffects::ConfigurePoof(UBridgeNativeUiPalette* Resources,UMaterialInterface* Material) {
     if(PoofResources==Resources && PoofMaterial==Material && PoofSetupReason==TEXT("ready")) return;
     ClearPoofParticles();PoofResources=Resources;PoofMaterial=Material;
+    SpriteStreams.Empty();TSharedPtr<FJsonObject> FrameData;
+    if(Resources && FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Resources->ParticleFramesData),FrameData) && FrameData.IsValid())
+        for(const auto& Pair:FrameData->Values) {const TArray<TSharedPtr<FJsonValue>>* Frames=nullptr;if(!Pair.Value->TryGetArray(Frames) || Frames->Num()>256) continue;
+            TArray<FString> Keys;for(const auto& Frame:*Frames) {FString Key;if(Frame->TryGetString(Key) && Resources->FindSprite(Key)) Keys.Add(Key);}SpriteStreams.Add(Pair.Key,MoveTemp(Keys));}
     UTexture* DefaultTexture=nullptr;
     if(!IsValid(PoofMaterial)) PoofSetupReason=TEXT("missing_material");
     else if(!PoofMaterial->GetTextureParameterValue(FMaterialParameterInfo(TEXT("PoofTexture")),DefaultTexture) || !IsValid(DefaultTexture)) PoofSetupReason=TEXT("material_parameters");
@@ -157,7 +164,7 @@ UInstancedStaticMeshComponent* ABridgeVanillaEffects::FindPoofGroup(int32 Frame)
     Group->SetStaticMesh(ParticlePlane); Group->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     Group->SetCanEverAffectNavigation(false); Group->SetGenerateOverlapEvents(false); Group->SetCastShadow(false);
     // 0 = grayscale multiplier, 1..3 = captured sky/block/shade light.
-    Group->NumCustomDataFloats=4;
+    Group->NumCustomDataFloats=7;
     auto* Dynamic=UMaterialInstanceDynamic::Create(PoofMaterial,this);
     if(!IsValid(Dynamic)) {Group->DestroyComponent();return nullptr;}
     Dynamic->SetTextureParameterValue(TEXT("PoofTexture"),Texture);
@@ -201,6 +208,7 @@ void ABridgeVanillaEffects::RenderPoof(const FQuat& Facing,float Interpolation) 
         Submitted=Group->SetCustomDataValue(Instance,1,Particle.Light.R,false) && Submitted;
         Submitted=Group->SetCustomDataValue(Instance,2,Particle.Light.G,false) && Submitted;
         Submitted=Group->SetCustomDataValue(Instance,3,Particle.Light.B,false) && Submitted;
+        for(int32 Channel=4;Channel<7;++Channel) Submitted=Group->SetCustomDataValue(Instance,Channel,1,false) && Submitted;
         if(!Submitted) UE_LOG(LogTemp,Warning,TEXT("Bridge death poof: render_submission"));
     }
     for(auto& Entry:PoofGroups) {
@@ -433,14 +441,20 @@ void ABridgeVanillaEffects::Tick(float DeltaSeconds) {
     }
 }
 
+void ABridgeVanillaEffects::SpawnSmoke(const FVector& Position) {
+    if(!PoofResources || NativeParticles.Num()>=2048) return;
+    auto& Particle=NativeParticles.AddDefaulted_GetRef();Particle.Sprite=TEXT("particle/generic_7");Particle.Animation=TEXT("minecraft:smoke");Particle.Position=Position;
+    Particle.Velocity=FVector(FMath::FRandRange(-10.f,10.f),FMath::FRandRange(-10.f,10.f),30);Particle.Tint=FColor(80,80,80);Particle.Size=10;Particle.Lifetime=.6f;
+}
 void ABridgeVanillaEffects::SpawnCombat(const FVector& Position,const FVector& Direction,bool Critical,bool Sweep) {
     if(!PoofResources || !PoofMaterial || NativeParticles.Num()>=2048) return;
     if(Critical) for(int32 I=0;I<32 && NativeParticles.Num()<2048;++I) {
-        auto& Particle=NativeParticles.AddDefaulted_GetRef();Particle.Sprite=TEXT("particle/critical_hit");
+        auto& Particle=NativeParticles.AddDefaulted_GetRef();Particle.Sprite=TEXT("particle/critical_hit");Particle.Animation=TEXT("minecraft:crit");
         const FVector Random=FMath::VRand();Particle.Position=Position+Random*40;Particle.Velocity=Random*180+FVector(0,0,80);
-        Particle.Lifetime=FMath::FRandRange(.2f,.4f);Particle.Size=FMath::FRandRange(8.f,16.f);Particle.Gravity=320;
+        Particle.Lifetime=FMath::Max(1,FMath::FloorToInt(6/(FMath::FRand()*.8f+.6f)))*.05f;Particle.Size=FMath::FRandRange(7.5f,15.f);Particle.Gravity=800;Particle.Critical=true;
+        const uint8 Gray=uint8((FMath::FRand()*.3f+.6f)*255);Particle.Tint=FColor(Gray,Gray,Gray);
     }
-    if(Sweep && NativeParticles.Num()<2048) {auto& Particle=NativeParticles.AddDefaulted_GetRef();Particle.Sprite=TEXT("particle/sweep_0");
+    if(Sweep && NativeParticles.Num()<2048) {auto& Particle=NativeParticles.AddDefaulted_GetRef();Particle.Sprite=TEXT("particle/sweep_0");Particle.Animation=TEXT("minecraft:sweep_attack");
         Particle.Position=Position+Direction.GetSafeNormal2D()*40;Particle.Sweep=true;Particle.Size=150;Particle.Lifetime=.4f;}
 }
 void ABridgeVanillaEffects::TickNativeParticles(float DeltaSeconds) {
@@ -462,7 +476,13 @@ void ABridgeVanillaEffects::TickNativeParticles(float DeltaSeconds) {
         }
     }
     for(auto& Particle:NativeParticles) {
-        Particle.Age+=Dt;if(Particle.Sweep) {Particle.Sprite=TEXT("particle/sweep_")+FString::FromInt(FMath::Clamp(int32(Particle.Age*20),0,7));continue;}
+        Particle.Age+=Dt;
+        if(const auto* Frames=SpriteStreams.Find(Particle.Animation);Frames && !Frames->IsEmpty()) Particle.Sprite=(*Frames)[FMath::Clamp(int32(Particle.Age/FMath::Max(.05f,Particle.Lifetime)*Frames->Num()),0,Frames->Num()-1)];
+        else if(Particle.Animation==TEXT("minecraft:smoke")) Particle.Sprite=TEXT("particle/generic_")+FString::FromInt(7-FMath::Clamp(int32(Particle.Age/FMath::Max(.05f,Particle.Lifetime)*8),0,7));
+        if(Particle.Sweep) {if(!SpriteStreams.Contains(Particle.Animation)) Particle.Sprite=TEXT("particle/sweep_")+FString::FromInt(FMath::Clamp(int32(Particle.Age*20),0,7));continue;}
+        if(Particle.Critical) {
+            Particle.Clock+=Dt;while(Particle.Clock>=.05f) {Particle.Clock-=.05f;Particle.Velocity.Z-=40;Particle.Position+=Particle.Velocity*.05f;Particle.Velocity*=.7f;}continue;
+        }
         Particle.Velocity.Z-=Particle.Gravity*Dt;
         FVector Delta=Particle.Velocity*Dt;
         if(Particle.Leaf) {Delta.X+=FMath::Sin(Particle.Age*2+Particle.Spin)*20*Dt;Delta.Y+=FMath::Cos(Particle.Age*1.7f+Particle.Spin)*20*Dt;}
@@ -476,18 +496,22 @@ void ABridgeVanillaEffects::TickNativeParticles(float DeltaSeconds) {
     TMap<FString,int32> Counts;
     for(const auto& Particle:NativeParticles) {
         UTexture2D* Texture=PoofResources->FindSprite(Particle.Sprite);if(!Texture) continue;
-        const FString Key=Particle.Sprite+FString::Printf(TEXT("#%u"),Particle.Tint.ToPackedARGB());if(!NativeGroups.Contains(Key) && NativeGroups.Num()>=128) continue;auto& Group=NativeGroups.FindOrAdd(Key);
+        const FString Key=Particle.Sprite;if(!NativeGroups.Contains(Key) && NativeGroups.Num()>=128) continue;auto& Group=NativeGroups.FindOrAdd(Key);
         if(!Group && NativeGroups.Num()<=128) {
             Group=NewObject<UInstancedStaticMeshComponent>(this);Group->SetupAttachment(RootComponent);Group->SetMobility(EComponentMobility::Movable);Group->SetStaticMesh(ParticlePlane);
-            Group->SetCollisionEnabled(ECollisionEnabled::NoCollision);Group->SetCastShadow(false);Group->SetCanEverAffectNavigation(false);Group->NumCustomDataFloats=4;
+            Group->SetCollisionEnabled(ECollisionEnabled::NoCollision);Group->SetCastShadow(false);Group->SetCanEverAffectNavigation(false);Group->NumCustomDataFloats=7;
             auto* Material=UMaterialInstanceDynamic::Create(PoofMaterial,this);Material->SetTextureParameterValue(TEXT("PoofTexture"),Texture);
-            Material->SetVectorParameterValue(TEXT("PoofColor"),FLinearColor(Particle.Tint.R/255.f,Particle.Tint.G/255.f,Particle.Tint.B/255.f,1));Group->SetMaterial(0,Material);Group->RegisterComponent();
+            Material->SetVectorParameterValue(TEXT("PoofColor"),FLinearColor::White);Group->SetMaterial(0,Material);Group->RegisterComponent();
         }
         if(!Group) continue;const int32 Index=Counts.FindOrAdd(Key)++;
         const FQuat Rotation=Particle.Leaf ? Facing*FQuat(FVector::UpVector,Particle.Spin+Particle.Age) : Facing;
         const FTransform Transform(Rotation,Particle.Position,FVector(Particle.Size*.01f));
         if(Index<Group->GetInstanceCount()) Group->UpdateInstanceTransform(Index,Transform,true,false,true);else Group->AddInstance(Transform,true);
         FLinearColor Light=SampleLight ? SafeLight(SampleLight(Particle.Position)) : FLinearColor(1,0,1,1);
+        const int32 AgeTicks=FMath::FloorToInt(Particle.Age*20);
+        Group->SetCustomDataValue(Index,4,Particle.Tint.R/255.f,false);
+        Group->SetCustomDataValue(Index,5,Particle.Tint.G/255.f*(Particle.Critical ? FMath::Pow(.96f,AgeTicks+1) : 1.f),false);
+        Group->SetCustomDataValue(Index,6,Particle.Tint.B/255.f*(Particle.Critical ? FMath::Pow(.9f,AgeTicks+1) : 1.f),false);
         Group->SetCustomDataValue(Index,0,1,false);Group->SetCustomDataValue(Index,1,Light.R,false);Group->SetCustomDataValue(Index,2,Light.G,false);Group->SetCustomDataValue(Index,3,Light.B,false);
     }
     for(auto It=NativeGroups.CreateIterator();It;++It) {

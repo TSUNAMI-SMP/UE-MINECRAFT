@@ -52,6 +52,7 @@ private:
     int32 VertexCount=0;
     float NativeViewPitch=0;
     double LastFullHit=-100,DeathStarted=-1,KnockbackUntil=-1;
+    int64 LastImpulseTick=-1;bool ImpulseGrounded=false;
     float PreviousDamage=0,HurtRemaining=0,GroundSpeed=0;
     FVector DeathRootPosition=FVector::ZeroVector;
     void Animate(float DeltaSeconds);

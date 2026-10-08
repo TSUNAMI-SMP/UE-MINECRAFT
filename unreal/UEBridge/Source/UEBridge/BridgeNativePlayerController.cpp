@@ -31,6 +31,10 @@ void ABridgeNativePlayerController::BeginPlay() {
     NativeInventory=NewObject<UBridgeNativeInventory>(this);
     FindReceiver();
     InitializeNativeInventory();
+    if(NativeInventory && bInventoryInitialized && !bSavedInventoryRejected) {
+        if(!GetWorld()->IsPaused()) NativeInventory->TickStations(DeltaSeconds);
+        NativeInventory->TickAutosave(FPlatformTime::Seconds());
+    }
 }
 void ABridgeNativePlayerController::EndPlay(const EEndPlayReason::Type Reason) {
     if(NativeInventory && bInventoryInitialized) NativeInventory->SaveProfile();
@@ -222,7 +226,9 @@ void ABridgeNativePlayerController::StopNativeInput() {
         NativeReceiver->SetNativeInput(0,0,false,false,false,bFlying,NativePerspective,float(NativeLookYaw),float(NativeLookPitch));
     if(auto* BridgePawn=Cast<ABridgeCharacter>(GetPawn())) {
         BridgePawn->StopJumping();
-        if(bInventoryOpen || bPauseOpen || bChatOpen || !Focused()) BridgePawn->GetCharacterMovement()->StopMovementImmediately();
+        // A container stops controls, not simulation. Clearing velocity every
+        // frame erased gravity and knockback while a menu was open.
+        BridgePawn->ConsumeMovementInputVector();
     }
 }
 void ABridgeNativePlayerController::SetMenuInput() {
@@ -239,10 +245,14 @@ void ABridgeNativePlayerController::SetMenuInput() {
     PreviousJumpTap=PreviousForwardTap=-1;bDoubleSprint=false;
     float UnusedX=0,UnusedY=0;GetInputMouseDelta(UnusedX,UnusedY);
 }
+bool ABridgeNativePlayerController::OpenNativeStation(const FString& Kind,const FString& Key) {
+    if(!NativeInventory || bPauseOpen || !NativeInventory->OpenStation(Kind,Key)) return false;
+    bInventoryOpen=true;StopNativeInput();SetMenuInput();return true;
+}
 void ABridgeNativePlayerController::ToggleInventory() {
     if(!IsValid(NativeReceiver) || !NativeReceiver->NativePlayActive || bPauseOpen) return;
     bInventoryOpen=!bInventoryOpen;
-    if(!bInventoryOpen && NativeInventory) {NativeInventory->ReturnCursor();NativeInventory->SaveProfile();}
+    if(!bInventoryOpen && NativeInventory) {NativeInventory->CloseStation();NativeInventory->ReturnCursor();NativeInventory->SaveProfile();}
     StopNativeInput();SetMenuInput();
 }
 void ABridgeNativePlayerController::TogglePause() {
@@ -371,7 +381,6 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
     // Saving remains guarded by the receiver's valid-inventory check.
     if(bPauseOpen) {RouteMenuInput();StopNativeInput();return;}
     if(bSavedInventoryRejected) {NativeInputStatus=InventoryRestoreError;StopNativeInput();return;}
-    if(NativeInventory && bInventoryInitialized) NativeInventory->TickAutosave(FPlatformTime::Seconds());
     const auto* NativeHud=Cast<ABridgeNativeHUD>(GetHUD());
     if(Pressed(TEXT("key.inventory")) && (!NativeHud || !NativeHud->HasSearchFocus())) {ToggleInventory();return;}
     if(bInventoryOpen || bPauseOpen || bChatOpen) {RouteMenuInput();StopNativeInput();UpdateSelectedItem();return;}

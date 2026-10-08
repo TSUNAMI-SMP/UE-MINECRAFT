@@ -29,9 +29,11 @@ public class TextureExportTest {
     private TextureExport.Block grass() { return new TextureExport.Block("minecraft:grass_block",Map.of("snowy","false")); }
     @Test public void fluidExportPreservesAnimationAlphaAndLevelSurface() throws Exception {
         var map=resources();var image=new BufferedImage(2,4,BufferedImage.TYPE_INT_ARGB);
-        for(int y=0;y<4;y++) for(int x=0;x<2;x++) image.setRGB(x,y,y<2 ? 0xffff0000 : 0xff0000ff);
+        for(int y=0;y<4;y++) for(int x=0;x<2;x++) image.setRGB(x,y,y<2 ? 0xb4ff0000 : 0xb40000ff);
         var bytes=new ByteArrayOutputStream();ImageIO.write(image,"png",bytes);
         map.put("minecraft:textures/block/water_still.png",bytes.toByteArray());
+        map.put("minecraft:textures/block/water_flow.png",bytes.toByteArray());
+        put(map,"minecraft:textures/block/water_flow.png.mcmeta","{\"animation\":{\"frametime\":3}}");
         put(map,"minecraft:textures/block/water_still.png.mcmeta","{\"animation\":{\"frametime\":3}}");
         var props=Map.of("level","5");var exporter=make(map);
         assertTrue(exporter.export(new TextureExport.Block("minecraft:water",props,0x3f76e4,List.of(new TextureExport.State(props,List.of(),List.of())),"")));
@@ -39,9 +41,13 @@ public class TextureExportTest {
         var metadata=json.getAsJsonObject("textures").getAsJsonObject("minecraft:block/water_still");
         assertEquals(2,metadata.get("animationFrames").getAsInt());assertEquals(3,metadata.get("animationFrameTime").getAsInt());assertEquals("translucent",metadata.get("alphaMode").getAsString());
         var png=ImageIO.read(manifest.getParent().resolve(metadata.get("file").getAsString()).toFile());
-        assertEquals(4,png.getHeight());assertEquals(0xb0ff0000,png.getRGB(0,0));assertEquals(0xb00000ff,png.getRGB(0,2));
+        assertEquals(4,png.getHeight());assertEquals(0xb4ff0000,png.getRGB(0,0));assertEquals(0xb40000ff,png.getRGB(0,2));
         var model=json.getAsJsonObject("models").entrySet().iterator().next().getValue().getAsJsonObject();
         assertEquals(16./3,model.getAsJsonArray("elements").get(0).getAsJsonObject().getAsJsonArray("to").get(1).getAsDouble(),1e-9);
+        var fluidFaces=model.getAsJsonArray("elements").get(0).getAsJsonObject().getAsJsonObject("faces");
+        assertEquals("minecraft:block/water_still",fluidFaces.getAsJsonObject("up").get("texture").getAsString());
+        assertEquals("minecraft:block/water_flow",fluidFaces.getAsJsonObject("north").get("texture").getAsString());
+        assertEquals(8,fluidFaces.getAsJsonObject("north").getAsJsonArray("uv").get(2).getAsInt());
         assertEquals("level=5",json.getAsJsonObject("blocks").getAsJsonObject("minecraft:water").get("defaultState").getAsString());
     }
     @Test public void missingDedicatedBlockModelRetainsPhysicalStatesForItemFallback() throws Exception {
@@ -125,15 +131,16 @@ public class TextureExportTest {
         var exporter=new TextureExport(name->{throw new IOException("Resource pack closed");},temp.getRoot().toPath().resolve("io-failure"));
         try { exporter.export(grass()); fail(); } catch(IOException expected) { assertEquals("Resource pack closed",expected.getMessage()); }
     }
-    @Test public void snapshotsAnimatedTextureFirstFrame() throws Exception {
+    @Test public void preservesNonFluidTextureAnimation() throws Exception {
         var map=resources(); var image=new BufferedImage(2,4,BufferedImage.TYPE_INT_ARGB); image.setRGB(0,0,0xffff0000); image.setRGB(0,2,0xff0000ff);
         var bytes=new ByteArrayOutputStream(); ImageIO.write(image,"png",bytes);
         map.put("minecraft:textures/block/grass_top.png",bytes.toByteArray());
         put(map,"minecraft:textures/block/grass_top.png.mcmeta","{\"animation\":{}}");
         var exporter=make(map); assertTrue(exporter.export(grass())); var manifest=exporter.finish();
         var entry=JsonParser.parseString(Files.readString(manifest)).getAsJsonObject().getAsJsonObject("textures").getAsJsonObject("minecraft:block/grass_top");
-        assertEquals(2,entry.get("height").getAsInt()); var png=ImageIO.read(manifest.getParent().resolve(entry.get("file").getAsString()).toFile());
+        assertEquals(4,entry.get("height").getAsInt());assertEquals(2,entry.get("animationFrames").getAsInt()); var png=ImageIO.read(manifest.getParent().resolve(entry.get("file").getAsString()).toFile());
         assertEquals(0xffff0000,png.getRGB(0,0));
+        assertEquals(0xff0000ff,png.getRGB(0,2));
     }
     @Test public void exportsInheritedParticleSpriteAndVanillaGrassTintException() throws Exception {
         var map=resources();

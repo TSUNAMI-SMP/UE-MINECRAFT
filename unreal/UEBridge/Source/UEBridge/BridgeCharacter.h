@@ -36,6 +36,8 @@ public:
     void SwingHand() { if(SwingRemaining<=.15f) SwingRemaining=.30f; }
     void ApplyFlight(bool Creative,bool Flying);
     void ConfigureOutline(class UMaterialInterface* Material);
+    /** First-person primitives use an independent depth buffer, as the vanilla hand pass. */
+    void GetNativeHandComponents(TArray<class UPrimitiveComponent*>& Out) const;
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Diagnostics") bool BridgeFlying=false;
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Diagnostics") FString HeldModelStatus=TEXT("empty");
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Diagnostics") FString OffhandModelStatus=TEXT("empty");
@@ -66,6 +68,9 @@ private:
     UPROPERTY() TObjectPtr<class USceneComponent> AvatarRoot;
     UPROPERTY() TArray<TObjectPtr<class UProceduralMeshComponent>> AvatarParts;
     UPROPERTY() TArray<TObjectPtr<class UProceduralMeshComponent>> AvatarLayers;
+    UPROPERTY() TArray<TObjectPtr<class UProceduralMeshComponent>> ArmorParts;
+    FString ArmorSignature;
+    void UpdateNativeEquipment();
     UPROPERTY() TObjectPtr<class UProceduralMeshComponent> SkinArm;
     UPROPERTY() TObjectPtr<class UProceduralMeshComponent> SkinSleeve;
     UPROPERTY() TObjectPtr<class UProceduralMeshComponent> ProjectedSleeve;

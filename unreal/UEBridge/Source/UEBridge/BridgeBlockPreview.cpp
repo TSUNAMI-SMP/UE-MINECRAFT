@@ -101,6 +101,16 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
                     if(BlockStateAt(Block.SourceBlock+Face.CullOffset,Neighbor,NeighborState) && Same(Neighbor,NeighborState)) continue;
                     auto Height=[&](const FIntVector& Voxel) {FString Id,State;if(!BlockStateAt(Voxel,Id,State)) return 0.;if(!Same(Id,State)) return -1.;
                         const int32 At=State.Find(TEXT("level="));const int32 Level=At<0 ? 0 : FCString::Atoi(*State.Mid(At+6));return (8-(Level>=8 ? 0 : Level))/9.;};
+                    if(Face.CullOffset.Y==1) {
+                        const double West=FMath::Max(0.,Height(Block.SourceBlock+FIntVector(-1,0,0))),East=FMath::Max(0.,Height(Block.SourceBlock+FIntVector(1,0,0)));
+                        const double North=FMath::Max(0.,Height(Block.SourceBlock+FIntVector(0,0,-1))),South=FMath::Max(0.,Height(Block.SourceBlock+FIntVector(0,0,1)));
+                        if(FMath::Abs(West-East)+FMath::Abs(North-South)>.00001) {
+                            Face.TextureId.ReplaceInline(TEXT("_still"),TEXT("_flow"));const double Angle=FMath::Atan2(North-South,West-East)-PI/2;
+                            for(int32 I=0;I<4;++I) {const auto& Vertex=Face.Vertices[I];const double X=Vertex.X-.5,Z=Vertex.Z-.5;
+                                Face.UV[I]=FVector2D(.5+(X*FMath::Cos(Angle)-Z*FMath::Sin(Angle))*.5,.5+(X*FMath::Sin(Angle)+Z*FMath::Cos(Angle))*.5);
+                            }
+                        }
+                    }
                     for(auto& Vertex:Face.Vertices) if(Vertex.Y>.001) {
                         const int32 X=Vertex.X<.5 ? -1 : 1,Z=Vertex.Z<.5 ? -1 : 1;
                         const std::array<FIntVector,4> Samples{Block.SourceBlock,Block.SourceBlock+FIntVector(X,0,0),Block.SourceBlock+FIntVector(0,0,Z),Block.SourceBlock+FIntVector(X,0,Z)};
@@ -108,6 +118,8 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
                         for(int32 I=0;I<4;++I) {Heights[I]=Height(Samples[I]);FString Id,State;Above|=BlockStateAt(Samples[I]+FIntVector(0,1,0),Id,State) && Same(Id,State);}
                         Vertex.Y=BridgeFluidMath::corner(Heights,Above);
                     }
+                    if(Face.CullOffset.Y==0) for(int32 I=0;I<4;++I) Face.UV[I].Y=Face.Vertices[I].Y>.001 ? (1-Face.Vertices[I].Y)*.5 : .5;
+
                 }
                 const bool OffsetZero=Palette->GetModelOffset(Block.BlockId,Block.SourceBlock).IsNearlyZero();
                 if(OpaqueAt && BridgeMeshingMath::CullNativeFace({Face.CullOffset.X,Face.CullOffset.Y,Face.CullOffset.Z},OpaqueAt(Block.SourceBlock+Face.CullOffset),OffsetZero)) continue;
@@ -207,4 +219,11 @@ void ABridgeBlockPreview::Relight(FBridgeLightingService* Lighting) {
 }
 bool ABridgeBlockPreview::ResolveHit(const UPrimitiveComponent* Component,int32 Instance,FBridgeBlock& Out) const {
     const auto* Blocks=InstanceBlocks.Find(Component);if(!Blocks || !Blocks->IsValidIndex(Instance)) return false;Out=(*Blocks)[Instance];return true;
+}
+
+void ABridgeBlockPreview::SetNativeFlash(bool Flash) {
+    for(const auto& Group:ModelGroups) if(Group) for(int32 I=0;I<Group->GetNumMaterials();++I) {
+        auto* Material=Cast<UMaterialInstanceDynamic>(Group->GetMaterial(I));if(!Material) Material=Group->CreateDynamicMaterialInstance(I);
+        if(Material) {Material->SetVectorParameterValue(TEXT("BridgeHurtColor"),FLinearColor::White);Material->SetScalarParameterValue(TEXT("BridgeHurt"),Flash ? 192.f/77.f : 0);}
+    }
 }

@@ -86,6 +86,8 @@ def load_ui_manifest(filename):
             for field, upper in (("armor", 1024), ("armorToughness", 1024), ("armorKnockbackResistance", 1)):
                 if not _finite(item.get(field, 0), 0, upper):
                     raise ValueError("Invalid native UI equipment attributes")
+        if "glint" in item and type(item["glint"]) is not bool: raise ValueError("Invalid native item glint flag")
+        if "armorSprite" in item and item["armorSprite"] not in sprites: raise ValueError("Missing native armor sprite")
         for field in ("block", "modelKey", "spawnType"):
             value = item.get(field, "")
             if not isinstance(value, str) or len(value) > 512 or ".." in value:
@@ -126,6 +128,13 @@ def load_ui_manifest(filename):
     if not isinstance(poof, list) or len(poof) > 256 or any(not isinstance(key, str) or key not in sprites for key in poof):
         raise ValueError("Invalid native UI death poof sprite frames")
     manifest["deathPoofFrames"] = poof
+    particle_frames=manifest.get("particleFrames",{})
+    if not isinstance(particle_frames,dict) or len(particle_frames)>256:
+        raise ValueError("Invalid native particle frame registry")
+    for key,frames in particle_frames.items():
+        if not RESOURCE_ID.fullmatch(key) or not isinstance(frames,list) or len(frames)>256 or any(not isinstance(frame,str) or frame not in sprites for frame in frames):
+            raise ValueError("Invalid native particle frames")
+    manifest["particleFrames"]=particle_frames
     font = manifest.get("font")
     if font is not None:
         _asset_source(path.parent, font, budget)
@@ -147,6 +156,63 @@ def load_ui_manifest(filename):
             for key in ("drawWidth", "drawHeight", "ascent"):
                 if key in glyph and not _finite(glyph[key], -256 if key == "ascent" else 0, 256):
                     raise ValueError("Invalid native UI glyph draw metrics")
+    gameplay = manifest.get("gameplay", {})
+    if not isinstance(gameplay, dict) or (gameplay and (type(gameplay.get("version")) is not int or gameplay["version"] != 1)):
+        raise ValueError("Invalid native gameplay version")
+    if "randomTickSpeed" in gameplay and (type(gameplay["randomTickSpeed"]) is not int or not 0<=gameplay["randomTickSpeed"]<=4096):
+        raise ValueError("Invalid native random tick speed")
+    if "tickRate" in gameplay and (type(gameplay["tickRate"]) is not int or gameplay["tickRate"]!=20):
+        raise ValueError("Invalid native simulation tick rate")
+    recipes = gameplay.get("recipes", [])
+    if not isinstance(recipes, list) or len(recipes) > 32768:
+        raise ValueError("Invalid native recipe registry")
+    recipe_ids = set()
+    for recipe in recipes:
+        if not isinstance(recipe, dict) or not RESOURCE_ID.fullmatch(str(recipe.get("id", ""))) or recipe["id"] in recipe_ids or not RESOURCE_ID.fullmatch(str(recipe.get("type", ""))):
+            raise ValueError("Invalid/duplicate native recipe")
+        recipe_ids.add(recipe["id"])
+        ingredients = recipe.get("ingredients", [])
+        if not isinstance(ingredients, list) or len(ingredients) > 9 or any(not isinstance(values, list) or len(values) > 8192 or any(not isinstance(item, str) or not RESOURCE_ID.fullmatch(item) for item in values) for values in ingredients):
+            raise ValueError("Invalid native recipe ingredients")
+        if "result" in recipe and (not RESOURCE_ID.fullmatch(str(recipe["result"])) or type(recipe.get("count")) is not int or not 1 <= recipe["count"] <= 99):
+            raise ValueError("Invalid native recipe result")
+        for field in ("width", "height"):
+            if field in recipe and (type(recipe[field]) is not int or not 1 <= recipe[field] <= 3):
+                raise ValueError("Invalid native recipe dimensions")
+        if "ticks" in recipe and (type(recipe["ticks"]) is not int or not 1 <= recipe["ticks"] <= 1000000):
+            raise ValueError("Invalid native recipe cooking time")
+        if "result" in recipe:
+            if recipe["type"]=="minecraft:crafting_shaped" and (recipe.get("width",0)*recipe.get("height",0)!=len(ingredients) or not ingredients):
+                raise ValueError("Invalid native shaped recipe grid")
+            if recipe["type"]=="minecraft:crafting_shapeless" and not ingredients:
+                raise ValueError("Invalid native shapeless recipe grid")
+            if recipe["type"] in ("minecraft:smelting","minecraft:blasting","minecraft:smoking","minecraft:campfire_cooking","minecraft:stonecutting") and len(ingredients)!=1:
+                raise ValueError("Invalid native single recipe input")
+    for field in ("fuels", "remainders"):
+        table = gameplay.get(field, {})
+        if not isinstance(table, dict) or len(table) > 8192 or any(not RESOURCE_ID.fullmatch(str(item)) for item in table):
+            raise ValueError("Invalid native gameplay table")
+        for value in table.values():
+            if field == "fuels" and (type(value) is not int or not 1 <= value <= 1000000) or field == "remainders" and (not isinstance(value, str) or not RESOURCE_ID.fullmatch(value)):
+                raise ValueError("Invalid native fuel/remainder")
+    containers = gameplay.get("containers", [])
+    if not isinstance(containers, list) or len(containers) > 4096: raise ValueError("Invalid native source containers")
+    container_keys=set()
+    for container in containers:
+        if not isinstance(container, dict) or not isinstance(container.get("key"), str) or not re.fullmatch(r"-?[0-9]{1,8},-?[0-9]{1,8},-?[0-9]{1,8}", container["key"]) or container["key"] in container_keys or container.get("kind") not in ("chest", "furnace", "blast_furnace", "smoker", "hopper", "dropper", "dispenser"):
+            raise ValueError("Invalid/duplicate native container")
+        container_keys.add(container["key"])
+        if any(abs(int(value))>30000000 for value in container["key"].split(',')):
+            raise ValueError("Native container outside world bounds")
+        slots=container.get("slots")
+        sizes={"chest":27,"hopper":5,"dropper":9,"dispenser":9}
+        if not isinstance(slots, list) or len(slots)!=sizes.get(container["kind"],3): raise ValueError("Invalid native container slots")
+        for stack in slots:
+            if not isinstance(stack, dict) or type(stack.get("count")) is not int or not 0<=stack["count"]<=99 or not isinstance(stack.get("item"), str) or (stack["count"]>0 and not RESOURCE_ID.fullmatch(stack["item"])) or (stack["count"]==0 and stack["item"]):
+                raise ValueError("Invalid native container stack")
+        for field in ("burn", "burnTotal", "cook"):
+            if type(container.get(field)) is not int or not 0<=container[field]<=1000000: raise ValueError("Invalid native source cooking state")
+    manifest["gameplay"] = gameplay
     manifest["sourceManifest"] = str(path)
     return manifest
 
@@ -210,7 +276,7 @@ def import_minecraft_ui(filename):
             advance(source["id"])
             icon = dict(source, file=source["icon"])
             entry = item_class()
-            for field, value in dict(item_id=source["id"], display_name=source["name"], icon=texture_for("item_" + source["id"], icon), max_count=source["maxCount"], equipment_slot=source.get("equipmentSlot", 0), armor=source.get("armor", 0), armor_toughness=source.get("armorToughness", 0), armor_knockback_resistance=source.get("armorKnockbackResistance", 0), attack_damage=source.get("attackDamage", 1), attack_speed=source.get("attackSpeed", 0), block_id=source.get("block", ""), model_key=source.get("modelKey", ""), spawn_type=source.get("spawnType", "")).items():
+            for field, value in dict(item_id=source["id"], display_name=source["name"], icon=texture_for("item_" + source["id"], icon), max_count=source["maxCount"], glint=source.get("glint", False), armor_sprite=source.get("armorSprite", ""), equipment_slot=source.get("equipmentSlot", 0), armor=source.get("armor", 0), armor_toughness=source.get("armorToughness", 0), armor_knockback_resistance=source.get("armorKnockbackResistance", 0), attack_damage=source.get("attackDamage", 1), attack_speed=source.get("attackSpeed", 0), block_id=source.get("block", ""), model_key=source.get("modelKey", ""), spawn_type=source.get("spawnType", "")).items():
                 entry.set_editor_property(field, value)
             items.append(entry)
         font_texture, glyphs = None, []
@@ -243,7 +309,9 @@ def import_minecraft_ui(filename):
         palette = tools.create_asset(name, root, palette_class, factory)
     if not isinstance(palette, palette_class):
         raise RuntimeError("Cannot create Minecraft native UI palette")
-    for field, value in dict(sprites=sprites, items=items, groups=groups, death_poof_frames=[sprites[key] for key in manifest["deathPoofFrames"]], font_atlas=font_texture, glyphs=glyphs, language=manifest.get("language", ""), export_id=manifest.get("exportId", digest[:20])).items():
+    from import_minecraft_textures import _lighting_functions
+    glint_material=_lighting_functions(unreal)["ensure_native_icon_glint_material"](unreal,assets,unreal.MaterialEditingLibrary)
+    for field, value in dict(icon_glint_material=glint_material, particle_frames_data=json.dumps(manifest["particleFrames"], separators=(",", ":")), gameplay_data=json.dumps(manifest["gameplay"], ensure_ascii=False, separators=(",", ":")), sprites=sprites, items=items, groups=groups, death_poof_frames=[sprites[key] for key in manifest["deathPoofFrames"]], font_atlas=font_texture, glyphs=glyphs, language=manifest.get("language", ""), export_id=manifest.get("exportId", digest[:20])).items():
         palette.set_editor_property(field, value)
     if not assets.save_loaded_asset(palette, False):
         raise RuntimeError("Cannot save Minecraft native UI palette")

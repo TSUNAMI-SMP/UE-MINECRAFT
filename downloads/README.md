@@ -1,5 +1,7 @@
 # ダウンロード
 
+**UE単独の描画・クラフト・基本回路更新0.17.0：** [MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.17.0.jar) / [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.17.0.zip) / [一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UE-Minecraft-MVP-0.17.0.zip) / [更新手順と対応範囲](../docs/UPGRADE_0.17.0.md)。MOD交換・新しいnative export・UE再ビルド・再取り込みが必要です。Minecraftはプレイ中に不要。全特殊機能・バニラ完全一致は未完成で、Windows UE実ビルド・描画は未検証です。
+
 **地形読み込みのクラッシュ修正0.16.2：** [修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.16.2.zip) / [適用手順](../docs/UPGRADE_0.16.2.md)。液体などの裏面追加時のTArray自己参照Assertionを修正。0.16.1も含みます。MODは0.16.0のまま、UEだけを再ビルドしてください。修正後のWindows実起動は未検証です。
 
 **0.16.0のUEビルド修正0.16.1：** [修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.16.1.zip) / [適用手順](../docs/UPGRADE_0.16.1.md)。ヘッダー・変数名・流体の共通関数・配列APIによるビルド停止を修正。MODは0.16.0のまま、今回の書き出しを使用してUEを再ビルドします。修正後のWindowsビルドは未検証です。

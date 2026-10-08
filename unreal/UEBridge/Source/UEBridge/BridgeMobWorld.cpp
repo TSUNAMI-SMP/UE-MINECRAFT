@@ -243,7 +243,7 @@ void ABridgeMobWorld::HitPlayer(float Damage,const FVector& Location,bool Knockb
     const float Applied=Inventory && UseArmor ? float(BridgeCombatMath::armorDamage(Accepted,Inventory->GetArmorPoints(),Inventory->GetArmorToughness())) : Accepted;
     PlayerHealth=FMath::Max(0.f,PlayerHealth-Applied);
     if(Full && Knockback && Player.IsValid()) {
-        const FVector Old=Player->GetVelocity();FVector Away=Player->GetActorLocation()-Location;
+        FVector Old=Player->GetVelocity();if(Player->GetCharacterMovement()->IsMovingOnGround() && FMath::IsNearlyZero(Old.Z)) Old.Z=BridgeCombatMath::groundedVerticalVelocity(Old.Z);FVector Away=Player->GetActorLocation()-Location;
         while(Away.SizeSquared2D()<.1) Away=FVector(FMath::FRand()-FMath::FRand(),FMath::FRand()-FMath::FRand(),0);
         const auto Velocity=BridgeCombatMath::knockbackVelocity({Old.X,Old.Y,Old.Z},.4,Inventory ? Inventory->GetArmorKnockbackResistance() : 0,Away.X,Away.Y,Player->GetCharacterMovement()->IsMovingOnGround());
         Player->LaunchCharacter(FVector(Velocity.x,Velocity.y,Velocity.z),true,true);

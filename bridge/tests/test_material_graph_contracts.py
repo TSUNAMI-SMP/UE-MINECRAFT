@@ -100,7 +100,10 @@ class MaterialGraphContracts(unittest.TestCase):
         self.assertEqual('Multiply',type(shade_product).__name__)
         self.assertEqual(dict(r=False,g=False,b=True,a=False),shade_product.inputs['B'][0].properties)
         self.assertEqual('Custom',type(shade_product.inputs['A'][0]).__name__)
-        final_decode=material.outputs['emissive'][0].inputs['B'][0]
+        glint=material.outputs['emissive'][0].inputs['B'][0]
+        self.assertEqual(0.0,glint.inputs['Enabled'][0].properties['default_value'])
+        self.assertEqual('BridgeGlintTexture',glint.inputs['Glint'][0].properties['parameter_name'])
+        final_decode=glint.inputs['Pixel'][0]
         display_product=final_decode.inputs['Color'][0]
         self.assertIs(hurt,display_product.inputs['A'][0])
         lightmap=display_product.inputs['B'][0]

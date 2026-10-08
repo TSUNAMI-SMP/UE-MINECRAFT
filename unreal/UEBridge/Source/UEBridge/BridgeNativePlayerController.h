@@ -38,6 +38,7 @@ public:
     int32 GetNativeAttackIndicator() const {return AttackIndicator;}
     void SetNativeSensitivity(float Value);
     void CycleNativePerspective();
+    bool OpenNativeStation(const FString& Kind,const FString& Key);
     void SetNativeChatOpen(bool Open);
     bool IsNativeChatOpen() const {return bChatOpen;}
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Native") int32 NativePerspective=0;

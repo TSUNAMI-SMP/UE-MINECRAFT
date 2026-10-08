@@ -12,9 +12,11 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstance.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Misc/ScopeExit.h"
 #include "Styling/CoreStyle.h"
 #include "Widgets/Input/SEditableTextBox.h"
+#include "Widgets/Input/SEditableText.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/SOverlay.h"
 #include "Widgets/SViewport.h"
@@ -55,6 +57,7 @@ void ABridgeNativeHUD::Sprite(const FString& Key, float X, float Y, float W, flo
         // Container PNGs include unused atlas space and widgets. Draw the panel
         // region at its native pixel size instead of shrinking the entire atlas.
         const bool Container=Key==TEXT("container/inventory") || Key==TEXT("container/creative_inventory/tab_items") || Key==TEXT("container/creative_inventory/tab_inventory") || Key==TEXT("container/creative_inventory/tab_item_search")
+            || Key==TEXT("container/crafting_table") || Key==TEXT("container/furnace") || Key==TEXT("container/blast_furnace") || Key==TEXT("container/smoker") || Key==TEXT("container/stonecutter") || Key==TEXT("container/hopper") || Key==TEXT("container/dispenser")
             || (Resources && Resources->Groups.ContainsByPredicate([&](const FBridgeNativeUiGroup& Group) {return Group.Texture==Key;}));
         const float U=Container ? FMath::Min(1.f,W/256.f) : 1.f;
         const float V=Container ? FMath::Min(1.f,H/256.f) : 1.f;
@@ -105,7 +108,10 @@ void ABridgeNativeHUD::Text(const FString& Value, float X, float Y, FLinearColor
 void ABridgeNativeHUD::Item(const FString& ItemId, int32 Count, float X, float Y) {
     if (ItemId.IsEmpty() || Count <= 0) return;
     const auto* Entry = Resources ? Resources->FindItem(ItemId) : nullptr;
-    if (Entry && Entry->Icon) DrawTexture(Entry->Icon, X * GuiScale, Y * GuiScale, 16 * GuiScale, 16 * GuiScale, 0, 0, 1, 1, FLinearColor::White, BLEND_Translucent);
+    if(Entry && Entry->Icon && Entry->Glint && Resources->IconGlintMaterial && Resources->FindSprite(TEXT("misc/enchanted_glint_item"))) {
+        auto& Material=IconGlints.FindOrAdd(ItemId);if(!Material) {Material=UMaterialInstanceDynamic::Create(Resources->IconGlintMaterial,this);Material->SetTextureParameterValue(TEXT("NativeIconTexture"),Entry->Icon);Material->SetTextureParameterValue(TEXT("NativeGlintTexture"),Resources->FindSprite(TEXT("misc/enchanted_glint_item")));}
+        DrawMaterialSimple(Material,X*GuiScale,Y*GuiScale,16*GuiScale,16*GuiScale);
+    } else if (Entry && Entry->Icon) DrawTexture(Entry->Icon, X * GuiScale, Y * GuiScale, 16 * GuiScale, 16 * GuiScale, 0, 0, 1, 1, FLinearColor::White, BLEND_Translucent);
     else { Solid(X + 2, Y + 2, 12, 12, FLinearColor(.65f, .15f, .65f)); Text(TEXT("?"), X + 5, Y + 4); }
     if (Count > 1) { const FString Value = FString::FromInt(Count); Text(Value, X + 17 - TextWidth(Value), Y + 9); }
 }
@@ -191,15 +197,28 @@ void ABridgeNativeHUD::DrawPlayerPreview(float X, float Y, float Scale) {
     Piece(44, 20, Receiver->PlayerAppearance->IsSlim ? 3 : 4, 12, 8 - Arm, 16, Arm, 24);
     Piece(36, 52, Receiver->PlayerAppearance->IsSlim ? 3 : 4, 12, 24, 16, Arm, 24);
     Piece(4, 20, 4, 12, 8, 40, 8, 24); Piece(20, 52, 4, 12, 16, 40, 8, 24);
+    const auto* Contents=Inventory();
+    for(int32 Slot=0;Slot<4 && Contents;++Slot) {
+        const auto* Entry=Resources ? Resources->FindItem(Contents->GetStack(UBridgeNativeInventory::ArmorBegin+Slot).ItemId) : nullptr;
+        auto* Armor=Entry ? Resources->FindSprite(Entry->ArmorSprite) : nullptr;if(!Armor) continue;
+        auto Overlay=[&](float SX,float SY,float SW,float SH,float DX,float DY,float DW,float DH) {
+            DrawTexture(Armor,(X+DX*Scale)*GuiScale,(Y+DY*Scale)*GuiScale,DW*Scale*GuiScale,DH*Scale*GuiScale,SX/64,SY/32,SW/64,SH/32,FLinearColor::White,BLEND_Translucent);
+        };
+        if(Slot==0) Overlay(8,8,8,8,7.5f,-.5f,17,17);
+        if(Slot==1 || Slot==2) Overlay(20,20,8,12,8,16,16,24);
+        if(Slot==1) {Overlay(44,20,4,12,8-Arm,16,Arm,24);Overlay(44,20,4,12,24,16,Arm,24);}
+        if(Slot>=2) {Overlay(4,20,4,12,8,40,8,24);Overlay(4,20,4,12,16,40,8,24);}
+    }
 }
 
 void ABridgeNativeHUD::DrawInventory() {
     auto* Contents=Inventory(); const auto* Control=NativeController(); const auto* Receiver=Control ? Control->GetNativeReceiver() : nullptr; if (!Contents || !Receiver) return;
     Solid(0,0,GuiWidth,GuiHeight,FLinearColor(0,0,0,.62f)); SlotHits.Reset(); TabHits.Reset(); Tooltip.Reset();
-    const bool Creative=Receiver->NativeCreative; const auto* Group=CurrentGroup();
+    const FString Station=Contents->GetStation();const bool HasStation=!Station.IsEmpty();
+    const bool Creative=Receiver->NativeCreative && !HasStation; const auto* Group=CurrentGroup();
     const bool OwnInventory=Creative && Group && Group->Type==TEXT("inventory");
     const bool SearchTab=Creative && Group && Group->Type==TEXT("search");
-    const float W=Creative ? 195 : 176,H=Creative ? 136 : 166;
+    const float W=Creative ? 195 : 176,H=Creative ? 136 : Station==TEXT("hopper") ? 133 : 166;
     const float X=FMath::FloorToFloat((GuiWidth-W)/2),Y=FMath::FloorToFloat((GuiHeight-H)/2);
     PanelBounds=FBox2D(FVector2D(X,Y)*GuiScale,FVector2D(X+W,Y+H)*GuiScale);
     DeleteBounds=SearchBounds=ScrollBounds=FBox2D(ForceInit);
@@ -212,12 +231,17 @@ void ABridgeNativeHUD::DrawInventory() {
         if (Within(Hit.Bounds,Pointer)) Tooltip=TabGroup.DisplayName;
     };
     if (Creative) for (int32 I=0;I<Groups.Num();++I) if(I!=SelectedGroup) Tab(I);
-    Sprite(Creative && Group ? Group->Texture : TEXT("container/inventory"),X,Y,W,H);
+    if(Station==TEXT("chest")) {
+        if(auto* Texture=Resources ? Resources->FindSprite(TEXT("container/generic_54")) : nullptr) {
+            DrawTexture(Texture,X*GuiScale,Y*GuiScale,176*GuiScale,71*GuiScale,0,0,176.f/256,71.f/256,FLinearColor::White,BLEND_Translucent);
+            DrawTexture(Texture,X*GuiScale,(Y+71)*GuiScale,176*GuiScale,95*GuiScale,0,126.f/256,176.f/256,95.f/256,FLinearColor::White,BLEND_Translucent);
+        }
+    } else Sprite(HasStation ? TEXT("container/")+(Station==TEXT("dropper") ? TEXT("dispenser") : Station) : Creative && Group ? Group->Texture : TEXT("container/inventory"),X,Y,W,H);
     auto DrawSlot=[&](int32 Index,float SX,float SY,const FString& CatalogueId=FString(),bool IsCatalogue=false) {
         FSlotHit Hit; Hit.Bounds=FBox2D(FVector2D(SX,SY)*GuiScale,FVector2D(SX+16,SY+16)*GuiScale); Hit.Slot=Index; Hit.CatalogueItem=CatalogueId;Hit.CatalogueSlot=IsCatalogue;SlotHits.Add(Hit);
         FString Id=CatalogueId;int32 Count=IsCatalogue ? 1 : 0;
         if(!IsCatalogue) {
-            const auto& Stack=Contents->GetStack(Index);Id=Stack.ItemId;Count=Stack.Count;
+            const auto Stack=Index==UBridgeNativeInventory::CraftOutput ? Contents->CraftResult() : Index==UBridgeNativeInventory::ContainerOutput ? Contents->StationResult() : Contents->GetStack(Index);Id=Stack.ItemId;Count=Stack.Count;
             if(DragActive && DragSlots.Num()>1 && DragSlots.Contains(Index)) {
                 Id=DragItem;
                 const int32 Share=DragButton==EKeys::MiddleMouseButton ? Contents->SlotCapacity(Index,DragItem) : (DragButton==EKeys::RightMouseButton ? 1 : DragCount/DragSlots.Num());
@@ -232,7 +256,32 @@ void ABridgeNativeHUD::DrawInventory() {
         Item(Id,Count,SX,SY);
         if(Within(Hit.Bounds,Pointer)) {Solid(SX,SY,16,16,FLinearColor(1,1,1,.3f));const auto* Entry=Resources ? Resources->FindItem(Id) : nullptr;Tooltip=Entry ? Entry->DisplayName : Id;}
     };
-    if(Creative) {
+    if(HasStation) {
+        Text(Station==TEXT("crafting_table") ? TEXT("クラフト") : Station==TEXT("chest") ? TEXT("チェスト") : Station==TEXT("stonecutter") ? TEXT("石切り台") : Station==TEXT("hopper") ? TEXT("ホッパー") : Station==TEXT("dropper") ? TEXT("ドロッパー") : Station==TEXT("dispenser") ? TEXT("ディスペンサー") : TEXT("かまど"),X+8,Y+6,FLinearColor(.25f,.25f,.25f),false);
+        const float StorageY=Station==TEXT("hopper") ? 51 : 84;
+        for(int32 Row=0;Row<3;++Row) for(int32 Column=0;Column<9;++Column) DrawSlot(9+Row*9+Column,X+8+Column*18,Y+StorageY+Row*18);
+        for(int32 I=0;I<9;++I) DrawSlot(I,X+8+I*18,Y+StorageY+58);
+        if(Station==TEXT("crafting_table")) {
+            for(int32 YI=0;YI<3;++YI) for(int32 XI=0;XI<3;++XI) DrawSlot(UBridgeNativeInventory::CraftBegin+XI+YI*3,X+30+XI*18,Y+17+YI*18);
+            DrawSlot(UBridgeNativeInventory::CraftOutput,X+124,Y+35);
+        } else if(Station==TEXT("chest")) {
+            for(int32 I=0;I<27;++I) DrawSlot(UBridgeNativeInventory::ContainerBegin+I,X+8+(I%9)*18,Y+18+(I/9)*18);
+        } else if(Station==TEXT("hopper")) {
+            for(int32 I=0;I<5;++I) DrawSlot(UBridgeNativeInventory::ContainerBegin+I,X+44+I*18,Y+20);
+        } else if(Station==TEXT("dropper") || Station==TEXT("dispenser")) {
+            for(int32 I=0;I<9;++I) DrawSlot(UBridgeNativeInventory::ContainerBegin+I,X+62+(I%3)*18,Y+17+(I/3)*18);
+        } else if(Station==TEXT("stonecutter")) {
+            DrawSlot(UBridgeNativeInventory::ContainerBegin,X+20,Y+33);DrawSlot(UBridgeNativeInventory::ContainerOutput,X+143,Y+33);
+            const auto Results=Contents->StonecuttingResults();
+            CatalogueRow=FMath::Clamp(CatalogueRow,0,FMath::Max(0,FMath::DivideAndRoundUp(Results.Num(),4)-3));
+            for(int32 I=0;I<12;++I) {const int32 Index=CatalogueRow*4+I;if(Results.IsValidIndex(Index)) DrawSlot(-1000-Index,X+52+(I%4)*16,Y+14+(I/4)*18,Results[Index],true);}
+        } else {
+            DrawSlot(UBridgeNativeInventory::ContainerBegin,X+56,Y+17);DrawSlot(UBridgeNativeInventory::ContainerBegin+1,X+56,Y+53);DrawSlot(UBridgeNativeInventory::ContainerOutput,X+116,Y+35);
+            const float Cook=Contents->CookingProgress(),Fuel=Contents->FuelProgress();
+            if(Cook>0) if(auto* Texture=Resources->FindSprite(TEXT("container/furnace/burn_progress"))) DrawTexture(Texture,(X+79)*GuiScale,(Y+35)*GuiScale,24*Cook*GuiScale,16*GuiScale,0,0,Cook,1,FLinearColor::White,BLEND_Translucent);
+            if(Fuel>0) if(auto* Texture=Resources->FindSprite(TEXT("container/furnace/lit_progress"))) DrawTexture(Texture,(X+56)*GuiScale,(Y+50-14*Fuel)*GuiScale,14*GuiScale,14*Fuel*GuiScale,0,1-Fuel,1,Fuel,FLinearColor::White,BLEND_Translucent);
+        }
+    } else if(Creative) {
         if(OwnInventory) {
             // CreativeInventoryScreen.setSelectedTab: storage at y54, hotbar y112, offhand35/20, bin173/112.
             DrawPlayerPreview(X+79,Y+6,.65f);
@@ -264,6 +313,8 @@ void ABridgeNativeHUD::DrawInventory() {
     } else {
         DrawPlayerPreview(X+33,Y+12);
         Text(TEXT("クラフト"),X+97,Y+6,FLinearColor(.25f,.25f,.25f),false);
+        for(int32 YI=0;YI<2;++YI) for(int32 XI=0;XI<2;++XI) DrawSlot(UBridgeNativeInventory::CraftBegin+XI+YI*3,X+98+XI*18,Y+18+YI*18);
+        DrawSlot(UBridgeNativeInventory::CraftOutput,X+154,Y+28);
         for(int32 Row=0;Row<3;++Row) for(int32 Column=0;Column<9;++Column) DrawSlot(9+Row*9+Column,X+8+Column*18,Y+84+Row*18);
         for(int32 I=0;I<9;++I) DrawSlot(I,X+8+I*18,Y+142);
         DrawSlot(UBridgeNativeInventory::OffhandSlot,X+77,Y+62);
@@ -340,7 +391,7 @@ void ABridgeNativeHUD::DrawHUD() {
     Super::DrawHUD(); if (!Canvas) return;
     const auto* Control = NativeController(); auto* Contents = Inventory(); auto* Receiver = Control ? Control->GetNativeReceiver() : nullptr;
     if (!Control || !Contents || !Receiver || !Receiver->NativePlayActive) { UpdateSearchWidget(false); return; }
-    if (Resources != Contents->GetPalette()) { Resources = Contents->GetPalette(); RebuildGroups(); }
+    if (Resources != Contents->GetPalette()) { Resources = Contents->GetPalette(); IconGlints.Empty();RebuildGroups(); }
     UpdateGuiScale(); float MX = 0, MY = 0; if (GetOwningPlayerController()->GetMousePosition(MX, MY)) Pointer = FVector2D(MX, MY);
     if (Control->IsInventoryOpen()) {
         if (!WasInventoryOpen) { RebuildCatalogue(); WasInventoryOpen = true; }
@@ -390,7 +441,7 @@ bool ABridgeNativeHUD::HandlePointer(FKey Button, FVector2D Position) {
     if (!Control->IsInventoryOpen()) return false;
     CancelDrag();
     if(Button==EKeys::MiddleMouseButton) {
-        if(Receiver->NativeCreative) for(const auto& Hit : SlotHits) if(Within(Hit.Bounds,Position)) {
+        if(Receiver->NativeCreative && Contents->GetStation().IsEmpty()) for(const auto& Hit : SlotHits) if(Within(Hit.Bounds,Position)) {
             if(Contents->GetCursor().IsEmpty()) {
                 const FString Id=Hit.CatalogueSlot ? Hit.CatalogueItem : Contents->GetStack(Hit.Slot).ItemId;if(!Id.IsEmpty()) Contents->TakeCatalogue(Id);
             } else if(!Hit.CatalogueSlot && Hit.Slot>=0) {
@@ -400,7 +451,7 @@ bool ABridgeNativeHUD::HandlePointer(FKey Button, FVector2D Position) {
         }
         return true;
     }
-    if(Receiver->NativeCreative) for(const auto& Hit : TabHits) if(Within(Hit.Bounds,Position)) {
+    if(Receiver->NativeCreative && Contents->GetStation().IsEmpty()) for(const auto& Hit : TabHits) if(Within(Hit.Bounds,Position)) {
         if(SelectedGroup!=Hit.Group) {SelectedGroup=Hit.Group;Search.Reset();if(SearchField) SearchField->SetText(FText::GetEmpty());RebuildCatalogue();UpdateSearchWidget(false);}
         return true;
     }
@@ -411,10 +462,13 @@ bool ABridgeNativeHUD::HandlePointer(FKey Button, FVector2D Position) {
         const float Relative=FMath::Clamp((Position.Y-ScrollBounds.Min.Y-7.5f*GuiScale)/(75*GuiScale),0.f,1.f);
         CatalogueRow=FMath::RoundToInt(Relative*Rows);return true;
     }
-    if (CatalogueMode && Within(SearchBounds, Position)) { EnsureSearchWidget(); if (SearchField && FSlateApplication::IsInitialized()) FSlateApplication::Get().SetKeyboardFocus(SearchField, EFocusCause::Mouse); return true; }
+    if (CatalogueMode && Contents->GetStation().IsEmpty() && Within(SearchBounds, Position)) { EnsureSearchWidget(); if (SearchField && FSlateApplication::IsInitialized()) FSlateApplication::Get().SetKeyboardFocus(SearchField, EFocusCause::Mouse); return true; }
     const bool RightClick = Button == EKeys::RightMouseButton;
     for (const auto& Hit : SlotHits) if (Within(Hit.Bounds, Position)) {
-        if (Hit.CatalogueSlot) Contents->ClickCatalogue(Hit.CatalogueItem,RightClick,Shift);
+        if(Hit.Slot==UBridgeNativeInventory::CraftOutput) Contents->TakeCraftResult(Shift);
+        else if(Hit.Slot==UBridgeNativeInventory::ContainerOutput) Contents->TakeStationResult(Shift);
+        else if(Hit.CatalogueSlot && Hit.Slot<=-1000) Contents->SelectStonecutting(-1000-Hit.Slot);
+        else if (Hit.CatalogueSlot) Contents->ClickCatalogue(Hit.CatalogueItem,RightClick,Shift);
         else if(Hit.Slot>=0) {
             if(!Shift && !Contents->GetCursor().IsEmpty()) {
                 CancelDrag();DragActive=true;DragButton=Button;DragItem=Contents->GetCursor().ItemId;DragCount=Contents->GetCursor().Count;DragStartSlot=Hit.Slot;UpdateDragSlots();
@@ -434,7 +488,7 @@ void ABridgeNativeHUD::CancelDrag() {DragActive=false;DragSlots.Reset();DragStar
 void ABridgeNativeHUD::UpdateDragSlots() {
     if(!DragActive) return;
     auto* Contents=Inventory();if(!Contents || Contents->GetCursor().ItemId!=DragItem || Contents->GetCursor().Count!=DragCount) {CancelDrag();return;}
-    for(const auto& Hit:SlotHits) if(!Hit.CatalogueSlot && Hit.Slot>=0 && Within(Hit.Bounds,Pointer)) {
+    for(const auto& Hit:SlotHits) if(!Hit.CatalogueSlot && Hit.Slot>=0 && Hit.Slot!=UBridgeNativeInventory::CraftOutput && Hit.Slot!=UBridgeNativeInventory::ContainerOutput && Within(Hit.Bounds,Pointer)) {
         const auto& Stack=Contents->GetStack(Hit.Slot);
         if(!DragSlots.Contains(Hit.Slot) && (DragButton==EKeys::MiddleMouseButton || DragCount>DragSlots.Num()) && Contents->CanInsertIntoSlot(Hit.Slot,DragItem) && (Stack.IsEmpty() || Stack.ItemId==DragItem)) DragSlots.Add(Hit.Slot);
         break;
@@ -452,7 +506,9 @@ bool ABridgeNativeHUD::HandlePointerReleased(FKey Button,FVector2D Position) {
 }
 
 bool ABridgeNativeHUD::HandleScroll(int32 Delta) {
-    const auto* Control = NativeController(); if (!Control || !Control->IsInventoryOpen() || !CatalogueMode) return false;
+    const auto* Control = NativeController(); if (!Control || !Control->IsInventoryOpen()) return false;
+    auto* Contents=Inventory();if(Contents && Contents->GetStation()==TEXT("stonecutter")) {const int32 Max=FMath::Max(0,FMath::DivideAndRoundUp(Contents->StonecuttingResults().Num(),4)-3);CatalogueRow=FMath::Clamp(CatalogueRow-Delta,0,Max);return true;}
+    if(!CatalogueMode || Contents && !Contents->GetStation().IsEmpty()) return false;
     const int32 Maximum = FMath::Max(0, FMath::DivideAndRoundUp(Catalogue.Num(), 9) - 5); CatalogueRow = FMath::Clamp(CatalogueRow - Delta, 0, Maximum); return true;
 }
 
@@ -472,7 +528,7 @@ bool ABridgeNativeHUD::HandleKey(FKey Key) {
         auto* Receiver=Control->GetNativeReceiver();
         const bool Shift=Control->IsInputKeyDown(EKeys::LeftControl) || Control->IsInputKeyDown(EKeys::RightControl);
         if(Receiver) for(const auto& Hit : SlotHits) if(Within(Hit.Bounds,Pointer)) {
-            if(Hit.CatalogueSlot) {
+            if(Hit.CatalogueSlot && Hit.Slot>-1000) {
                 if(Receiver->NativeCreative && !Hit.CatalogueItem.IsEmpty()) Receiver->NativeDrop(Hit.CatalogueItem,Shift ? Contents->MaxCount(Hit.CatalogueItem) : 1);
             } else if(Hit.Slot>=0) {
                 const auto& Stack=Contents->GetStack(Hit.Slot);const int32 Count=Shift ? Stack.Count : 1;
@@ -509,10 +565,10 @@ void ABridgeNativeHUD::EnsureSearchWidget() {
         [ SNew(SBox).Visibility(EVisibility::SelfHitTestInvisible)
         .Padding_Lambda([this] { return FMargin(SearchWidgetBounds.Min.X, SearchWidgetBounds.Min.Y, 0, 0); })
         [ SNew(SBox).Visibility(EVisibility::SelfHitTestInvisible).WidthOverride_Lambda([this] { return SearchWidgetBounds.GetSize().X; }).HeightOverride_Lambda([this] { return SearchWidgetBounds.GetSize().Y; })
-          [ SAssignNew(SearchField, SEditableTextBox)
+          [ SAssignNew(SearchField, SEditableText)
             .Text(FText::FromString(Search)).Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
             .SelectAllTextWhenFocused(false).ClearKeyboardFocusOnCommit(false)
-            .ForegroundColor(FLinearColor::Transparent).BackgroundColor(FLinearColor::Transparent).Padding(FMargin(0))
+            .ColorAndOpacity(FLinearColor::Transparent)
             .OnKeyDownHandler_Lambda([this](const FGeometry&, const FKeyEvent& Event) {
                 if (Event.GetKey() == EKeys::Escape) { if (auto* Control = NativeController()) Control->ToggleInventory(); return FReply::Handled(); }
                 return FReply::Unhandled();

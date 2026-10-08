@@ -21,6 +21,7 @@ public:
     void ShowChat(const FString& Initial);
     void HideChat();
 private:
+    UPROPERTY() TMap<FString,TObjectPtr<class UMaterialInstanceDynamic>> IconGlints;
     struct FSlotHit { FBox2D Bounds; int32 Slot = -1; FString CatalogueItem; bool CatalogueSlot = false; };
     struct FTabHit { FBox2D Bounds; int32 Group = -1; };
     TArray<FTabHit> TabHits;
@@ -49,7 +50,7 @@ private:
     double LastChatAt=0;
     void DrawChat();
     TSharedPtr<class SWidget> SearchOverlay;
-    TSharedPtr<class SEditableTextBox> SearchField;
+    TSharedPtr<class SEditableText> SearchField;
     TWeakObjectPtr<class UGameViewportClient> SearchViewport;
     class ABridgeNativePlayerController* NativeController() const;
     class UBridgeNativeInventory* Inventory() const;

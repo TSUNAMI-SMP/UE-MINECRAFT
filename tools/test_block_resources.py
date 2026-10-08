@@ -28,6 +28,7 @@ with tempfile.TemporaryDirectory(prefix="uebridge-block-assets-") as temporary:
     output = pathlib.Path(temporary)
     subprocess.run([str(javac), "-cp", str(gsons[0]), "-d", str(output),
         str(root / "minecraft-mod/src/client/java/dev/tsunami/bridge/TextureExport.java"),
+        str(root / "minecraft-mod/src/client/java/dev/tsunami/bridge/TextureAnimation.java"),
         str(root / "bridge/tests/TextureModelCoverage.java")], check=True)
     subprocess.run([java, "-cp", str(output) + os.pathsep + str(gsons[0]), "TextureModelCoverage", str(client), str(output / "assets-export")], check=True)
     sys.path.insert(0, str(root / "tools"))

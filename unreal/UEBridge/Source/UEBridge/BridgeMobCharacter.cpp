@@ -403,11 +403,17 @@ void ABridgeMobCharacter::Animate(float DeltaSeconds) {
 void ABridgeMobCharacter::ApplyNativeKnockback(float StrengthBlocksPerTick,const FVector& AwayDirection) {
     if(!Enabled || !GetWorld() || !FMath::IsFinite(StrengthBlocksPerTick) || StrengthBlocksPerTick<=0) return;
     if(InitialSnapshot.KnockbackResistance>=1.f) return;
-    auto* Movement=GetCharacterMovement();const FVector Old=Movement->Velocity;
+    auto* Movement=GetCharacterMovement();FVector Old=Movement->Velocity;
     FVector Away=AwayDirection;
     if(Away.SizeSquared2D()<.1) do {Away.X=Random.FRand()-Random.FRand();Away.Y=Random.FRand()-Random.FRand();} while(Away.SizeSquared2D()<.1);
     FFindFloorResult Floor;Movement->FindFloor(GetActorLocation(),Floor,false);
-    const bool Grounded=Movement->IsMovingOnGround() || (Movement->IsFalling() && Old.Z<=0 && Floor.IsWalkableFloor() && Floor.FloorDist<=3.f);
+    const int64 EntityTick=int64(FMath::FloorToDouble(GetWorld()->GetTimeSeconds()*20));
+    const bool Grounded=LastImpulseTick==EntityTick ? ImpulseGrounded : Movement->IsMovingOnGround() || (Movement->IsFalling() && Old.Z<=0 && Floor.IsWalkableFloor() && Floor.FloorDist<=3.f);
+    // Vanilla applies gravity after ground collision, retaining -0.08*0.98
+    // blocks/tick vertically. UE zeros walking Z; recover that input before
+    // takeKnockback, and retain onGround for both impulses in the same tick.
+    if(Grounded && LastImpulseTick!=EntityTick && FMath::IsNearlyZero(Old.Z)) Old.Z=BridgeCombatMath::groundedVerticalVelocity(Old.Z);
+    LastImpulseTick=EntityTick;ImpulseGrounded=Grounded;
     const auto Result=BridgeCombatMath::knockbackVelocity({Old.X,Old.Y,Old.Z},StrengthBlocksPerTick,InitialSnapshot.KnockbackResistance,Away.X,Away.Y,Grounded);
     // Apply synchronously so two impulses in one attack compose rather than
     // replacing a deferred launch. Enter falling BEFORE writing positive Z.

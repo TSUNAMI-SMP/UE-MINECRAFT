@@ -35,7 +35,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Native") TObjectPtr<class UBridgeNativeSoundPalette> NativeSoundPalette;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Native") bool NativePlayActive = false;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Native") bool NativeCreative = true;
-    UPROPERTY(BlueprintReadOnly, Category="Bridge|Native") bool NativeLighting = true;
+    UPROPERTY(BlueprintReadOnly, Category="Bridge|Native") bool NativeLighting = false;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Native") FString NativeStatus = TEXT("not started");
     bool IsNativeReady() const;
     bool IsNativeSaving() const;
@@ -107,7 +107,10 @@ private:
     double NativeLastDiagnostic=-1,NativeLastAutosave=-1;
     TMap<FString,FString> NativeDropItems;
     TMap<FString,int32> NativeDropRevisions;
-    struct FNativeFuse {FVector Position;double Deadline;};
+    struct FNativeFuse {FVector Position;double Deadline;FVector Velocity=FVector::ZeroVector;TWeakObjectPtr<class ABridgeBlockPreview> Visual;};
+    float NativeFuseClock=0;
+    bool PrimeNativeTnt(const FVector& Position,float Remaining=4,const FVector& Velocity=FVector::ZeroVector,bool Restoring=false);
+    void TickNativeTnt(float DeltaSeconds);
     TArray<FNativeFuse> NativeFuses;
     TSet<FString> MissingNativeSounds;
     float NativeMasterVolume=1;
@@ -132,7 +135,9 @@ private:
     void TickNativePlay(float DeltaSeconds);
     void LogDiagnostics(double Now,bool bForceLog=false);
     void PlayNativeSound(const FString& Id,const FVector& Position,float Volume=1,float Pitch=1,const FString& Category=TEXT(""));
-    bool SpawnNativeDrop(const FString& ItemId,int32 Count,const FVector& Position,const FVector& Velocity,float PickupDelay=.5f);
+    bool SpawnNativeDrop(const FString& ItemId,int32 Count,const FVector& Position,const FVector& Velocity,float PickupDelay=.5f,FString* Transaction=nullptr);
+    bool DropNativeContainer(const FIntVector& Block);
+    bool IgniteNativeTnt(const FIntVector& Block);
     void BlockAction(const FBridgePacket& Packet);
     bool HasNewInput = false;
     uint64 PreviewGeneration = 0;

@@ -46,6 +46,19 @@ public:
     bool GetSupportingBlock(const FVector& Feet,FIntVector& SourceVoxel,FString& BlockId,FColor& Tint,FVector& ImpactPoint,const AActor* Ignored=nullptr) const;
     bool BreakBlock(const FIntVector& Block);
     FString PlaceBlock(const FIntVector& Block,const FString& BlockId,int32 Color,double Yaw=0,const FVector& Normal=FVector::UpVector,const FVector& HitPoint=FVector::ZeroVector);
+    void EnableNativeRules(int32 RandomTicks=3);
+    void SetNativeSkyDarkness(int32 Darkness) {NativeSkyDarkness=FMath::Clamp(Darkness,0,15);}
+    bool SetNativeBlockState(const FIntVector& Block,const FString& Id,const FString& State,int32 Tint=0xffffff);
+    TArray<TSharedPtr<class FJsonValue>> ExportNativeFalling() const;
+    bool ImportNativeFalling(const TArray<TSharedPtr<class FJsonValue>>& Values);
+    TFunction<bool(const FString&,const FVector&)> NativeRuleDrop;
+    /** Preflight container drops before deleting its block; failed spawning retains the block and all contents. */
+    TFunction<bool(const FIntVector&)> NativeBlockRemoving;
+    TFunction<void(const FIntVector&)> NativePrimeTnt;
+    TFunction<int32(const FIntVector&)> NativeContainerPower;
+    TFunction<bool(const FIntVector&)> NativePlateOccupied;
+    TFunction<bool(const FIntVector&,const FIntVector&)> NativeHopperTransfer;
+    TFunction<bool(const FIntVector&,const FIntVector&)> NativeDropperEmit;
     bool UseBlock(const FIntVector& Block,bool TimedRelease=false);
     int32 CellCount() const { return Cells.Num(); }
     int32 ShapeCount() const { return Shapes; }
@@ -118,6 +131,26 @@ private:
     TMap<FIntVector,TArray<uint8>> SkyTops;
     TMap<FIntVector,TArray<FIntVector>> BiomeTintCells;
     TMap<FIntVector,TArray<uint16>> WaterCells;
+    bool NativeRules=false;
+    int32 NativeRandomTickSpeed=3,NativeSkyDarkness=0;
+    int32 GrassSectionCursor=0;
+    float NativeRuleClock=0;
+    int64 NativeRuleTick=0;
+    TSet<FIntVector> RuleQueue,GrassSections;
+    TMap<FIntVector,int64> RuleDelayed;
+    TMap<FIntVector,int32> ComparatorPower;
+    FRandomStream RuleRandom{173931};
+    struct FNativeFall {FIntVector Source;FString Id,State;int32 Tint=0xffffff;FVector Position,Previous,Velocity=FVector::ZeroVector;TWeakObjectPtr<class ABridgeBlockPreview> Visual;int32 Age=0;};
+    TArray<FNativeFall> NativeFalls;
+    void TickNativeRules(float DeltaSeconds);
+    void QueueNativeRule(const FIntVector& Block);
+    void UpdateNativeRule(const FIntVector& Block,bool Delayed=false);
+    int32 NativeSignal(const FIntVector& Source,const FIntVector& Target,bool Wire=true) const;
+    int32 NativePowerAt(const FIntVector& Block,bool Wire=true,const FIntVector* Ignore=nullptr) const;
+    bool StartNativeFall(const FIntVector& Block,const FString& Id,const FString& State,int32 Tint);
+    struct FNativeMutation {FIntVector Block;FString Id,State;int32 Tint=0xffffff;};
+    bool ApplyNativeMutations(const TArray<FNativeMutation>& Changes);
+    friend class FBridgeNativeRulesTest;
     bool NativeFluidsEnabled=false,FluidUltraWarm=false;
     TMap<FIntVector,double> FluidUpdates;
     double FluidClock=0;

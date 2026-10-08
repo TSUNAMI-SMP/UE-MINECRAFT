@@ -34,6 +34,7 @@ public:
     void Configure(class ABridgeWorld* ImportedTerrain,class UBridgeBlockPalette* ImportedPalette,class UMaterialInterface* Material);
     /** Active-pack POOF sequence; independently configured from terrain dust. */
     void ConfigurePoof(class UBridgeNativeUiPalette* Resources,class UMaterialInterface* Material);
+    void SpawnSmoke(const FVector& Position);
     void SpawnCombat(const FVector& Position,const FVector& Direction,bool Critical,bool Sweep);
     int32 SpawnDeathPoof(const FVector& FeetPosition,float WidthCm,float HeightCm);
     FString DeathPoofReason() const;
@@ -59,8 +60,8 @@ private:
         int32 Age=0, Lifetime=10;
     };
     struct FNativeParticle {
-        FString Sprite;FVector Position=FVector::ZeroVector,Velocity=FVector::ZeroVector;
-        FColor Tint=FColor::White;float Age=0,Lifetime=.4f,Size=20,Gravity=0,Spin=0;bool Sweep=false,Leaf=false;
+        FString Sprite,Animation;FVector Position=FVector::ZeroVector,Velocity=FVector::ZeroVector;
+        FColor Tint=FColor::White;float Age=0,Lifetime=.4f,Size=20,Gravity=0,Spin=0,Clock=0;bool Sweep=false,Leaf=false,Critical=false;
     };
     TArray<FNativeParticle> NativeParticles;
     UPROPERTY() TMap<FString,TObjectPtr<class UInstancedStaticMeshComponent>> NativeGroups;
@@ -79,6 +80,7 @@ private:
     UPROPERTY() TObjectPtr<class UBridgeNativeUiPalette> PoofResources;
     UPROPERTY() TObjectPtr<class UMaterialInterface> PoofMaterial;
     UPROPERTY() TMap<int32,TObjectPtr<class UInstancedStaticMeshComponent>> PoofGroups;
+    TMap<FString,TArray<FString>> SpriteStreams;
     TWeakObjectPtr<class UCameraComponent> ViewCamera;
     TWeakObjectPtr<class ABridgeCharacter> SampledCharacter;
     TArray<FDustParticle> Particles;

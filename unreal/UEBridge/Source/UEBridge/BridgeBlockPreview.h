@@ -15,6 +15,7 @@ public:
         const TFunction<FColor(const FIntVector&,const FString&,int32)>& RenderTintAt={},
         const TFunction<bool(const FIntVector&,FString&,FString&)>& BlockStateAt={});
     void Clear();
+    void SetNativeFlash(bool Flash);
     bool ResolveHit(const class UPrimitiveComponent* Component,int32 Instance,FBridgeBlock& Out) const;
     void Relight(class FBridgeLightingService* Lighting);
     int32 FaceCount() const { return RenderedFaces; }

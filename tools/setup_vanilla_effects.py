@@ -4,6 +4,7 @@ The player importer calls this helper. It contains no Minecraft texture or sound
 """
 import pathlib
 import hashlib
+import runpy
 
 
 def setup_vanilla_effects(explosion_system_path=None):
@@ -159,7 +160,7 @@ def _create_death_poof_material(unreal, assets, editing, folder, lighting_helper
     frame per particle instance and supplies the source grayscale multiplier via
     custom-data channel 0.  No vanilla texture is embedded in this repository.
     """
-    revision = hashlib.sha256(b"death-poof-v1\0" + lighting_helper.read_bytes()).hexdigest()[:12]
+    revision = hashlib.sha256(b"death-poof-v2-instance-color\0" + lighting_helper.read_bytes()).hexdigest()[:12]
     name, path = "M_MinecraftDeathPoof_v1_" + revision, folder + "/M_MinecraftDeathPoof_v1_" + revision
     material = unreal.load_asset(path) if assets.does_asset_exist(path) else None
     if material is None:
@@ -196,16 +197,33 @@ def _create_death_poof_material(unreal, assets, editing, folder, lighting_helper
         color = node(unreal.MaterialExpressionVectorParameter)
         color.set_editor_property("parameter_name", "PoofColor")
         color.set_editor_property("default_value", unreal.LinearColor(1, 1, 1, 1))
+        lighting=runpy.run_path(str(lighting_helper))
+        display=lighting['texture_display_rgb'](unreal,editing,material,sample,'RGB')
         product = node(unreal.MaterialExpressionMultiply)
-        wire(sample, product, "A", "RGB")
+        wire(display, product, "A")
         wire(color, product, "B")
         gray = node(unreal.MaterialExpressionPerInstanceCustomData)
         gray.set_editor_property("data_index", 0)
+        gray_pixel=node(unreal.MaterialExpressionVertexInterpolator);wire(gray,gray_pixel)
         toned = node(unreal.MaterialExpressionMultiply)
         wire(product, toned, "A")
-        wire(gray, toned, "B")
-        if not editing.connect_material_property(toned, "", unreal.MaterialProperty.MP_EMISSIVE_COLOR):
-            raise RuntimeError("Cannot connect death poof emissive")
+        wire(gray_pixel, toned, "B")
+        channels=[]
+        for index in (4,5,6):
+            channel=node(unreal.MaterialExpressionPerInstanceCustomData)
+            channel.set_editor_property("data_index",index);channels.append(channel)
+        rg=node(unreal.MaterialExpressionAppendVector);wire(channels[0],rg,"A");wire(channels[1],rg,"B")
+        rgb=node(unreal.MaterialExpressionAppendVector);wire(rg,rgb,"A");wire(channels[2],rgb,"B")
+        tint_pixel=node(unreal.MaterialExpressionVertexInterpolator);wire(rgb,tint_pixel)
+        instance_color=node(unreal.MaterialExpressionMultiply);wire(toned,instance_color,"A");wire(tint_pixel,instance_color,"B")
+        lights=[]
+        for index in (1,2,3):
+            channel=node(unreal.MaterialExpressionPerInstanceCustomData);channel.set_editor_property('data_index',index);lights.append(channel)
+        light_rg=node(unreal.MaterialExpressionAppendVector);wire(lights[0],light_rg,'A');wire(lights[1],light_rg,'B')
+        light_rgb=node(unreal.MaterialExpressionAppendVector);wire(light_rg,light_rgb,'A');wire(lights[2],light_rgb,'B')
+        light_pixel=node(unreal.MaterialExpressionVertexInterpolator);wire(light_rgb,light_pixel)
+        lighting['wire_vanilla_lighting'](unreal,editing,material,instance_color,vertex_node=light_pixel,pixel_display=True)
+        material.set_editor_property('shading_model',unreal.MaterialShadingModel.MSM_UNLIT)
         if not editing.connect_material_property(sample, "A", unreal.MaterialProperty.MP_OPACITY_MASK):
             raise RuntimeError("Cannot connect death poof opacity")
         editing.recompile_material(material)

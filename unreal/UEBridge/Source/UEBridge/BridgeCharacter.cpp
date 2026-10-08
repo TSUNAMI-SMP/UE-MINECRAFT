@@ -1,4 +1,6 @@
 #include "BridgeCharacter.h"
+#include "BridgeNativePlayerController.h"
+#include "BridgeNativeInventory.h"
 #include "BridgeMeshingMath.h"
 #include "BridgeCharacterMovement.h"
 #include "BridgeCharacterMath.h"
@@ -39,7 +41,7 @@ FQuat PoseRotation(const BridgeCharacterMath::Pose& Pose) {return FQuat(Pose.Rot
 // Minecraft cuboid net: right/front/left/back across the middle, top/bottom above.
 // Model scale is the vanilla 1/16 block = 6.25 cm; UVs stay on the 64x64 skin atlas.
 void SkinCuboid(UProceduralMeshComponent* Part,float PixelWidth,float PixelHeight,float PixelDepth,
-    float TextureU,float TextureV,float Inflate,bool AbovePivot=false,float PivotTop=0,float LateralCenter=0) {
+    float TextureU,float TextureV,float Inflate,bool AbovePivot=false,float PivotTop=0,float LateralCenter=0,float TextureHeight=64) {
     const float W=PixelWidth*6.25f+Inflate*2,H=PixelHeight*6.25f+Inflate*2,D=PixelDepth*6.25f+Inflate*2;
     const float Top=(AbovePivot ? PixelHeight*6.25f+Inflate : Inflate)+PivotTop;
     const float Bottom=Top-H;
@@ -48,7 +50,7 @@ void SkinCuboid(UProceduralMeshComponent* Part,float PixelWidth,float PixelHeigh
     auto Face=[&](FVector A,FVector B,FVector C,FVector E,FVector Normal,float U,float V,float UW,float VH) {
         const FVector Center(0,LateralCenter,0);
         const int32 First=Vertices.Num();Vertices.Append({A+Center,B+Center,C+Center,E+Center});
-        UV.Append({FVector2D(U/64.f,V/64.f),FVector2D((U+UW)/64.f,V/64.f),FVector2D((U+UW)/64.f,(V+VH)/64.f),FVector2D(U/64.f,(V+VH)/64.f)});
+        UV.Append({FVector2D(U/64.f,V/TextureHeight),FVector2D((U+UW)/64.f,V/TextureHeight),FVector2D((U+UW)/64.f,(V+VH)/TextureHeight),FVector2D(U/64.f,(V+VH)/TextureHeight)});
         for(int32 I=0;I<4;++I) {Normals.Add(Normal);Colors.Add(FLinearColor::White);Tangents.Add(FProcMeshTangent((B-A).GetSafeNormal(),false));}
         if(FVector::DotProduct(FVector::CrossProduct(B-A,C-A),Normal)<0) Indices.Append({First,First+1,First+2,First,First+2,First+3});
         else Indices.Append({First,First+2,First+1,First,First+3,First+2});
@@ -120,6 +122,9 @@ ABridgeCharacter::ABridgeCharacter(const FObjectInitializer& ObjectInitializer)
         PrepareSkin(Part,AvatarRoot);AvatarParts.Add(Part);
         auto* Layer=CreateDefaultSubobject<UProceduralMeshComponent>(*FString::Printf(TEXT("SkinLayer%d"),I));
         PrepareSkin(Layer,Part);AvatarLayers.Add(Layer);
+    }
+    for(int32 Slot=0;Slot<4;++Slot) for(int32 Part=0;Part<6;++Part) {
+        auto* Armor=CreateDefaultSubobject<UProceduralMeshComponent>(*FString::Printf(TEXT("NativeArmor%d_%d"),Slot,Part));PrepareSkin(Armor,AvatarParts[Part]);Armor->SetVisibility(false);ArmorParts.Add(Armor);
     }
     SkinArm=CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("MinecraftFirstPersonArm"));PrepareSkin(SkinArm,BridgeCamera);SkinArm->SetCastShadow(false);
     SkinSleeve=CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("MinecraftFirstPersonSleeve"));PrepareSkin(SkinSleeve,BridgeCamera);SkinSleeve->SetCastShadow(false);
@@ -498,6 +503,13 @@ void ABridgeCharacter::CacheHandGeometry(UProceduralMeshComponent* Part) {
     }
 }
 
+void ABridgeCharacter::GetNativeHandComponents(TArray<UPrimitiveComponent*>& Out) const {
+    Out.Reset();
+    if(!NativePresentation || CameraPerspective!=0) return;
+    for(auto* Part:{SkinArm.Get(),SkinSleeve.Get(),ProjectedSleeve.Get(),ProjectedHand.Get(),HeldModel.Get(),OffhandModel.Get()})
+        if(IsValid(Part) && Part->IsVisible() && !Part->bHiddenInGame) Out.Add(Part);
+}
+
 void ABridgeCharacter::PoseHandGeometry(UProceduralMeshComponent* Part,const FTransform& Pose,bool FixedHandFov) {
     const auto* Sources=HandSources.Find(Part);if(!Sources) return;
     Part->SetRelativeTransform(FTransform::Identity);
@@ -505,6 +517,11 @@ void ABridgeCharacter::PoseHandGeometry(UProceduralMeshComponent* Part,const FTr
     // hand pass; rotating the camera must not rotate the lights over the item.
     for(int32 Index=0;Index<Part->GetNumSections();++Index) if(auto* Material=Cast<UMaterialInstanceDynamic>(Part->GetMaterial(Index))) {
         Material->SetScalarParameterValue(TEXT("BridgeViewLight"),FixedHandFov ? 1.f : 0.f);
+        if(const auto* Control=Cast<ABridgeNativePlayerController>(GetController())) if(const auto* Inventory=Control->GetNativeInventory()) if(const auto* Resources=Inventory->GetPalette()) {
+            const auto* Item=Resources->FindItem(Part==OffhandModel ? OffhandItem : VisualItem);auto* Texture=Resources->FindSprite(TEXT("misc/enchanted_glint_item"));
+            Material->SetScalarParameterValue(TEXT("BridgeGlint"),(Part==HeldModel || Part==OffhandModel) && Item && Item->Glint && Texture ? 1.f : 0.f);
+            if(Texture) Material->SetTextureParameterValue(TEXT("BridgeGlintTexture"),Texture);
+        }
         const FVector Axes[]={BridgeCamera->GetForwardVector(),BridgeCamera->GetRightVector(),BridgeCamera->GetUpVector()};
         const FName Names[]={TEXT("BridgeViewForward"),TEXT("BridgeViewRight"),TEXT("BridgeViewUp")};
         for(int32 Axis=0;Axis<3;++Axis) Material->SetVectorParameterValue(Names[Axis],FLinearColor(Axes[Axis].X,Axes[Axis].Y,Axes[Axis].Z,0));
@@ -527,6 +544,27 @@ void ABridgeCharacter::PoseHandGeometry(UProceduralMeshComponent* Part,const FTr
     }
 }
 
+
+void ABridgeCharacter::UpdateNativeEquipment() {
+    const auto* Control=Cast<ABridgeNativePlayerController>(GetController());const auto* Inventory=Control ? Control->GetNativeInventory() : nullptr;const auto* Resources=Inventory ? Inventory->GetPalette() : nullptr;
+    if(!Resources || !PlayerAppearance || !PlayerAppearance->SkinMaterial) return;
+    FString Signature;for(int32 Slot=0;Slot<4;++Slot) Signature+=Inventory->GetStack(UBridgeNativeInventory::ArmorBegin+Slot).ItemId+TEXT(";");
+    if(Signature==ArmorSignature) return;ArmorSignature=Signature;
+    for(int32 Slot=0;Slot<4;++Slot) {
+        const auto* Item=Resources->FindItem(Inventory->GetStack(UBridgeNativeInventory::ArmorBegin+Slot).ItemId);auto* Texture=Item ? Resources->FindSprite(Item->ArmorSprite) : nullptr;
+        for(int32 Part=0;Part<6;++Part) {
+            auto* Mesh=ArmorParts[Slot*6+Part];const bool Visible=Texture && (Slot==0 ? Part==0 : Slot==1 ? Part>=1 && Part<=3 : Slot==2 ? Part==1 || Part>=4 : Part>=4);
+            Mesh->ClearAllMeshSections();Mesh->SetVisibility(Visible);if(!Visible) continue;
+            const bool Arm=Part==2 || Part==3;const float Width=Part<=1 ? 8.f : 4.f,Height=Part==0 ? 8.f : 12.f,Depth=Part==0 ? 8.f : 4.f;
+            const FVector2D UV=Part==0 ? FVector2D(0,0) : Part==1 ? FVector2D(16,16) : Arm ? FVector2D(40,16) : FVector2D(0,16);
+            SkinCuboid(Mesh,Width,Height,Depth,UV.X,UV.Y,Slot==2 ? 3.125f : 6.25f,Part==0,Arm ? 12.5f : 0,Arm ? (Part==2 ? 6.25f : -6.25f) : 0,32);
+            auto* Material=CreateVisualInstance(PlayerAppearance->SkinMaterial,this);if(Material) {
+                Material->SetTextureParameterValue(TEXT("SkinTexture"),Texture);Material->SetScalarParameterValue(TEXT("BridgeGlint"),Item->Glint ? 1.f : 0.f);
+                if(auto* Glint=Resources->FindSprite(TEXT("misc/enchanted_glint_item"))) Material->SetTextureParameterValue(TEXT("BridgeGlintTexture"),Glint);Mesh->SetMaterial(0,Material);
+            }
+        }
+    }
+}
 void ABridgeCharacter::BuildHeldGeometry() {
     BuildHandGeometry(HeldModel,VisualItem,VisualBlock,VisualColor,VisualModelKey,PlayerLeftHanded,NativeHeldGeometry,HeldModelStatus);
     HeldGeometryReady=true;
@@ -607,6 +645,7 @@ void ABridgeCharacter::BuildHandGeometry(UProceduralMeshComponent* Model,const F
 void ABridgeCharacter::UpdateAvatar(float Bob) {
     if(!AvatarGeometryReady) BuildAvatarGeometry();
     if(!HeldGeometryReady) BuildHeldGeometry();
+    UpdateNativeEquipment();
     if(!OffhandGeometryReady) {
         BuildHandGeometry(OffhandModel,OffhandItem,OffhandBlock,OffhandColor,OffhandModelKey,!PlayerLeftHanded,NativeOffhandGeometry,OffhandModelStatus);
         OffhandGeometryReady=true;

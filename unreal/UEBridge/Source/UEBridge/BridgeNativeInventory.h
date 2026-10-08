@@ -2,6 +2,7 @@
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
 #include "BridgeNativeUiPalette.h"
+#include "BridgeRecipeMath.h"
 #include "BridgeNativeInventory.generated.h"
 
 USTRUCT(BlueprintType)
@@ -18,6 +19,30 @@ UCLASS()
 class UEBRIDGE_API UBridgeNativeInventory : public UObject {
     GENERATED_BODY()
 public:
+    static constexpr int32 CraftBegin=100, CraftOutput=109, ContainerBegin=200, ContainerOutput=227;
+    bool OpenStation(const FString& Kind,const FString& Key);
+    void CloseStation();
+    FString GetStation() const {return Station;}
+    int32 GetCraftWidth() const {return Station==TEXT("crafting_table") ? 3 : 2;}
+    FBridgeNativeStack CraftResult() const;
+    bool TakeCraftResult(bool Shift=false);
+    FBridgeNativeStack StationResult() const;
+    bool TakeStationResult(bool Shift=false);
+    TArray<FString> StonecuttingResults() const;
+    void SelectStonecutting(int32 Index) {StonecuttingIndex=Index;}
+    void TickStations(float DeltaSeconds);
+    float CookingProgress() const;
+    float FuelProgress() const;
+    bool EquipSelected();
+    int32 ContainerSignal(const FString& Key) const;
+    TArray<FBridgeNativeStack> ContainerContents(const FString& Key) const;
+    void RemoveContainer(const FString& Key);
+    TFunction<void(const FString&,bool)> FurnaceLitChanged;
+    static int32 ContainerSize(const FString& Kind) {return Kind==TEXT("chest") ? 27 : Kind==TEXT("hopper") ? 5 : Kind==TEXT("dropper") || Kind==TEXT("dispenser") ? 9 : 3;}
+    bool EnsureContainer(const FString& Key,const FString& Kind);
+    int32 InsertContainer(const FString& Key,const FString& Id,int32 Count,int32 Side);
+    bool TransferContainer(const FString& From,const FString& To,int32 FromSide,int32 ToSide);
+    bool EmitContainerItem(const FString& Key,const TFunction<bool(const FBridgeNativeStack&)>& Spawn);
     static constexpr int32 OffhandSlot = 36;
     static constexpr int32 ArmorBegin = 37;
     static constexpr int32 ArmorEnd = 41;
@@ -80,6 +105,19 @@ private:
     bool StandaloneProfile = true;
     double LastSaveAttempt = -1;
     uint64 Revision = 0;
+    TArray<FBridgeNativeStack> CraftGrid;
+    struct FStation {TArray<FBridgeNativeStack> Slots;int32 Burn=0,BurnTotal=0,Cook=0;FString Kind,RecipeId;};
+    TMap<FString,FStation> Stations;
+    FString Station,StationKey;
+    std::vector<BridgeRecipeMath::Recipe> Recipes;
+    TMap<FString,int32> Fuels;
+    TMap<FString,FString> Remainders;
+    int32 StonecuttingIndex=0;
+    float StationClock=0;
+    const BridgeRecipeMath::Recipe* MatchingCraft() const;
+    const BridgeRecipeMath::Recipe* MatchingSingle(const FStation& Data) const;
+    bool ContainerAccepts(const FStation& Data,int32 Slot,const FString& Id,int32 Side) const;
+    void LoadGameplay();
     void Changed();
     void SeedCreativeHotbar();
     FString ProfilePath() const;

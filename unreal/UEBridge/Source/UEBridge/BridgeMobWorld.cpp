@@ -26,14 +26,33 @@ bool ABridgeMobWorld::Import(const FBridgeMobSnapshot& Snapshot,const FVector& A
     if(PrepareSpawnCollision) PrepareSpawnCollision(Feet);
     const float Half=FMath::Clamp(Snapshot.Height*50.f,10.f,1000.f),Radius=FMath::Clamp(Snapshot.Width*50.f,5.f,Half);
     FCollisionQueryParams Query(SCENE_QUERY_STAT(BridgeMobImport),false,this);if(Player.IsValid()) Query.AddIgnoredActor(Player.Get());
-    const FVector CapsuleCenter=Feet+FVector(0,0,Half+2);
+    // Exported feet already define the bounding box. Raising a hanging bat by
+    // 2 cm pushes its head into the ceiling and forces a ground-only fallback.
+    const FVector CapsuleCenter=Feet+FVector(0,0,Half);
     const FVector PlayerDelta=Player.IsValid() ? CapsuleCenter-Player->GetActorLocation() : FVector::ZeroVector;
     const bool PlayerBlocked=Player.IsValid() && BridgeMobSpawnMath::CapsulesOverlap(PlayerDelta.SizeSquared2D(),PlayerDelta.Z,Radius,Half,Player->GetSimpleCollisionRadius(),Player->GetSimpleCollisionHalfHeight());
     if(PlayerBlocked || GetWorld()->OverlapBlockingTestByChannel(CapsuleCenter,FQuat::Identity,ECC_Pawn,FCollisionShape::MakeCapsule(Radius,Half),Query)) {
         FVector SafeFeet;FString Reason;
-        if(!FindSpawnFeet(Feet,Radius,Half,SafeFeet,Reason)) return Reject(Reason,Snapshot.Type,Snapshot.Id);
+        if(Snapshot.Type==TEXT("minecraft:bat")) {
+            bool Found=false;
+            // Resolve ceiling contact locally in open air, without requiring a
+            // floor or moving through it. Keep model/data errors fatal.
+            for(float Drop=2;Drop<=50;Drop+=2) {
+                const FVector Candidate=Feet-FVector(0,0,Drop),Center=Candidate+FVector(0,0,Half);
+                FHitResult Barrier;
+                if(GetWorld()->LineTraceSingleByChannel(Barrier,Feet,Candidate,ECC_Visibility,Query)) break;
+                if(SpawnAllowed && !SpawnAllowed(Candidate)) continue;
+                if(GetWorld()->OverlapBlockingTestByChannel(Center,FQuat::Identity,ECC_Pawn,FCollisionShape::MakeCapsule(Radius,Half),Query)) continue;
+                if(Player.IsValid()) {
+                    const FVector Delta=Center-Player->GetActorLocation();
+                    if(BridgeMobSpawnMath::CapsulesOverlap(Delta.SizeSquared2D(),Delta.Z,Radius,Half,Player->GetSimpleCollisionRadius(),Player->GetSimpleCollisionHalfHeight())) continue;
+                }
+                SafeFeet=Candidate;Found=true;break;
+            }
+            if(!Found) return Reject(TEXT("bat restore blocked: no clear air below ceiling within 0.5 blocks"),Snapshot.Type,Snapshot.Id);
+        } else if(!FindSpawnFeet(Feet,Radius,Half,SafeFeet,Reason)) return Reject(Reason,Snapshot.Type,Snapshot.Id);
         Feet=SafeFeet;
-    } else Feet.Z+=2;
+    }
     FVector Position=Feet+FVector(0,0,Snapshot.Height*50.f);
     FActorSpawnParameters Params;Params.Owner=this;Params.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
     ABridgeMobCharacter* Mob=GetWorld()->SpawnActor<ABridgeMobCharacter>(Position,BridgeProtocol::ToRotation(Snapshot.Yaw,0),Params);

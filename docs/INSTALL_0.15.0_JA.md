@@ -1,5 +1,7 @@
 # UEBridge 0.15.0 導入手順（Windows）
 
+**UE 5.8.3ビルド修正0.15.1：** 0.15.0を導入した後に[修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-build-fix-0.15.1.zip)のSourceを適用してください。MOD交換・再書き出しは不要です。[適用手順](BUILD_FIX_0.15.1.md)。Windows実ビルドは未確認です。
+
 このページは、Minecraft 1.21.11のワールドをUEBridgeで取り込み、Unreal Engine上で起動するための手順です。初回は **Minecraft側のMOD導入 → native export → UE側の取り込み** の順に進めます。
 
 ## 必要なもの

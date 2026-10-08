@@ -204,7 +204,7 @@ void UBridgeVideo::RestoreNativeRenderMode() {
 }
 bool UBridgeVideo::SetNativeInverseSprite(int32 Slot,UTexture2D* Texture,const FVector4& PixelRect,const FVector4& UVRect,bool Enabled) {
     if(Slot<0 || Slot>=3 || !SavedNativeFlags || !GetWorld()) return false;
-    auto* PC=GetWorld()->GetFirstPlayerController();auto* Pawn=PC?PC->GetPawn():nullptr;
+    auto* PC=GetWorld()->GetFirstPlayerController();APawn* Pawn=PC?PC->GetPawn():nullptr;
     auto* Camera=Pawn?Pawn->FindComponentByClass<UCameraComponent>():nullptr;
     if(!Camera) return false;
     if(!NativeInverseHudMaterial) {

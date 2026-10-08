@@ -507,7 +507,7 @@ void ABridgeNativeHUD::EnsureSearchWidget() {
           [ SAssignNew(SearchField, SEditableTextBox)
             .Text(FText::FromString(Search)).Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
             .SelectAllTextWhenFocused(false).ClearKeyboardFocusOnCommit(false)
-            .ForegroundColor(FLinearColor::Transparent).BackgroundColor(FLinearColor::Transparent).BorderBackgroundColor(FLinearColor::Transparent).Padding(FMargin(0))
+            .ForegroundColor(FLinearColor::Transparent).BackgroundColor(FLinearColor::Transparent).Padding(FMargin(0))
             .OnKeyDownHandler_Lambda([this](const FGeometry&, const FKeyEvent& Event) {
                 if (Event.GetKey() == EKeys::Escape) { if (auto* Control = NativeController()) Control->ToggleInventory(); return FReply::Handled(); }
                 return FReply::Unhandled();

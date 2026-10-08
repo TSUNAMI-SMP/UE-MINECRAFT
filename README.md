@@ -1,5 +1,7 @@
 # Minecraft ↔ Unreal Engine bridge MVP
 
+**UE 5.8.3ビルド修正0.15.1：** 0.15.0を導入した後に[修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-build-fix-0.15.1.zip)のSourceを適用してください。MOD交換・再書き出しは不要です。[適用手順](docs/BUILD_FIX_0.15.1.md)。Windows実ビルドは未確認です。
+
 Fabric **Minecraft Java 1.21.11 / Java 21** から地形・素材・スキン・HUD・操作設定・音を
 書き出し、**Unreal Engine 5.8で直接プレイ** する実験用プロジェクトです。
 書き出し後はMinecraftを終了できます。UE映像をMinecraftへ送る従来の接続モードも残しています。

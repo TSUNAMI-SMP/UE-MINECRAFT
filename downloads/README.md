@@ -1,5 +1,7 @@
 # ダウンロード
 
+**UE 5.8.3ビルド修正0.15.1：** 0.15.0を導入した後に[修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-build-fix-0.15.1.zip)のSourceを適用してください。MOD交換・再書き出しは不要です。[適用手順](../docs/BUILD_FIX_0.15.1.md)。Windows実ビルドは未確認です。
+
 ## 完了後の終了判定修正0.13.2
 
 保存完了後のUE終了時アクセス違反を、現在の試行の完了記録とログを検証して区別します。

@@ -131,7 +131,7 @@ bool ABridgeMobCharacter::ClearBody(const FVector& Feet) const {
     FCollisionQueryParams Query(SCENE_QUERY_STAT(MobPathBody),false,this);
     if(WorldOwner.IsValid()) Query.AddIgnoredActor(WorldOwner.Get());
     const auto* Capsule=GetCapsuleComponent();
-    return !GetWorld()->OverlapBlockingTestByObjectType(Feet+FVector(0,0,Capsule->GetScaledCapsuleHalfHeight()),FQuat::Identity,Objects,
+    return !GetWorld()->OverlapAnyTestByObjectType(Feet+FVector(0,0,Capsule->GetScaledCapsuleHalfHeight()),FQuat::Identity,Objects,
         FCollisionShape::MakeCapsule(FMath::Max(1.f,Capsule->GetScaledCapsuleRadius()-.5f),FMath::Max(1.f,Capsule->GetScaledCapsuleHalfHeight()-.5f)),Query);
 }
 

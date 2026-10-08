@@ -293,7 +293,9 @@ def _import_minecraft_mobs(unreal, manifest, stage, filename):
         raise RuntimeError("Cannot save mob master material")
     def transform_for(values):
         position, rotation, scale = minecraft_part_transform(values)
-        return unreal.Transform(location=unreal.Vector(*position), rotation=unreal.Quat(*rotation), scale=unreal.Vector(*scale))
+        # Python's MakeTransform constructor expects Rotator, although FTransform
+        # stores Quat internally. Let UE convert the mapped Minecraft rotation.
+        return unreal.Transform(location=unreal.Vector(*position), rotation=unreal.Quat(*rotation).rotator(), scale=unreal.Vector(*scale))
     appearances = []
     for key, source in manifest["appearances"].items():
         material_name = "MI_Mob_v2_" + source["textureHash"][:20] + "_" + revision

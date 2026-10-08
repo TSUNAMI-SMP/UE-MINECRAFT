@@ -1,5 +1,12 @@
 # ダウンロード
 
+## モブ取り込み修正0.13.1
+
+UE 5.8.3でのQuat／Rotator型違いによる停止を修正。0.13.0適用済みならPython 1ファイルの更新で適用できます。
+
+- [UE更新ZIP 0.13.1](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.13.1/downloads/UEBridge-update-0.13.1.zip)
+- [更新手順・検証](../docs/UPGRADE_0.13.1.md)
+
 ## UE照明マテリアル修正版0.12.4
 
 VertexColorのRGBA出力指定による取り込み停止を修正します。0.12.3適用済みならZIP内のbridge_lighting_materials.pyとimport_minecraft_atlas.pyだけを上書きし再取り込みできます。C++再ビルド・MOD交換・再書き出しは不要です。修正後の実機取り込み完了・描画は未確認です。

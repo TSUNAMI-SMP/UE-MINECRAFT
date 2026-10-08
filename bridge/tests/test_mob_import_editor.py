@@ -1,6 +1,7 @@
 """Editor contract regressions: separate runpy scope, staging and save failure."""
 import contextlib
 import copy
+import json
 import pathlib
 import runpy
 import sys
@@ -25,6 +26,27 @@ class Palette(PropertyObject):
     pass
 
 
+class Rotator:
+    def __init__(self, quaternion):
+        self.source_quaternion = quaternion
+
+
+class Quat:
+    def __init__(self, *values):
+        self.values = values
+
+    def rotator(self):
+        return Rotator(self.values)
+
+
+def make_transform(**kwargs):
+    # UE's Python Transform constructor calls MakeTransform: its Rotation is a
+    # Rotator even though FTransform stores a quaternion internally.
+    if not isinstance(kwargs.get('rotation'), Rotator):
+        raise TypeError("Transform: Cannot nativize 'Quat' as 'Rotator'")
+    return kwargs
+
+
 class MobEditor(Editor):
     def __init__(self, project):
         super().__init__(project)
@@ -37,8 +59,9 @@ class MobEditor(Editor):
         api.AssetImportTask = api.DataAssetFactory = PropertyObject
         api.TextureFilter = types.SimpleNamespace(TF_NEAREST='nearest')
         api.TextureMipGenSettings = types.SimpleNamespace(TMGS_NO_MIPMAPS='none')
-        api.Vector = api.Vector2D = api.Quat = lambda *args: args
-        api.Transform = lambda **kwargs: kwargs
+        api.Vector = api.Vector2D = lambda *args: args
+        api.Quat, api.Rotator = Quat, Rotator
+        api.Transform = make_transform
         api.TextureParameterValue = api.MaterialParameterInfo = lambda **kwargs: types.SimpleNamespace(**kwargs)
         api.log = self.messages.append
         api.log_error = self.messages.append
@@ -111,6 +134,28 @@ class MobImportEditorTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'missing usable adult templates'):
             self.run_import()
         self.assertEqual({}, self.editor.assets)
+
+    def test_rest_and_walk_poses_use_rotator_constructor_with_mapped_transforms(self):
+        data = json.loads(self.path.read_text())
+        for source in data['appearances'].values():
+            for part in source['parts']:
+                part['transform'] = [16, 24, -8, .3, -.7, 1.1, 2, 3, 4]
+            for index, frame in enumerate(source['walkFrames']):
+                for part_index in range(len(frame)):
+                    frame[part_index] = [index, 24 - index, -8, .1 * index, -.2, .4, 2, 3, 4]
+        self.fixture.load(data)
+        palette = self.run_import()
+        for appearance in palette.get_editor_property('appearances'):
+            source = data['appearances'][appearance.get_editor_property('key')]
+            for part_index, (part, original) in enumerate(zip(appearance.get_editor_property('parts'), source['parts'])):
+                poses = [part.get_editor_property('rest')] + part.get_editor_property('walk_frames')
+                inputs = [original['transform']] + [frame[part_index] for frame in source['walkFrames']]
+                self.assertEqual(17, len(poses))
+                for pose, values in zip(poses, inputs):
+                    position, quaternion, scale = MOBS.minecraft_part_transform(values)
+                    self.assertEqual(position, pose['location'])
+                    self.assertEqual(quaternion, pose['rotation'].source_quaternion)
+                    self.assertEqual(scale, pose['scale'])
 
     def test_graph_failure_keeps_previous_palette_material_and_retry_finishes(self):
         old_palette, old_material = Palette(), Material()

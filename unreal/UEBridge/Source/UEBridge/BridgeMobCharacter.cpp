@@ -90,13 +90,13 @@ void ABridgeMobCharacter::Tick(float DeltaSeconds) {
     Super::Tick(DeltaSeconds);
     float Dt=FMath::Clamp(DeltaSeconds,0.f,.1f);
     HurtRemaining=float(FMath::Max(0.,LastFullHit+.5-GetWorld()->GetTimeSeconds()));
-    for(auto* Part:Parts) if(auto* Material=Cast<UMaterialInstanceDynamic>(Part->GetMaterial(0))) Material->SetScalarParameterValue(TEXT("BridgeHurt"),HurtRemaining>0 ? 1.f : 0.f);
+    for(const auto& Part:Parts) if(auto* Material=Cast<UMaterialInstanceDynamic>(Part->GetMaterial(0))) Material->SetScalarParameterValue(TEXT("BridgeHurt"),HurtRemaining>0 ? 1.f : 0.f);
     if(!Alive()) {
         DeathAge=float(FMath::Max(0.,GetWorld()->GetTimeSeconds()-DeathStarted));
         const float Angle=FMath::Min(90.f,FMath::Sqrt(FMath::Max(0.f,(DeathAge*20-1)/20*1.6f))*90.f);
         VisualRoot->SetRelativeLocation(DeathRootPosition);VisualRoot->SetRelativeRotation(FRotator(0,0,Angle));
         float Bottom=TNumericLimits<float>::Max();
-        for(auto* Part:Parts) if(Part->GetNumSections()>0) Bottom=FMath::Min(Bottom,float(Part->CalcBounds(Part->GetComponentTransform()).GetBox().Min.Z));
+        for(const auto& Part:Parts) if(Part->GetNumSections()>0) Bottom=FMath::Min(Bottom,float(Part->CalcBounds(Part->GetComponentTransform()).GetBox().Min.Z));
         if(Bottom<TNumericLimits<float>::Max()) VisualRoot->AddWorldOffset(FVector(0,0,DeathFloorZ-Bottom));
         if(DeathAge>=1.f) Destroy();return;
     }

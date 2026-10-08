@@ -220,12 +220,12 @@ bool UBridgeVideo::SetNativeInverseSprite(int32 Slot,UTexture2D* Texture,const F
         Camera->PostProcessSettings.WeightedBlendables.Array.Add(FWeightedBlendable(1.f,NativeInverseHudMaterial.Get()));
         Camera->PostProcessBlendWeight=1.f;NativeInverseHudCamera=Camera;
     }
-    int32 Width=0,Height=0;PC->GetViewportSize(Width,Height);if(Width<=0 || Height<=0) return false;
+    int32 ViewportWidth=0,ViewportHeight=0;PC->GetViewportSize(ViewportWidth,ViewportHeight);if(ViewportWidth<=0 || ViewportHeight<=0) return false;
     NativeInverseHudMaterial->SetVectorParameterValue(TEXT("NativeSceneTint"),NativeSceneTint);
     const FString Suffix=FString::FromInt(Slot);
     if(Texture) NativeInverseHudMaterial->SetTextureParameterValue(FName(*(TEXT("InverseTexture")+Suffix)),Texture);
     const bool Visible=Enabled && Texture && PixelRect.Z>0 && PixelRect.W>0;
-    NativeInverseHudMaterial->SetVectorParameterValue(FName(*(TEXT("InverseRect")+Suffix)),Visible?FLinearColor(PixelRect.X/Width,PixelRect.Y/Height,PixelRect.Z/Width,PixelRect.W/Height):FLinearColor::Transparent);
+    NativeInverseHudMaterial->SetVectorParameterValue(FName(*(TEXT("InverseRect")+Suffix)),Visible?FLinearColor(PixelRect.X/ViewportWidth,PixelRect.Y/ViewportHeight,PixelRect.Z/ViewportWidth,PixelRect.W/ViewportHeight):FLinearColor::Transparent);
     NativeInverseHudMaterial->SetVectorParameterValue(FName(*(TEXT("InverseUV")+Suffix)),FLinearColor(UVRect.X,UVRect.Y,UVRect.Z,UVRect.W));
     return true;
 }

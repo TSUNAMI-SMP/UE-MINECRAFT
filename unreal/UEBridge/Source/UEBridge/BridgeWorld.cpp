@@ -203,10 +203,10 @@ int32 ABridgeWorld::RemoveBlocksInSphere(FVector Position,float RemovalRadius) {
     return Removed;
 }
 
-namespace {
-FIntVector CellOf(const FIntVector& Block) {
+FIntVector ABridgeWorld::CellOf(const FIntVector& Block) {
     return FIntVector(FMath::FloorToInt(Block.X/8.0),FMath::FloorToInt(Block.Y/8.0),FMath::FloorToInt(Block.Z/8.0));
 }
+namespace {
 TMap<FString,FString> StateProperties(const FString& State) {
     TMap<FString,FString> Result; TArray<FString> Parts; State.ParseIntoArray(Parts,TEXT(","),true);
     for(const auto& Part:Parts) { FString Key,Value; if(Part.Split(TEXT("="),&Key,&Value)) Result.Add(Key,Value); }

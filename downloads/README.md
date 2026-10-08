@@ -1,5 +1,7 @@
 # ダウンロード
 
+**0.16.0のUEビルド修正0.16.1：** [修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.16.1.zip) / [適用手順](../docs/UPGRADE_0.16.1.md)。ヘッダー・変数名・流体の共通関数・配列APIによるビルド停止を修正。MODは0.16.0のまま、今回の書き出しを使用してUEを再ビルドします。修正後のWindowsビルドは未検証です。
+
 **ネイティブ操作・流体・時間更新0.16.0：** [MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.16.0.jar) / [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.16.0.zip) / [一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UE-Minecraft-MVP-0.16.0.zip) / [更新と確認手順](../docs/UPGRADE_0.16.0.md)。照準・しゃがみの端判定・モブの押し出しと死亡・向き、液体、時間サイクル、コマンドチャット、戦闘と落葉の粒子を追加・修正。MOD交換、新規native export、UE再ビルド・再取り込みが必要です。全種固有AI・特殊ブロック機能・原作と同一の流体挙動は未完成で、Windows UE 5.8.3の実ビルド・描画は未検証です。
 
 **診断後の修正版0.15.4：** [MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.15.4.jar) / [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.15.4.zip) / [適用と確認項目](../docs/UPGRADE_0.15.4.md)。符号付き視点角・アイテムの両面設定・重なる面・アウトライン・ノックバック・基本AIを変更。MOD交換、新規native export、UE再ビルド・再取り込みが必要です。全種固有AIの移植・実機での全問題解消は未確認です。

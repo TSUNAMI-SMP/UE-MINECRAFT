@@ -26,7 +26,7 @@
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
-#include "Misc/LexFromString.h"
+#include "Misc/DefaultValueHelper.h"
 #include "Sound/SoundAttenuation.h"
 
 namespace {
@@ -585,7 +585,7 @@ FString ABridgeReceiver::NativeCommand(const FString& Command) {
     FString Line=Command.TrimStartAndEnd();Line.RemoveFromStart(TEXT("/"));
     TArray<FString> Args;Line.ParseIntoArrayWS(Args);
     if(Args.IsEmpty()) return FString();
-    auto Number=[](const FString& Value,double& Out) {return LexTryParseString(Out,*Value) && FMath::IsFinite(Out) && Out>=0 && Out<=9007199254740991. && Out==FMath::FloorToDouble(Out);};
+    auto Number=[](const FString& Value,double& Out) {return FDefaultValueHelper::ParseDouble(Value,Out) && FMath::IsFinite(Out) && Out>=0 && Out<=9007199254740991. && Out==FMath::FloorToDouble(Out);};
     if(Args[0]==TEXT("help")) return TEXT("/time set day|noon|night|midnight|数値 /time add 数値 /time query daytime /gamerule doDaylightCycle true|false /weather clear|rain|thunder /gamemode creative|survival /give アイテム [個数] /save");
     if(Args[0]==TEXT("time") && Args.Num()==3) {
         if(Args[1]==TEXT("query")) {

@@ -124,6 +124,8 @@ private:
     void TickFluids(float DeltaSeconds);
     void QueueFluid(const FIntVector& Position);
     void BuildBoundary();
+    /** Shared by terrain and fluid translation units; floor division handles negative coordinates. */
+    static FIntVector CellOf(const FIntVector& Block);
     bool Inside(const FIntVector& C) const;
     FIntVector OwnerOf(const FBridgeBlock& Block) const;
     void RebuildCell(const FIntVector& Cell);

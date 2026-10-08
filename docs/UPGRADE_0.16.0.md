@@ -1,5 +1,7 @@
 # UEBridge 0.16.0 更新手順
 
+**0.16.0の配布後にUE 5.8.3のコンパイルエラーが報告されました。[修正ZIP 0.16.1と適用手順](UPGRADE_0.16.1.md)を併せて使用してください。MODは0.16.0のままです。**
+
 照準、しゃがみの端判定、モブのノックバックと死亡、歩く向きの修正に加え、水・溶岩、時間サイクル、コマンド用チャット、戦闘・落葉の粒子を追加した版です。
 
 - [MOD 0.16.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.16.0.jar)

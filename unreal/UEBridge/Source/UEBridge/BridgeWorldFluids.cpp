@@ -47,7 +47,7 @@ bool ABridgeWorld::SetFluid(const FIntVector& Position,int32 Kind,int32 Level) {
         FString Updated=State;Updated.ReplaceInline(Wet ? TEXT("waterlogged=true") : TEXT("waterlogged=false"),Kind==1 ? TEXT("waterlogged=true") : TEXT("waterlogged=false"));
         const auto* Original=FindVisual(Position);TArray<FBridgeBlock> NewRows;
         if(!Original || !AppendState(Position,Existing,Original->Color,Updated,NewRows)) return false;
-        const int32 Before=Rows->CountByPredicate([&](const FBridgeBlock& B){return OwnerOf(B)==Position;});
+        int32 Before=0;for(const auto& B:*Rows) if(OwnerOf(B)==Position) ++Before;
         if(Rows->Num()-Before+NewRows.Num()>8192 || Shapes-Before+NewRows.Num()>4194304) return false;
         const int32 Removed=Rows->RemoveAll([&](const FBridgeBlock& B){return OwnerOf(B)==Position;});Rows->Append(NewRows);Shapes+=NewRows.Num()-Removed;
         const FIntVector Local=Position-CellOf(Position)*8;const uint16 Index=uint16(Local.X+Local.Z*8+Local.Y*64);auto& Water=WaterCells.FindOrAdd(CellOf(Position));if(Kind==1) Water.AddUnique(Index);else Water.Remove(Index);
@@ -57,7 +57,7 @@ bool ABridgeWorld::SetFluid(const FIntVector& Position,int32 Kind,int32 Level) {
     if(Kind && Existing==Id && LevelOf(State)==Level) return true;
     TArray<FBridgeBlock> Added;
     if(Kind && !AppendState(Position,Id,Kind==1 ? 0x3f76e4 : 0xffffff,FString::Printf(TEXT("level=%d"),Level),Added)) return false;
-    const int32 Before=Rows->CountByPredicate([&](const FBridgeBlock& B){return OwnerOf(B)==Position;});
+    int32 Before=0;for(const auto& B:*Rows) if(OwnerOf(B)==Position) ++Before;
     if(Rows->Num()-Before+Added.Num()>8192 || Shapes-Before+Added.Num()>4194304) return false;
     const int32 Removed=Rows->RemoveAll([&](const FBridgeBlock& B){return OwnerOf(B)==Position;});Shapes-=Removed;
     Rows->Append(Added);Shapes+=Added.Num();

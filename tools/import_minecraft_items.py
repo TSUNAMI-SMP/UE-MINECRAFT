@@ -107,15 +107,25 @@ def import_minecraft_items(filename, asset_root="/Game/Bridge/Minecraft/Items"):
         raise RuntimeError('Use the updated UEBridge project')
     if unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world() is not None or unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages():
         raise RuntimeError('Stop Play and save your level first')
+    world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+    if world is None or world.get_path_name().startswith('/Temp/'):
+        raise RuntimeError('Save the current level to your project before importing items')
+    helper_path = project / 'import_minecraft_textures.py'
+    if not helper_path.is_file():
+        raise RuntimeError('Copy import_minecraft_textures.py next to UEBridge.uproject before importing items')
     receivers = [a for a in unreal.get_editor_subsystem(unreal.EditorActorSubsystem).get_all_level_actors() if isinstance(a, unreal.BridgeReceiver)]
     if len(receivers) != 1:
         raise RuntimeError('The saved level needs exactly one BridgeReceiver')
     receiver = receivers[0]; palette = receiver.get_editor_property('texture_palette')
     if palette is None:
         raise RuntimeError('Import block textures before items')
-    palette.get_editor_property('item_models')  # Require the updated C++ before importing anything.
+    # Copy UE's mutable maps before editing either one. A failed property update
+    # or save must leave the already assigned block/item palette usable.
+    previous_models = dict(palette.get_editor_property('item_models'))
+    previous_materials = dict(palette.get_editor_property('item_materials'))
+    models = {key: json.dumps(value, separators=(',', ':'), allow_nan=False) for key, value in manifest['items'].items()}
     assets, tools, editing = unreal.EditorAssetLibrary, unreal.AssetToolsHelpers.get_asset_tools(), unreal.MaterialEditingLibrary
-    helper = runpy.run_path(str(project / 'import_minecraft_textures.py'))
+    helper = runpy.run_path(str(helper_path))
     root = asset_root; materials = {}
     with unreal.ScopedSlowTask(len(manifest['textures']), 'Import Minecraft item textures') as progress:
         progress.make_dialog(True)
@@ -144,17 +154,36 @@ def import_minecraft_items(filename, asset_root="/Game/Bridge/Minecraft/Items"):
             if not isinstance(material, unreal.MaterialInstanceConstant):
                 raise RuntimeError('Cannot create item material')
             editing.set_material_instance_parent(material, parent)
-            editing.set_material_instance_texture_parameter_value(material, 'FaceTexture', texture)
-            editing.set_material_instance_scalar_parameter_value(material, 'FaceTint', 1.0)
+            # UE 5.8's parameter setters can fail their lookup while returning
+            # False. Explicit overrides use the same contract as block faces.
+            material.set_editor_property('texture_parameter_values', [unreal.TextureParameterValue(
+                parameter_info=unreal.MaterialParameterInfo(name='FaceTexture'), parameter_value=texture)])
+            material.set_editor_property('scalar_parameter_values', [unreal.ScalarParameterValue(
+                parameter_info=unreal.MaterialParameterInfo(name='FaceTint'), parameter_value=1.0)])
             editing.update_material_instance(material)
-            if not assets.save_loaded_asset(material, False):
-                raise RuntimeError('Cannot save item material')
+            if editing.get_material_instance_texture_parameter_value(material, 'FaceTexture') != texture or not assets.save_loaded_asset(material, False):
+                raise RuntimeError('Cannot save/read back item material: ' + key)
             materials[key] = material
-    with unreal.ScopedEditorTransaction('Assign native Minecraft item models'):
-        palette.set_editor_property('item_models', {key: json.dumps(value, separators=(',', ':'), allow_nan=False) for key, value in manifest['items'].items()})
-        palette.set_editor_property('item_materials', materials)
+    try:
+        with unreal.ScopedEditorTransaction('Assign native Minecraft item models'):
+            palette.set_editor_property('item_models', models)
+            palette.set_editor_property('item_materials', materials)
         if not assets.save_loaded_asset(palette, False):
             raise RuntimeError('Cannot save native item palette')
+        if dict(palette.get_editor_property('item_models')) != models or dict(palette.get_editor_property('item_materials')) != materials:
+            raise RuntimeError('Cannot verify native item palette assignment')
+    except Exception:
+        for field, previous in (('item_models', previous_models), ('item_materials', previous_materials)):
+            try:
+                palette.set_editor_property(field, previous)
+            except Exception as restore_error:
+                unreal.log_error('Item palette rollback failed for ' + field + ': ' + str(restore_error))
+        try:
+            if not assets.save_loaded_asset(palette, False):
+                unreal.log_error('Cannot save restored native item palette')
+        except Exception as restore_error:
+            unreal.log_error('Cannot save restored native item palette: ' + str(restore_error))
+        raise
     ground = ground_model_count(manifest)
     if ground < len(manifest['items']):
         unreal.log_warning(f"Legacy hand models retained: {len(manifest['items']) - ground} items lack native GROUND display. Drops are rejected and refunded for those items; run /uebridge items export with MOD 0.11.0 and import again.")

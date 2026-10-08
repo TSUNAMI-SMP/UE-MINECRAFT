@@ -4,7 +4,9 @@ Fabric **Minecraft Java 1.21.11 / Java 21** から地形・素材・スキン・
 書き出し、**Unreal Engine 5.8で直接プレイ** する実験用プロジェクトです。
 書き出し後はMinecraftを終了できます。UE映像をMinecraftへ送る従来の接続モードも残しています。
 
-**Windows UE 5.8.3のC++ビルド成功と、nativeテクスチャ取り込みへの進行を利用者ログで確認しました。** 照明マテリアル接続の停止には[修正版0.12.4](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.4/downloads/UEBridge-update-0.12.4.zip)と[適用手順](docs/UPGRADE_0.12.4.md)を使用してください。修正後の実機取り込み完了・描画は未確認です。MODは0.12.0を継続します。
+**追加調査・原作への改善0.13.0：** アイテム／空の取り込み停止、保存失敗時のパレット復元、Python更新の自動再取り込み、オフハンドの交換・表示・保存、ボタン時間、矢の基本ダメージ、段差・到達距離・入力復帰・太陽／月を修正しました。[UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.13.0/downloads/UEBridge-update-0.13.0.zip) / [MOD 0.13.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.13.0/downloads/minecraft-ue-bridge-0.13.0.jar) / [一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.13.0/downloads/UE-Minecraft-MVP-0.13.0.zip) / [更新手順](docs/UPGRADE_0.13.0.md) / [調査・検証記録](docs/AUDIT_0.13.0.md)。旧MOD 0.12.0の書き出しは継続できます。1.21.11の太陽・月画像の不足には新MODでの再書き出しが必要です。
+
+**Windows UE 5.8.3の0.12.1 C++ビルド成功と、nativeテクスチャ取り込みへの進行は利用者ログで確認済みです。0.13.0のUEコンパイル・実取り込み完了・描画は未確認です。** 0.12.1～0.12.4の停止修正は0.13.0に含まれます。旧版の配布物・ブランチも保持しています。
 
 **UE単独プレイ0.12.0：** `/uebridge native export` の1回で書き出し、**Play-Native.cmd** の初回ファイル選択でビルド・取り込み・起動。次回はダブルクリックで保存状態を再開します。直接入力、手元のリソースパックを使うHUD、インベントリ・検索、モブPaletteの作成と割り当て、光・粒子・診断の修正、地形・所持品・モブ・投下物の永続化を実装しました。
 

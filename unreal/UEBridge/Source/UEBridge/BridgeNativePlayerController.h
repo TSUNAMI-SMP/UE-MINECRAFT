@@ -29,6 +29,8 @@ public:
     UFUNCTION(BlueprintCallable,Category="Bridge|Native") void TogglePause();
     UFUNCTION(BlueprintCallable,Category="Bridge|Native") void SelectNativeHotbar(int32 Slot);
     FString BindingLabel(const FString& Action) const;
+    bool MatchesBinding(const FString& Action, const FKey& Key) const;
+    bool IsNativeLeftHanded() const {return LeftHanded;}
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Native") int32 NativePerspective=0;
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Native") bool NativeHudVisible=true;
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Native") FString NativeInputStatus;

@@ -272,7 +272,11 @@ def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mo
         raise RuntimeError('Model master path has another asset type')
     scalar_names = {str(value) for value in editing.get_scalar_parameter_names(parent)}
     texture_names = {str(value) for value in editing.get_texture_parameter_names(parent)}
-    if {'FaceTint', 'BridgeUnlit', 'BridgeUseVertexLight', 'BridgeSpecular'}.issubset(scalar_names) and 'FaceTexture' in texture_names:
+    use_vertex = not root.endswith('/Items')
+    required_scalars = {'FaceTint', 'BridgeUnlit', 'BridgeSpecular'}
+    if use_vertex:
+        required_scalars.add('BridgeUseVertexLight')
+    if required_scalars.issubset(scalar_names) and 'FaceTexture' in texture_names:
         # All texture instances share a master: do not rebuild/recompile it once per item sprite.
         return parent
     lighting = _lighting_functions(unreal)  # Resolve required helper before replacing a graph.
@@ -303,7 +307,7 @@ def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mo
     colored = expression(unreal.MaterialExpressionMultiply)
     connect(sample, colored, 'A', 'RGB'); connect(blend, colored, 'B')
     lighting['wire_vanilla_lighting'](unreal, editing, parent, colored,
-        use_vertex=not root.endswith('/Items'))
+        use_vertex=use_vertex)
     alpha_target = unreal.MaterialProperty.MP_OPACITY if translucent else unreal.MaterialProperty.MP_OPACITY_MASK
     if not editing.connect_material_property(sample, 'A', alpha_target):
         raise RuntimeError('Cannot connect model-face alpha')
@@ -315,9 +319,53 @@ def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mo
         raise RuntimeError('Cannot save model-face master')
     if not {'FaceTexture'}.issubset({str(name) for name in editing.get_texture_parameter_names(parent)}):
         raise RuntimeError('Model-face master has an incomplete texture graph')
-    if not {'FaceTint', 'BridgeUnlit', 'BridgeUseVertexLight'}.issubset({str(name) for name in editing.get_scalar_parameter_names(parent)}):
+    if not required_scalars.issubset({str(name) for name in editing.get_scalar_parameter_names(parent)}):
         raise RuntimeError('Model-face master has an incomplete tint/lighting graph')
     return parent
+
+
+def _commit_texture_palette(unreal, assets, receiver, palette, values, atlas_import=None):
+    """Restore registered palette data as well as the level on a failed import."""
+    fields = list(values)
+    if atlas_import is not None:
+        fields.extend(("atlas_rects", "atlas_pages", "atlas_materials"))
+    previous_values = {field: dict(palette.get_editor_property(field)) for field in fields}
+    previous_palette = receiver.get_editor_property("texture_palette")
+    level = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+    try:
+        with unreal.ScopedEditorTransaction("Assign Minecraft texture palette"):
+            for field, value in values.items():
+                palette.set_editor_property(field, value)
+            if atlas_import is not None:
+                atlas_import()
+            if not assets.save_loaded_asset(palette, False):
+                raise RuntimeError("Cannot save texture palette")
+            receiver.set_editor_property("texture_palette", palette)
+        if not level.save_current_level() or receiver.get_editor_property("texture_palette") != palette:
+            raise RuntimeError("Cannot save/verify current level with texture palette")
+    except Exception:
+        # Unreal's editor transaction does not automatically undo Python errors.
+        # Copy the maps before assignment; a registered palette may be the same
+        # UObject as the new destination and restoring only the Receiver is insufficient.
+        failures = []
+        for field, value in previous_values.items():
+            try:
+                palette.set_editor_property(field, value)
+            except Exception:
+                failures.append(field)
+        try:
+            receiver.set_editor_property("texture_palette", previous_palette)
+        except Exception:
+            failures.append("receiver")
+        for name, save in (("palette save", lambda: assets.save_loaded_asset(palette, False)), ("level save", level.save_current_level)):
+            try:
+                if not save():
+                    failures.append(name)
+            except Exception:
+                failures.append(name)
+        if failures:
+            getattr(unreal, "log_warning", unreal.log)("Texture import rollback could not save all previous values (" + ", ".join(failures) + "). Do not save the failed import; retain your backup.")
+        raise
 
 
 def import_minecraft_textures(filename, asset_root="/Game/Bridge/Minecraft"):
@@ -558,27 +606,20 @@ def import_minecraft_textures(filename, asset_root="/Game/Bridge/Minecraft"):
         particle_tints[identifier] = particle["tint"]
         value = particle["color"] if particle["tint"] else 0xffffff
         particle_colors[identifier] = unreal.Color((value >> 16) & 255, (value >> 8) & 255, value & 255, 255)
-    with unreal.ScopedEditorTransaction("Assign Minecraft texture palette"):
-        palette.set_editor_property("materials", materials)
-        palette.set_editor_property("particle_textures", particle_textures)
-        palette.set_editor_property("particle_tints", particle_tints)
-        palette.set_editor_property("particle_colors", particle_colors)
-        merged_faces = dict(palette.get_editor_property("face_materials")); merged_faces.update(face_materials)
-        palette.set_editor_property("face_materials", merged_faces)
-        if manifest["version"] == 2:
-            for field, source in (("blockstate_definitions", manifest["blockstates"]), ("models", manifest["models"]), ("state_shapes", manifest["blocks"])):
-                merged = dict(palette.get_editor_property(field))
-                merged.update({key: json.dumps(value, separators=(",", ":"), ensure_ascii=True) for key, value in source.items()})
-                palette.set_editor_property(field, merged)
-        if manifest['version'] == 2:
-            import runpy
-            atlas_script = project / 'import_minecraft_atlas.py'
-            if not atlas_script.is_file():
-                raise RuntimeError('Copy import_minecraft_atlas.py next to UEBridge.uproject first')
-            runpy.run_path(str(atlas_script))['import_minecraft_atlas'](unreal, manifest, palette, root)
-        if not assets.save_loaded_asset(palette, False):
-            raise RuntimeError("Cannot save texture palette")
-        receivers[0].set_editor_property("texture_palette", palette)
-    if not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level():
-        raise RuntimeError("Cannot save current level")
+    merged_faces = dict(palette.get_editor_property("face_materials")); merged_faces.update(face_materials)
+    values = dict(materials=materials, particle_textures=particle_textures,
+                  particle_tints=particle_tints, particle_colors=particle_colors, face_materials=merged_faces)
+    atlas_import = None
+    if manifest["version"] == 2:
+        for field, source in (("blockstate_definitions", manifest["blockstates"]), ("models", manifest["models"]), ("state_shapes", manifest["blocks"])):
+            merged = dict(palette.get_editor_property(field))
+            merged.update({key: json.dumps(value, separators=(",", ":"), ensure_ascii=True) for key, value in source.items()})
+            values[field] = merged
+        import runpy
+        atlas_script = project / "import_minecraft_atlas.py"
+        if not atlas_script.is_file():
+            raise RuntimeError("Copy import_minecraft_atlas.py next to UEBridge.uproject first")
+        atlas_function = runpy.run_path(str(atlas_script))["import_minecraft_atlas"]
+        atlas_import = lambda: atlas_function(unreal, manifest, palette, root)
+    _commit_texture_palette(unreal, assets, receivers[0], palette, values, atlas_import)
     unreal.log("Minecraft texture/model palette ready: " + str(len(palette_materials)) + " block types, " + str(len(manifest.get("models", {}))) + " models. Press Play and /uebridge world refresh.")

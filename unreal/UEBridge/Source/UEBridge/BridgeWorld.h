@@ -79,6 +79,10 @@ private:
     UPROPERTY() TObjectPtr<class UBridgeBlockPalette> SavedPalette;
     UPROPERTY() TArray<TObjectPtr<class UBoxComponent>> Boundary;
     TMap<FIntVector,double> ButtonRelease;
+    TMap<FIntVector,TSet<FIntVector>> ButtonTimerOwners;
+    void RefreshButtonTimersForCell(const FIntVector& Cell);
+    void TickButtonTimers(double GameTime);
+    friend class FBridgeButtonTimerTest;
     FString LastModelError;
     uint64 MutationSerial=0;
     mutable FString SurfaceReason=TEXT("not_sampled");

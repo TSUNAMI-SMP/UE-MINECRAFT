@@ -10,6 +10,8 @@ namespace BridgeCharacterMath {
 constexpr double Pi = 3.14159265358979323846;
 constexpr double StandingEyeCm = 162.0;
 constexpr double CrouchedEyeCm = 127.0;
+// PlayerEntity inherits LivingEntity's default STEP_HEIGHT attribute: 0.6 blocks.
+constexpr double StepHeightCm = 60.0;
 constexpr double FirstPersonBlockScale = 0.40;
 constexpr double ThirdPersonBlockScale = 0.375;
 constexpr double SwingSeconds = 0.30;

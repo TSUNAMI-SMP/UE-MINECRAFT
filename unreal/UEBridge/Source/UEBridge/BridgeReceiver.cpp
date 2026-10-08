@@ -515,13 +515,21 @@ void ABridgeReceiver::BlockAction(const FBridgePacket& P) {
     if(LastActionAt>=0 && Now-LastActionAt<.08) {LastAction=TEXT("rate limited");return;}
     LastActionAt=Now;Character->SwingHand();
     FVector EyePosition;FRotator EyeRotation;Character->GetEyeAim(EyePosition,EyeRotation);
-    if(P.Action==TEXT("break") && IsValid(MobWorld) && MobWorld->Attack(EyePosition,BridgeProtocol::ToRotation(P.Yaw,P.Pitch).Vector())) {
+    const float BlockReach=NativePlayActive && !NativeCreative ? 450.f : 500.f;
+    const float AttackReach=NativePlayActive ? (NativeCreative ? 500.f : 300.f) : 500.f;
+    if(P.Action==TEXT("break") && IsValid(MobWorld) && MobWorld->Attack(EyePosition,BridgeProtocol::ToRotation(P.Yaw,P.Pitch).Vector(),AttackReach)) {
         LastAction=TEXT("mob attacked");return;
     }
     FIntVector Block;FVector Normal,HitPoint;
-    if(!SyncedWorld->Aim(EyePosition,BridgeProtocol::ToRotation(P.Yaw,P.Pitch),500.f,Block,Normal,Character,&HitPoint)) {LastAction=TEXT("no imported block in reach");return;}
+    if(!SyncedWorld->Aim(EyePosition,BridgeProtocol::ToRotation(P.Yaw,P.Pitch),BlockReach,Block,Normal,Character,&HitPoint)) {LastAction=TEXT("no imported block in reach");return;}
     if(P.Action==TEXT("break")) {
         FString BrokenId;FColor BrokenTint;const bool Known=SyncedWorld->GetBlockInfo(Block,BrokenId,BrokenTint);
+        if(NativePlayActive && !NativeCreative && Known &&
+            (BrokenId==TEXT("minecraft:bedrock") || BrokenId==TEXT("minecraft:barrier") || BrokenId==TEXT("minecraft:end_portal_frame")
+            || BrokenId==TEXT("minecraft:command_block") || BrokenId==TEXT("minecraft:chain_command_block") || BrokenId==TEXT("minecraft:repeating_command_block")
+            || BrokenId==TEXT("minecraft:structure_block") || BrokenId==TEXT("minecraft:jigsaw"))) {
+            LastAction=TEXT("unbreakable in survival");return;
+        }
         TArray<FBox> DustBoxes;SyncedWorld->GetBlockOutline(Block,DustBoxes);
         const FVector Center=SyncedWorld->BlockCenter(Block);
         const bool Broken=SyncedWorld->BreakBlock(Block);LastAction=Broken ? TEXT("broken") : TEXT("no block");

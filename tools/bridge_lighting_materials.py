@@ -166,7 +166,9 @@ def ensure_native_sky_materials(unreal, editing=None):
     assets = unreal.EditorAssetLibrary
     editing = editing or unreal.MaterialEditingLibrary
     tools = unreal.AssetToolsHelpers.get_asset_tools()
-    collection = ensure_lighting_collection(unreal)
+    default_texture = unreal.load_asset('/Engine/EngineResources/DefaultTexture.DefaultTexture')
+    if default_texture is None:
+        raise RuntimeError('The engine default texture is unavailable for native celestial materials')
     result = {}
     for name, celestial in (('M_NativeSky_v1', False), ('M_NativeCelestial_v1', True)):
         path = '/Game/Bridge/Minecraft/' + name
@@ -178,13 +180,13 @@ def ensure_native_sky_materials(unreal, editing=None):
         editing.delete_all_material_expressions(material)
         material.set_editor_property('shading_model', unreal.MaterialShadingModel.MSM_UNLIT)
         material.set_editor_property('two_sided', True)
-        material.set_editor_property('blend_mode', unreal.BlendMode.BLEND_MASKED if celestial else unreal.BlendMode.BLEND_OPAQUE)
+        material.set_editor_property('blend_mode', unreal.BlendMode.BLEND_TRANSLUCENT if celestial else unreal.BlendMode.BLEND_OPAQUE)
         if celestial:
             sample = editing.create_material_expression(material, unreal.MaterialExpressionTextureSampleParameter2D, -300, 0)
             sample.set_editor_property('parameter_name', 'CelestialTexture')
             # A default texture is necessary to compile a texture parameter. The
             # active resource-pack sun/moon replaces it at runtime via the UI palette.
-            sample.set_editor_property('texture', unreal.load_asset('/Engine/EngineResources/DefaultTexture'))
+            sample.set_editor_property('texture', default_texture)
             uv = editing.create_material_expression(material, unreal.MaterialExpressionTextureCoordinate, -600, 0)
             scale = editing.create_material_expression(material, unreal.MaterialExpressionVectorParameter, -600, 100)
             scale.set_editor_property('parameter_name', 'CelestialUVScale'); scale.set_editor_property('default_value', unreal.LinearColor(1, 1, 0, 0))
@@ -192,11 +194,25 @@ def ensure_native_sky_materials(unreal, editing=None):
             offset = editing.create_material_expression(material, unreal.MaterialExpressionVectorParameter, -600, 200)
             offset.set_editor_property('parameter_name', 'CelestialUVOffset'); offset.set_editor_property('default_value', unreal.LinearColor(0, 0, 0, 0))
             add = editing.create_material_expression(material, unreal.MaterialExpressionAdd, -350, 0)
-            for source, output, target, pin in ((uv, '', multiply, 'A'), (scale, 'RG', multiply, 'B'), (multiply, '', add, 'A'), (offset, 'RG', add, 'B'), (add, '', sample, 'UVs')):
+            # VectorParameter has RGB/R/G/B/A outputs, not a combined RG pin.
+            # Explicit masks retain the two UV channels before multiply/add.
+            scale_uv = editing.create_material_expression(material, unreal.MaterialExpressionComponentMask, -500, 100)
+            offset_uv = editing.create_material_expression(material, unreal.MaterialExpressionComponentMask, -500, 200)
+            for mask in (scale_uv, offset_uv):
+                if mask is None:
+                    raise RuntimeError('Cannot create native celestial UV component mask')
+                for channel, enabled in (('r', True), ('g', True), ('b', False), ('a', False)):
+                    mask.set_editor_property(channel, enabled)
+            for source, output, target, pin in ((scale, '', scale_uv, ''), (offset, '', offset_uv, ''), (uv, '', multiply, 'A'), (scale_uv, '', multiply, 'B'), (multiply, '', add, 'A'), (offset_uv, '', add, 'B'), (add, '', sample, 'UVs')):
                 if not editing.connect_material_expressions(source, output, target, pin):
                     if target != sample or not editing.connect_material_expressions(source, output, target, 'Coordinates'):
                         raise RuntimeError('Cannot wire generated celestial UV: ' + pin)
-            if not editing.connect_material_property(sample, 'A', unreal.MaterialProperty.MP_OPACITY_MASK):
+            opacity = editing.create_material_expression(material, unreal.MaterialExpressionScalarParameter, -300, 300)
+            opacity.set_editor_property('parameter_name', 'CelestialOpacity'); opacity.set_editor_property('default_value', 1.0)
+            alpha = editing.create_material_expression(material, unreal.MaterialExpressionMultiply, -150, 300)
+            if not editing.connect_material_expressions(sample, 'A', alpha, 'A') or not editing.connect_material_expressions(opacity, '', alpha, 'B'):
+                raise RuntimeError('Cannot wire native celestial weather opacity')
+            if not editing.connect_material_property(alpha, '', unreal.MaterialProperty.MP_OPACITY):
                 raise RuntimeError('Cannot connect native celestial opacity')
             source, output = sample, 'RGB'
         else:

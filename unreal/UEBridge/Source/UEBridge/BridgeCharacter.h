@@ -13,6 +13,8 @@ public:
     void SetAuthorityEnabled(bool Enabled);
     void ApplyUEInput(float Forward,float Right,bool JumpHeld,bool Sneak,bool Sprint=false);
     void ConfigureVisuals(class UMaterialInterface* Material,class UBridgeBlockPalette* Palette,const FString& Item,const FString& Block,int32 Color,const FString& ModelKey=FString());
+    /** Native inventory display only; offhand use actions are not simulated here. */
+    void ConfigureOffhandVisuals(const FString& Item,const FString& Block,int32 Color,const FString& ModelKey=FString());
     void ConfigureAppearance(class UBridgePlayerAppearance* Appearance);
     void ApplyPlayerVisuals(int32 Perspective,float SwingProgress,float EquipProgress,bool UsingItem,const FString& UseAction,float UseProgress,bool LeftHanded,int32 SkinLayers,bool SlimArms);
     /** Local equip progress and imported appearance settings, without a 20 Hz MC pose lease. */
@@ -26,11 +28,14 @@ public:
     void SetMinecraftFov(float VerticalFov);
     void ConfigureNativeViewOptions(bool BobView,float FovEffectScale);
     void SetInteractionWorld(class ABridgeWorld* Imported);
+    /** Centimeters; legacy bridge mode keeps its 5-block outline range. */
+    void SetNativeBlockReach(float ReachCm);
     void SwingHand() { if(SwingRemaining<=.15f) SwingRemaining=.30f; }
     void ApplyFlight(bool Creative,bool Flying);
     void ConfigureOutline(class UMaterialInterface* Material);
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Diagnostics") bool BridgeFlying=false;
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Diagnostics") FString HeldModelStatus=TEXT("empty");
+    UPROPERTY(BlueprintReadOnly,Category="Bridge|Diagnostics") FString OffhandModelStatus=TEXT("empty");
     UPROPERTY(BlueprintReadOnly,Category="Bridge") bool UEAuthority=false;
     bool PreviousJump=false;
     void ApplyMinecraftPose(double BodyHeight, double EyeHeight, bool Sneak);
@@ -63,6 +68,7 @@ private:
     UPROPERTY() TObjectPtr<class UProceduralMeshComponent> ProjectedSleeve;
     UPROPERTY() TObjectPtr<class UProceduralMeshComponent> ProjectedHand;
     UPROPERTY() TObjectPtr<class UProceduralMeshComponent> HeldModel;
+    UPROPERTY() TObjectPtr<class UProceduralMeshComponent> OffhandModel;
     // Small immutable model sections. The projected vertices are rebuilt from
     // these sources, never from the previous frame's already deformed geometry.
     struct FHandSection {
@@ -74,6 +80,10 @@ private:
     TMap<UProceduralMeshComponent*,TArray<FHandSection>> HandSources;
     FIntVector AimVoxel=FIntVector::ZeroValue;FString AimState;bool AimShapeReady=false;
     bool HeldGeometryReady=false,NativeHeldGeometry=false;
+    bool OffhandGeometryReady=false,NativeOffhandGeometry=false,OffhandPendingVisual=false;
+    float OffhandEquip=1;
+    FString OffhandItem,OffhandBlock,OffhandModelKey,PendingOffhandItem,PendingOffhandBlock,PendingOffhandModelKey;
+    int32 OffhandColor=0xffffff,PendingOffhandColor=0xffffff;
     FString VisualItem, VisualBlock, VisualModelKey;
     int32 VisualColor=-1;
     bool VisualsConfigured=false;
@@ -81,6 +91,7 @@ private:
     float MinecraftBaseFov=80, FovSprintMultiplier=1;
     bool NativeBobView=true;
     float NativeFovEffectScale=1;
+    float BlockOutlineReachCm=500;
     bool SprintRequested=false,BodyYawInitialized=false;
     int32 CameraPerspective=0,PlayerSkinLayers=127;
     float PlayerSwing=0,PlayerEquip=1,PlayerUseProgress=0,RemoteEyeHeight=162;
@@ -97,6 +108,7 @@ private:
     FString PlayerUseAction;
     void BuildAvatarGeometry();
     void BuildHeldGeometry();
+    void BuildHandGeometry(UProceduralMeshComponent* Model,const FString& Item,const FString& Block,int32 Color,const FString& ModelKey,bool LeftHanded,bool& NativeGeometry,FString& Status);
     void CacheHandGeometry(UProceduralMeshComponent* Part);
     void PoseHandGeometry(UProceduralMeshComponent* Part,const FTransform& Pose,bool FixedHandFov);
     void UpdatePlayerCamera();

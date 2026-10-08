@@ -90,13 +90,13 @@ class Editor:
             save_loaded_asset=self.save_asset, list_assets=lambda *args: list(self.assets))
         api.AssetToolsHelpers = types.SimpleNamespace(get_asset_tools=lambda: types.SimpleNamespace(create_asset=self.create_asset))
         api.ScopedEditorTransaction = lambda name: contextlib.nullcontext()
-        api.BlendMode = types.SimpleNamespace(BLEND_MASKED="masked", BLEND_OPAQUE="opaque")
-        api.MaterialProperty = types.SimpleNamespace(MP_BASE_COLOR="base", MP_OPACITY_MASK="mask", MP_ROUGHNESS="roughness", MP_SPECULAR="specular", MP_EMISSIVE_COLOR="emissive")
+        api.BlendMode = types.SimpleNamespace(BLEND_MASKED="masked", BLEND_OPAQUE="opaque", BLEND_TRANSLUCENT="translucent")
+        api.MaterialProperty = types.SimpleNamespace(MP_BASE_COLOR="base", MP_OPACITY_MASK="mask", MP_OPACITY="opacity", MP_ROUGHNESS="roughness", MP_SPECULAR="specular", MP_EMISSIVE_COLOR="emissive")
         api.LinearColor = lambda *values: values
         api.log = lambda text: None
         for name in ("TextureCoordinate", "Constant2Vector", "Multiply", "PerInstanceCustomData", "Add",
                      "AppendVector", "VertexInterpolator", "TextureSampleParameter2D", "VectorParameter", "Constant",
-                     "ScalarParameter", "CollectionParameter", "VertexNormalWS", "PixelNormalWS", "Custom", "VertexColor", "LinearInterpolate", "Constant3Vector"):
+                     "ScalarParameter", "CollectionParameter", "VertexNormalWS", "PixelNormalWS", "Custom", "VertexColor", "LinearInterpolate", "Constant3Vector", "ComponentMask"):
             setattr(api, "MaterialExpression" + name, type(name, (Expression,), {}))
         api.MaterialEditingLibrary = types.SimpleNamespace(delete_all_material_expressions=self.clear,
             create_material_expression=self.create_expression, connect_material_expressions=self.connect,
@@ -130,6 +130,8 @@ class Editor:
     def connect(self, source, output, target, pin):
         if self.fail_connections:
             return False
+        if type(source).__name__ in ("VectorParameter", "VertexColor", "TextureSampleParameter2D") and output not in ("", "RGB", "R", "G", "B", "A"):
+            return False  # These expressions have no combined RG or RGBA output pin.
         if type(source).__name__ == "VertexInterpolator" and output:
             return False  # UE interpolators expose an unnamed output, not VertexColor's RGB pin.
         if type(target).__name__ == "TextureSampleParameter2D":
@@ -245,6 +247,26 @@ class VanillaEffectsSetupTest(unittest.TestCase):
         self.assertEqual([0,1,2,3,4], sorted(node.properties['data_index'] for node in current.nodes if type(node).__name__ == 'PerInstanceCustomData'))
         self.assertEqual(2, self.editor.level_saves)
         self.assertIn('outline_material', self.editor.receivers[0].properties)
+
+    def test_outline_level_save_failure_restores_old_assignment_without_saving_other_assets(self):
+        import runpy
+        old = object()
+        receiver = self.editor.receivers[0]
+        receiver.set_editor_property('outline_material', old)
+        unrelated = []
+        self.editor.api.EditorLoadingAndSavingUtils.save_dirty_packages = lambda *args: unrelated.append(args)
+        attempts = []
+        level = self.editor.api.get_editor_subsystem(self.editor.api.LevelEditorSubsystem)
+        def save():
+            attempts.append(True)
+            return len(attempts) != 1
+        level.save_current_level = save
+        with patch.dict(sys.modules, {'unreal': self.editor.api}):
+            with self.assertRaisesRegex(RuntimeError, 'Cannot save/verify'):
+                runpy.run_path(str(SCRIPT.parent / 'setup_bridge_rendering.py'))['setup_bridge_rendering']()
+        self.assertIs(old, receiver.get_editor_property('outline_material'))
+        self.assertEqual(2, len(attempts))
+        self.assertEqual([], unrelated)
 
     def test_missing_lighting_helper_blocks_asset_edits(self):
         (pathlib.Path(self.temp.name) / 'bridge_lighting_materials.py').unlink()

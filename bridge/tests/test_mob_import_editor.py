@@ -36,6 +36,7 @@ class MobEditor(Editor):
         api.MaterialInstanceConstantFactoryNew = object
         api.AssetImportTask = api.DataAssetFactory = PropertyObject
         api.TextureFilter = types.SimpleNamespace(TF_NEAREST='nearest')
+        api.TextureMipGenSettings = types.SimpleNamespace(TMGS_NO_MIPMAPS='none')
         api.Vector = api.Vector2D = api.Quat = lambda *args: args
         api.Transform = lambda **kwargs: kwargs
         api.TextureParameterValue = api.MaterialParameterInfo = lambda **kwargs: types.SimpleNamespace(**kwargs)
@@ -96,6 +97,9 @@ class MobImportEditorTest(unittest.TestCase):
         self.assertEqual((0, -6.25, -6.25), parts[0].get_editor_property('vertices')[2])
         self.assertEqual(16, len(parts[0].get_editor_property('walk_frames')))
         self.assertEqual(1, self.editor.level_saves)
+        textures = [value for value in self.editor.assets.values() if isinstance(value, Texture)]
+        self.assertTrue(textures)
+        self.assertTrue(all(value.get_editor_property('filter') == 'nearest' and value.get_editor_property('mip_gen_settings') == 'none' for value in textures))
         self.assertTrue(any('Minecraft mob body models ready:' in message for message in self.editor.messages))
 
     def test_missing_baseline_or_helper_preflight_changes_no_assets(self):

@@ -25,11 +25,13 @@ void UBridgeNativeInventory::Initialize(UBridgeNativeUiPalette* Resources, const
     for (TCHAR C : ProfileName.Left(64)) if (FChar::IsAlnum(C) || C == '_' || C == '-') SafeName.AppendChar(C);
     if (SafeName.IsEmpty()) SafeName = TEXT("default");
     if (Initialized && Profile == SafeName && StandaloneProfile == UseStandaloneProfile) return;
-    Profile = SafeName; Slots.SetNum(36); CursorStack.Clear(); SelectedSlot = 0;
+    // SetNum alone retains elements when a UObject is reused for another
+    // profile. Establish an empty inventory before attempting any profile load.
+    Profile = SafeName; Slots.Empty(36); Slots.SetNum(36); CursorStack.Clear(); OffhandStack.Clear(); SelectedSlot = 0;
     Initialized = true; StandaloneProfile = UseStandaloneProfile; LastSaveAttempt = -1;
     if (!StandaloneProfile) PersistenceError.Reset();
     LoadedExistingProfile = StandaloneProfile && LoadProfile(); PreserveInvalidProfile = StandaloneProfile && !LoadedExistingProfile && FPaths::FileExists(ProfilePath()); InitialSettingsApplied = false;
-    if (!LoadedExistingProfile) { for (auto& Stack : Slots) Stack.Clear(); SeedCreativeHotbar(); if (!PreserveInvalidProfile) Changed(); }
+    if (!LoadedExistingProfile) { SeedCreativeHotbar(); if (!PreserveInvalidProfile) Changed(); }
 }
 
 void UBridgeNativeInventory::ImportInitialSettings(const TSharedPtr<FJsonObject>& Settings) {
@@ -45,7 +47,17 @@ void UBridgeNativeInventory::ImportInitialSettings(const TSharedPtr<FJsonObject>
         if (!ValidItemId(ItemId) || Count > MaxCount(ItemId)) return;
         Initial[int32(Slot)].ItemId = ItemId; Initial[int32(Slot)].Count = int32(Count);
     }
-    Slots = MoveTemp(Initial); double Slot = 0;
+    FBridgeNativeStack InitialOffhand;
+    if (const auto Value = Settings->TryGetField(TEXT("offhand")); Value.IsValid()) {
+        const TSharedPtr<FJsonObject>* Entry = nullptr; FString ItemId; double Count = 0;
+        if (!Value->TryGetObject(Entry) || !Entry->IsValid() || !(*Entry)->TryGetStringField(TEXT("id"), ItemId) || !(*Entry)->TryGetNumberField(TEXT("count"), Count)
+            || !FMath::IsFinite(Count) || Count < 0 || Count > 99 || FMath::FloorToDouble(Count) != Count) return;
+        if (Count > 0 && ItemId != TEXT("minecraft:air") && !ItemId.IsEmpty()) {
+            if (!ValidItemId(ItemId) || Count > MaxCount(ItemId)) return;
+            InitialOffhand.ItemId = ItemId; InitialOffhand.Count = int32(Count);
+        }
+    }
+    Slots = MoveTemp(Initial); OffhandStack = MoveTemp(InitialOffhand); double Slot = 0;
     if (Settings->TryGetNumberField(TEXT("selectedSlot"), Slot) && FMath::IsFinite(Slot) && Slot >= 0 && Slot < 9 && FMath::FloorToDouble(Slot) == Slot) SelectedSlot = int32(Slot);
     InitialSettingsApplied = true; Changed();
 }
@@ -59,6 +71,13 @@ void UBridgeNativeInventory::SeedCreativeHotbar() {
 }
 
 const FBridgeNativeStack& UBridgeNativeInventory::Selected() const { return Slots.IsValidIndex(SelectedSlot) ? Slots[SelectedSlot] : EmptyNativeStack; }
+const FBridgeNativeStack& UBridgeNativeInventory::GetStack(int32 Slot) const {
+    return Slot == OffhandSlot ? OffhandStack : (Slots.IsValidIndex(Slot) ? Slots[Slot] : EmptyNativeStack);
+}
+FBridgeNativeStack* UBridgeNativeInventory::MutableStack(int32 Slot) {
+    if (!Initialized) return nullptr;
+    return Slot == OffhandSlot ? &OffhandStack : (Slots.IsValidIndex(Slot) ? &Slots[Slot] : nullptr);
+}
 
 int32 UBridgeNativeInventory::MaxCount(const FString& ItemId) const {
     const auto* Entry = Palette ? Palette->FindItem(ItemId) : nullptr;
@@ -111,16 +130,17 @@ bool UBridgeNativeInventory::AddStack(const FString& ItemId, int32 Count) {
 }
 
 bool UBridgeNativeInventory::QuickMove(int32 Slot) {
-    auto& Stack = Slots[Slot]; if (Stack.IsEmpty()) return false;
-    const int32 Remaining = InsertRange(Stack.ItemId, Stack.Count, Slot < 9 ? 9 : 0, Slot < 9 ? 36 : 9);
+    auto* Target = MutableStack(Slot); if (!Target || Target->IsEmpty()) return false;
+    auto& Stack = *Target;
+    const int32 Remaining = InsertRange(Stack.ItemId, Stack.Count, Slot < 9 ? 9 : 0, Slot < 9 || Slot == OffhandSlot ? 36 : 9);
     if (Remaining == Stack.Count) return false;
     Stack.Count = Remaining; if (!Remaining) Stack.Clear(); Changed(); return true;
 }
 
 bool UBridgeNativeInventory::ClickSlot(int32 Slot, bool RightClick, bool Shift) {
-    if (!Slots.IsValidIndex(Slot)) return false;
+    auto* Target = MutableStack(Slot); if (!Target) return false;
     if (Shift && CursorStack.IsEmpty()) return QuickMove(Slot);
-    auto& Stack = Slots[Slot];
+    auto& Stack = *Target;
     if (CursorStack.IsEmpty()) {
         if (Stack.IsEmpty()) return false;
         CursorStack.ItemId = Stack.ItemId; CursorStack.Count = RightClick ? (Stack.Count + 1) / 2 : Stack.Count;
@@ -137,9 +157,12 @@ bool UBridgeNativeInventory::ClickSlot(int32 Slot, bool RightClick, bool Shift) 
 }
 
 bool UBridgeNativeInventory::SwapSlots(int32 First, int32 Second) {
-    if (!Slots.IsValidIndex(First) || !Slots.IsValidIndex(Second) || First == Second || !CursorStack.IsEmpty()) return false;
-    Swap(Slots[First], Slots[Second]); Changed(); return true;
+    auto* A = MutableStack(First); auto* B = MutableStack(Second);
+    if (!A || !B || First == Second || !CursorStack.IsEmpty()) return false;
+    if (A->IsEmpty() && B->IsEmpty()) return false;
+    Swap(*A, *B); Changed(); return true;
 }
+bool UBridgeNativeInventory::SwapOffhand() { return SwapSlots(SelectedSlot, OffhandSlot); }
 
 bool UBridgeNativeInventory::TakeCatalogue(const FString& ItemId, bool RightClick) {
     if (!ValidItemId(ItemId) || (Palette && !Palette->FindItem(ItemId))) return false;
@@ -163,13 +186,20 @@ int32 UBridgeNativeInventory::GetItemCount(const FString& ItemId) const {
     int32 Total = 0;
     if (!ValidItemId(ItemId)) return Total;
     for (const auto& Stack : Slots) if (Stack.ItemId == ItemId && Stack.Count > 0) Total += Stack.Count;
+    if (OffhandStack.ItemId == ItemId && OffhandStack.Count > 0) Total += OffhandStack.Count;
     return Total;
 }
 
 bool UBridgeNativeInventory::ConsumeItem(const FString& ItemId,int32 Count) {
     if (!Initialized || Count <= 0 || Count > 4096 || GetItemCount(ItemId) < Count) return false;
     int32 Remaining = Count;
+    if (OffhandStack.ItemId == ItemId && OffhandStack.Count > 0) {
+        const int32 Taken = FMath::Min(OffhandStack.Count, Remaining);
+        OffhandStack.Count -= Taken; Remaining -= Taken;
+        if (OffhandStack.Count == 0) OffhandStack.Clear();
+    }
     for (auto& Stack : Slots) {
+        if (Remaining == 0) break;
         if (Stack.ItemId != ItemId || Stack.Count <= 0) continue;
         const int32 Taken = FMath::Min(Stack.Count, Remaining);
         Stack.Count -= Taken; Remaining -= Taken;
@@ -214,10 +244,14 @@ bool UBridgeNativeInventory::ImportRuntimeState(const TSharedPtr<FJsonObject>& J
     };
     TArray<FBridgeNativeStack> Loaded; Loaded.SetNum(36);
     for (int32 I = 0; I < 36; ++I) if (!ReadStack((*Values)[I], Loaded[I])) { PersistenceError = TEXT("inventory_invalid_stack"); return false; }
-    FBridgeNativeStack LoadedCursor;
+    FBridgeNativeStack LoadedCursor, LoadedOffhand;
     const auto CursorValue = Json->TryGetField(TEXT("cursor"));
     if (CursorValue.IsValid() && !ReadStack(CursorValue, LoadedCursor)) { PersistenceError = TEXT("inventory_invalid_cursor"); return false; }
-    Slots = MoveTemp(Loaded); CursorStack = MoveTemp(LoadedCursor); SelectedSlot = int32(SavedSelection);
+    // Old native snapshots have exactly 36 slots and no offhand field. Keep
+    // that representation valid, while rejecting a malformed present field.
+    const auto OffhandValue = Json->TryGetField(TEXT("offhand"));
+    if (OffhandValue.IsValid() && !ReadStack(OffhandValue, LoadedOffhand)) { PersistenceError = TEXT("inventory_invalid_offhand"); return false; }
+    Slots = MoveTemp(Loaded); CursorStack = MoveTemp(LoadedCursor); OffhandStack = MoveTemp(LoadedOffhand); SelectedSlot = int32(SavedSelection);
     LoadedExistingProfile = true; InitialSettingsApplied = true; Changed(); PersistenceError.Reset(); return true;
 }
 
@@ -226,6 +260,7 @@ TSharedPtr<FJsonObject> UBridgeNativeInventory::ExportRuntimeState() const {
     auto Json = MakeShared<FJsonObject>(); Json->SetNumberField(TEXT("version"), 1); Json->SetNumberField(TEXT("selected"), SelectedSlot);
     auto WriteStack = [](const FBridgeNativeStack& Stack) { auto Entry = MakeShared<FJsonObject>(); Entry->SetStringField(TEXT("item"), Stack.IsEmpty() ? FString() : Stack.ItemId); Entry->SetNumberField(TEXT("count"), Stack.IsEmpty() ? 0 : Stack.Count); return MakeShared<FJsonValueObject>(Entry); };
     TArray<TSharedPtr<FJsonValue>> Values; for (const auto& Stack : Slots) Values.Add(WriteStack(Stack)); Json->SetArrayField(TEXT("slots"), Values); Json->SetField(TEXT("cursor"), WriteStack(CursorStack));
+    Json->SetField(TEXT("offhand"), WriteStack(OffhandStack));
     return Json;
 }
 

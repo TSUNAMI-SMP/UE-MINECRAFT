@@ -149,7 +149,16 @@ public final class NativePlayExport implements AutoCloseable {
         header.addProperty("yaw",settings.get("yaw").getAsDouble());header.addProperty("pitch",settings.get("pitch").getAsDouble());header.add("center",NativeExportData.array(center.x(),center.y(),center.z()));header.addProperty("radius",radius);header.addProperty("halfHeight",halfHeight);header.addProperty("cells",cells.size());
         JsonObject packet=new JsonObject();VanillaLightingState.write(packet,client,origin.add(0,1.62,0));
         JsonObject light=packet.getAsJsonObject("vanillaLight");
-        light.addProperty("skyBackgroundColor",sourceWorld.getEnvironmentAttributes().getAttributeValue(EnvironmentAttributes.SKY_COLOR_VISUAL,origin.add(0,1.62,0))&0xffffff);
+        var attributes=sourceWorld.getEnvironmentAttributes();Vec3d skyPosition=origin.add(0,1.62,0);
+        light.addProperty("skyBackgroundColor",attributes.getAttributeValue(EnvironmentAttributes.SKY_COLOR_VISUAL,skyPosition)&0xffffff);
+        // Read actual dimension/positional attributes instead of assuming custom
+        // worlds use the Overworld clock or the legacy moon atlas ordering.
+        light.addProperty("skybox",sourceWorld.getDimension().skybox().asString());
+        float sunAngle=attributes.getAttributeValue(EnvironmentAttributes.SUN_ANGLE_VISUAL,skyPosition);
+        float moonAngle=attributes.getAttributeValue(EnvironmentAttributes.MOON_ANGLE_VISUAL,skyPosition);
+        if(Float.isFinite(sunAngle)) light.addProperty("sunAngle",MathHelper.wrapDegrees(sunAngle));
+        if(Float.isFinite(moonAngle)) light.addProperty("moonAngle",MathHelper.wrapDegrees(moonAngle));
+        light.addProperty("moonPhase",attributes.getAttributeValue(EnvironmentAttributes.MOON_PHASE_VISUAL,skyPosition).getIndex());
         light.addProperty("timeOfDay",sourceWorld.getTimeOfDay());light.addProperty("worldTime",sourceWorld.getTime());light.addProperty("rainGradient",sourceWorld.getRainGradient(1));light.addProperty("thunderGradient",sourceWorld.getThunderGradient(1));header.add("vanillaLight",light);
         header.add("mobs",captureMobs(client));worldOutput=Files.newBufferedWriter(directory.resolve("world.ndjson"),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);writeLine(header);
     }

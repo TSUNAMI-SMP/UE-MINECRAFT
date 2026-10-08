@@ -264,6 +264,7 @@ def _import_minecraft_mobs(unreal, manifest, stage, filename):
         if not isinstance(texture, unreal.Texture2D):
             raise RuntimeError("Cannot import mob texture")
         texture.set_editor_property("filter", unreal.TextureFilter.TF_NEAREST)
+        texture.set_editor_property("mip_gen_settings", unreal.TextureMipGenSettings.TMGS_NO_MIPMAPS)
         texture.set_editor_property("srgb", True)
         if not assets.save_loaded_asset(texture, False):
             raise RuntimeError("Cannot save mob texture")

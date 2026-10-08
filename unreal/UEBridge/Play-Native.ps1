@@ -1,5 +1,15 @@
 param([string]$Manifest = "", [string]$EngineRoot = "", [switch]$Reimport, [switch]$Rebuild)
 $ErrorActionPreference = "Stop"
+function Get-NativeImportSourceHash([string]$ImportScript) {
+    if (!(Test-Path -LiteralPath $ImportScript -PathType Leaf)) { throw "import_native_play.py is missing. Extract all Python helpers from the UE update." }
+    $directory = Split-Path -Parent $ImportScript
+    # Names and contents identify this importer, independent of installation path/mtime.
+    $files = @(Get-ChildItem -LiteralPath $directory -File -Filter '*.py' | Sort-Object Name)
+    $hashList = ($files | ForEach-Object { $_.Name + ':' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }) -join "`n"
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($algorithm.ComputeHash([Text.Encoding]::UTF8.GetBytes($hashList)))).Replace('-', '').ToLowerInvariant() }
+    finally { $algorithm.Dispose() }
+}
 function Get-NativeImportFailure([string]$LogPath, [int]$ExitCode) {
     $detail = "Native import did not complete (editor exit code: $ExitCode). Import log: $LogPath"
     if (Test-Path -LiteralPath $LogPath) {
@@ -84,12 +94,14 @@ try {
         [IO.File]::WriteAllText($buildMarker, $sourceHash, [Text.UTF8Encoding]::new($false))
         $Reimport = $true
     }
-    $ready = $marker -and $marker.completed -and $marker.manifest -eq $Manifest -and $marker.manifestSha256 -eq $manifestHash -and $marker.map -eq "/Game/Bridge/Native/NativePlay"
+    $importScript = Join-Path $PSScriptRoot "import_native_play.py"
+    if (!(Test-Path -LiteralPath $importScript)) { $importScript = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\..\tools\import_native_play.py")) }
+    $importHash = Get-NativeImportSourceHash -ImportScript $importScript
+    $importSourceMarker = Join-Path $saved "NativeImportSource.sha256"
+    $importedHash = if (Test-Path -LiteralPath $importSourceMarker) { (Get-Content -LiteralPath $importSourceMarker -Raw).Trim() } else { "" }
+    $ready = $marker -and $marker.completed -and $marker.manifest -eq $Manifest -and $marker.manifestSha256 -eq $manifestHash -and $marker.map -eq "/Game/Bridge/Native/NativePlay" -and $importedHash -eq $importHash
     $level = Join-Path $PSScriptRoot "Content\Bridge\Native\NativePlay.umap"
     if ($Reimport -or !$ready -or !(Test-Path -LiteralPath $level)) {
-        $importScript = Join-Path $PSScriptRoot "import_native_play.py"
-        if (!(Test-Path -LiteralPath $importScript)) { $importScript = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\..\tools\import_native_play.py")) }
-        if (!(Test-Path -LiteralPath $importScript)) { throw "import_native_play.py is missing. Extract all Python helpers from the UE update." }
         Write-Host "Importing this exact export into a separate native-play level: $Manifest"
         $attemptId = [Guid]::NewGuid().ToString("N")
         $logs = Join-Path $saved "Logs"
@@ -117,6 +129,7 @@ try {
         if ($process.ExitCode -ne 0 -or !$marker -or !$marker.completed -or $marker.importAttemptId -ne $attemptId -or $marker.map -ne "/Game/Bridge/Native/NativePlay" -or $marker.manifest -ne $Manifest -or $marker.manifestSha256 -ne $manifestHash -or !(Test-Path -LiteralPath $level)) {
             throw (Get-NativeImportFailure -LogPath $importLog -ExitCode $process.ExitCode)
         }
+        [IO.File]::WriteAllText($importSourceMarker, $importHash, [Text.UTF8Encoding]::new($false))
     }
     Write-Host "Starting UE native play. Minecraft can stay closed. Saved world: Saved\NativeWorlds." -ForegroundColor Green
     $playArguments = @("`"$project`"", "/Game/Bridge/Native/NativePlay", "-game", "-windowed", "-ResX=1280", "-ResY=720")

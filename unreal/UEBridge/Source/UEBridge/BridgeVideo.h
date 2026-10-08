@@ -19,7 +19,7 @@ public:
     void SetNativeRenderMode(bool Lighting);
     void RestoreNativeRenderMode();
     void SetNativeSkyPalette(class UBridgeNativeUiPalette* Palette);
-    void SetNativeSkyEnvironment(const TSharedPtr<class FJsonObject>& Values);
+    void SetNativeSkyEnvironment(const TSharedPtr<class FJsonObject>& Values,const FString& Dimension=TEXT("minecraft:overworld"));
     bool IsNativeRenderModeActive() const {return SavedNativeFlags.IsValid();}
     FString GetDiagnosticSummary() const;
     void SetMinecraftOrigin(const FVector& MinecraftOrigin,const FVector& UEAnchor) {MCOrigin=MinecraftOrigin;Anchor=UEAnchor;}
@@ -70,7 +70,9 @@ private:
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> NativeSkyMaterial;
     UPROPERTY() TObjectPtr<class UBridgeNativeUiPalette> NativeSkyPalette;
     TMap<TWeakObjectPtr<class UPrimitiveComponent>,bool> NativeHiddenSky;
-    double NativeTimeOfDay=6000,NativeSkyEpoch=0;
+    double NativeSunAngle=0,NativeMoonAngle=180;
+    int32 NativeMoonPhase=0;
+    bool NativeHasCelestials=true;
     float NativeRain=0;
     FLinearColor NativeBackgroundColor=FLinearColor(.47f,.65f,1.f,1.f);
     TWeakObjectPtr<class UGameViewportClient> StandaloneViewport;

@@ -9,6 +9,7 @@
 #include "BridgePlayerAppearance.h"
 #include "BridgeBlockPalette.h"
 #include "BridgeMobWorld.h"
+#include "BridgeMobCharacter.h"
 #include "BridgeItemWorld.h"
 #include "BridgeVanillaEffects.h"
 #include "BridgeLightingService.h"
@@ -103,10 +104,10 @@ void ABridgeReceiver::BeginNativePlay() {
     NativeSoundAttenuation->Attenuation.FalloffDistance=1500;
     Video->SetMinecraftOrigin(SourceOrigin,Anchor);
     Video->SetNativeSkyPalette(NativeUiPalette);
-    Video->SetNativeSkyEnvironment(LatestInput.VanillaLight);
+    Video->SetNativeSkyEnvironment(LatestInput.VanillaLight,NativeStore->GetMetadata().Dimension);
     NativeSetLighting(NativeLighting);
     NativeStatus=TEXT("Validating offline world...");
-    UE_LOG(LogTemp,Display,TEXT("Bridge 0.12.1 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
+    UE_LOG(LogTemp,Display,TEXT("Bridge 0.13.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
 }
 
 void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
@@ -200,6 +201,7 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
     TerrainMovementReady=SyncedWorld->IsMovementReady(Character->GetMinecraftFeetPosition(),Character->GetVelocity());
     const bool Running=!NativeStore->IsSaving() && GetNativeHealth()>0 && TerrainMovementReady;
     UEControl=Running;Character->SetAuthorityEnabled(Running);
+    Character->SetNativeBlockReach(NativeCreative ? 500.f : 450.f);
     Character->ConfigureVisuals(PreviewMaterial,TexturePalette,LatestInput.HeldItem,LatestInput.HeldBlock,LatestInput.HeldColor,LatestInput.HeldModelKey);
     if(Running && !GetWorld()->IsPaused()) {
         Character->ApplyFlight(NativeCreative,LatestInput.Flying);
@@ -278,12 +280,17 @@ void ABridgeReceiver::NativeAction(const FString& Action) {
         if(Pull<.1f || LatestInput.HeldItem!=TEXT("minecraft:bow") || !SpawnBowProjectiles || Arrows.Num()>=64) return;
         if(auto* Arrow=GetWorld()->SpawnActor<ABridgeArrow>(Eye+Aim.Vector()*50,Aim)) {
             if(!NativeCreative && (!Inventory || !Inventory->ConsumeItem(TEXT("minecraft:arrow"),1))) {Arrow->Destroy();LastAction=TEXT("No arrows");return;}
+            const TWeakObjectPtr<ABridgeReceiver> WeakThis(this);
+            Arrow->NativeImpact=[WeakThis](AActor* Actor,const FVector& Direction,float Damage) {
+                if(!WeakThis.IsValid() || !WeakThis->IsNativeReady() || !WeakThis->UEControl) return;
+                if(auto* Mob=Cast<ABridgeMobCharacter>(Actor)) Mob->Hit(Damage,Direction);
+            };
             Arrow->Launch(Aim.Vector(),Pull,Character);Arrows.Add(Arrow);PlayNativeSound(TEXT("minecraft:entity.arrow.shoot"),Eye,1,1,TEXT("player"));
             OnBowFired(Eye,Aim.Vector(),Pull);
         }
         return;
     }
-    FIntVector Voxel;FVector Normal,Hit;const bool Found=SyncedWorld->Aim(Eye,Aim,500,Voxel,Normal,Character,&Hit);
+    FIntVector Voxel;FVector Normal,Hit;const bool Found=SyncedWorld->Aim(Eye,Aim,NativeCreative ? 500.f : 450.f,Voxel,Normal,Character,&Hit);
     if(Action==TEXT("pick")) {
         FString Id;FColor Tint;
         if(Found && Inventory && SyncedWorld->GetBlockInfo(Voxel,Id,Tint)) {

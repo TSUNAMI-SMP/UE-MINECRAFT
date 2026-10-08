@@ -5,6 +5,7 @@
 #include "BridgeNativeUiPalette.h"
 #include "BridgeReceiver.h"
 #include "BridgeCharacter.h"
+#include "BridgeBlockPalette.h"
 #include "Camera/CameraComponent.h"
 #include "Dom/JsonObject.h"
 #include "EngineUtils.h"
@@ -195,6 +196,9 @@ bool ABridgeNativePlayerController::Pressed(const FString& Action) const {
 FString ABridgeNativePlayerController::BindingLabel(const FString& Action) const {
     const auto* Key=Bindings.Find(Action);return Key && Key->IsValid() ? Key->GetDisplayName().ToString() : TEXT("Unbound");
 }
+bool ABridgeNativePlayerController::MatchesBinding(const FString& Action,const FKey& Key) const {
+    const auto* Bound=Bindings.Find(Action);return Bound && Bound->IsValid() && *Bound==Key;
+}
 bool ABridgeNativePlayerController::Focused() const {
     const auto* ViewportClient=GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
     return !ViewportClient || !ViewportClient->Viewport || ViewportClient->Viewport->HasFocus();
@@ -218,6 +222,7 @@ void ABridgeNativePlayerController::SetMenuInput() {
     }
     if(PlayerInput) PlayerInput->FlushPressedKeys();
     WheelRemainder=0;
+    PreviousJumpTap=PreviousForwardTap=-1;bDoubleSprint=false;
     float UnusedX=0,UnusedY=0;GetInputMouseDelta(UnusedX,UnusedY);
 }
 void ABridgeNativePlayerController::ToggleInventory() {
@@ -244,6 +249,14 @@ void ABridgeNativePlayerController::UpdateSelectedItem() {
     const FString Item=NativeInventory->GetSelectedItemId();
     if(Slot!=SelectedSlot || Item!=SelectedItem) {
         SelectedSlot=Slot;SelectedItem=Item;NativeReceiver->NativeSelect(Item);
+    }
+    if(auto* BridgePawn=Cast<ABridgeCharacter>(GetPawn())) {
+        const FString OffhandItem=NativeInventory->GetOffhand().ItemId;
+        const auto* Entry=LoadedUiPalette ? LoadedUiPalette->FindItem(OffhandItem) : nullptr;
+        const FString Block=Entry ? Entry->BlockId : FString();
+        const int32 Color=NativeReceiver->TexturePalette && !Block.IsEmpty()
+            ? int32(NativeReceiver->TexturePalette->ParticleTint(Block).ToPackedARGB() & 0xffffffu) : 0xffffff;
+        BridgePawn->ConfigureOffhandVisuals(OffhandItem,Block,Color,Entry ? Entry->ModelKey : FString());
     }
 }
 void ABridgeNativePlayerController::RouteMenuInput() {
@@ -302,8 +315,16 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
     if(Pressed(TEXT("key.inventory")) && (!NativeHud || !NativeHud->HasSearchFocus())) {ToggleInventory();return;}
     if(bInventoryOpen || bPauseOpen) {RouteMenuInput();StopNativeInput();UpdateSelectedItem();return;}
     const bool HasFocus=Focused();
-    if(!HasFocus) {StopNativeInput();bLastFocused=false;return;}
-    if(!bLastFocused) {if(PlayerInput) PlayerInput->FlushPressedKeys();bLastFocused=true;}
+    if(!HasFocus) {
+        StopNativeInput();bLastFocused=false;
+        PreviousJumpTap=PreviousForwardTap=-1;bDoubleSprint=false;WheelRemainder=0;
+        return;
+    }
+    if(!bLastFocused) {
+        if(PlayerInput) PlayerInput->FlushPressedKeys();
+        float DiscardX=0,DiscardY=0;GetInputMouseDelta(DiscardX,DiscardY);
+        bLastFocused=true;StopNativeInput();return;
+    }
     if(!NativeReceiver->IsNativeReady()) {NativeInputStatus=NativeReceiver->NativeStatus;StopNativeInput();return;}
     NativeInputStatus=TEXT("Direct UE input");
     auto* BridgePawn=Cast<ABridgeCharacter>(GetPawn());
@@ -344,6 +365,10 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
     const float Wheel=GetInputAnalogKeyState(EKeys::MouseWheelAxis);
     const int32 WheelSteps=BridgeNativeInputMath::WheelSteps(Wheel,MouseWheelSensitivity,WheelRemainder);
     if(WheelSteps && NativeInventory) NativeInventory->ScrollHotbar(WheelSteps);
+    if(Pressed(TEXT("key.swapOffhand")) && NativeInventory) {
+        if(bBowHeld) {NativeReceiver->NativeAction(TEXT("use_cancel"));bBowHeld=false;}
+        NativeInventory->SwapOffhand();
+    }
     UpdateSelectedItem();
     if(Down(TEXT("key.attack")) && (Pressed(TEXT("key.attack")) || Now>=NextAttack)) {NativeReceiver->NativeAction(TEXT("break"));NextAttack=Now+.25;}
     const bool UseDown=Down(TEXT("key.use"));
@@ -354,10 +379,6 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
     if(UseDown && BowSelected && !bBowHeld) {NativeReceiver->NativeAction(TEXT("use_start"));bBowHeld=true;}
     else if(UseDown && !BowSelected && (Pressed(TEXT("key.use")) || Now>=NextUse)) {NativeReceiver->NativeAction(TEXT("place"));NextUse=Now+.20;}
     if(Pressed(TEXT("key.pickItem"))) NativeReceiver->NativeAction(TEXT("pick"));
-    if(Pressed(TEXT("key.swapOffhand"))) {
-        NativeInputStatus=TEXT("Offhand swapping is not available in this native build");
-        UE_LOG(LogTemp,Warning,TEXT("Bridge native input: offhand swap is not implemented; inventory was not changed"));
-    }
     if(Pressed(TEXT("key.drop")) && NativeInventory) {
         const bool All=IsInputKeyDown(EKeys::LeftControl) || IsInputKeyDown(EKeys::RightControl);
         const auto Stack=NativeInventory->Selected();

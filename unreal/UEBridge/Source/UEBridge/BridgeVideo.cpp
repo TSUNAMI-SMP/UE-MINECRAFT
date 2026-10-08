@@ -1,5 +1,6 @@
 #include "BridgeVideo.h"
 #include "BridgeVideoMask.h"
+#include "BridgeSkyMath.h"
 #include "BridgeSharedGpu.h"
 #include "BridgeNativeUiPalette.h"
 #include "Camera/CameraComponent.h"
@@ -67,6 +68,17 @@ struct FBridgeGpuFrame {
 };
 
 namespace {
+UTexture2D* NativeSunTexture(UBridgeNativeUiPalette* Palette) {
+    if(!Palette) return nullptr;
+    if(auto* Texture=Palette->FindSprite(TEXT("environment/celestial/sun"))) return Texture;
+    return Palette->FindSprite(TEXT("environment/sun"));
+}
+UTexture2D* NativeMoonTexture(UBridgeNativeUiPalette* Palette,int32 Phase,bool& PhaseSheet) {
+    PhaseSheet=false;if(!Palette) return nullptr;
+    const FString Key=FString(TEXT("environment/celestial/moon/"))+UTF8_TO_TCHAR(BridgeSkyMath::MoonPhaseTextureName(Phase));
+    if(auto* Texture=Palette->FindSprite(Key)) return Texture;
+    auto* Texture=Palette->FindSprite(TEXT("environment/moon_phases"));PhaseSheet=Texture!=nullptr;return Texture;
+}
 void LightingFlags(FEngineShowFlags& Flags,bool Lighting,bool Sky) {
     ApplyViewMode(VMI_Lit,true,Flags);
     Flags.SetLighting(Lighting);Flags.SetDynamicShadows(Lighting);Flags.SetPostProcessing(Lighting);
@@ -154,22 +166,38 @@ void UBridgeVideo::RestoreNativeRenderMode() {
 }
 void UBridgeVideo::SetNativeSkyPalette(UBridgeNativeUiPalette* Palette) {
     NativeSkyPalette=Palette;
-    if(NativeSunMaterial && Palette) if(auto* Texture=Palette->FindSprite(TEXT("environment/sun"))) NativeSunMaterial->SetTextureParameterValue(TEXT("CelestialTexture"),Texture);
-    if(NativeMoonMaterial && Palette) if(auto* Texture=Palette->FindSprite(TEXT("environment/moon_phases"))) NativeMoonMaterial->SetTextureParameterValue(TEXT("CelestialTexture"),Texture);
+    auto* Sun=NativeSunTexture(Palette);bool PhaseSheet=false;auto* Moon=NativeMoonTexture(Palette,NativeMoonPhase,PhaseSheet);
+    if(NativeSunMaterial && Sun) NativeSunMaterial->SetTextureParameterValue(TEXT("CelestialTexture"),Sun);
+    if(NativeMoonMaterial && Moon) {
+        NativeMoonMaterial->SetTextureParameterValue(TEXT("CelestialTexture"),Moon);
+        NativeMoonMaterial->SetVectorParameterValue(TEXT("CelestialUVScale"),PhaseSheet?FLinearColor(.25,.5,0,0):FLinearColor(1,1,0,0));
+        NativeMoonMaterial->SetVectorParameterValue(TEXT("CelestialUVOffset"),PhaseSheet?FLinearColor((NativeMoonPhase%4)*.25,(NativeMoonPhase/4)*.5,0,0):FLinearColor(0,0,0,0));
+    }
+    if(NativeSky && NativeHasCelestials && Palette && (!Sun || !Moon)) {
+        UE_LOG(LogTemp,Warning,TEXT("Bridge native sky: exported celestial textures missing (sun=%s moon=%s); make a new native export with MOD 0.13.0 for Minecraft 1.21.11 sky assets"),Sun?TEXT("available"):TEXT("missing"),Moon?TEXT("available"):TEXT("missing"));
+    }
     UpdateNativeSky();
 }
-void UBridgeVideo::SetNativeSkyEnvironment(const TSharedPtr<FJsonObject>& Values) {
+void UBridgeVideo::SetNativeSkyEnvironment(const TSharedPtr<FJsonObject>& Values,const FString& Dimension) {
     if(!Values.IsValid()) return;
     double Time=6000,Rain=0;Values->TryGetNumberField(TEXT("timeOfDay"),Time);Values->TryGetNumberField(TEXT("rainGradient"),Rain);
-    NativeTimeOfDay=FMath::IsFinite(Time)?Time:6000;NativeRain=float(FMath::Clamp(FMath::IsFinite(Rain)?Rain:0.,0.,1.));
+    Time=FMath::IsFinite(Time)?Time:6000;NativeRain=float(FMath::Clamp(FMath::IsFinite(Rain)?Rain:0.,0.,1.));
     // Imported sky/lightmap form one snapshot. Advancing celestial time alone
     // would show midnight while the exported daylight factor remains at noon.
-    NativeSkyEpoch=0;
+    NativeSunAngle=BridgeSkyMath::DefaultSunDegrees(Time);NativeMoonAngle=NativeSunAngle+180.;
+    NativeMoonPhase=BridgeSkyMath::DefaultMoonPhase(Time);
+    double Angle=0,Phase=0;
+    if(Values->TryGetNumberField(TEXT("sunAngle"),Angle) && FMath::IsFinite(Angle)) NativeSunAngle=Angle;
+    if(Values->TryGetNumberField(TEXT("moonAngle"),Angle) && FMath::IsFinite(Angle)) NativeMoonAngle=Angle;
+    if(Values->TryGetNumberField(TEXT("moonPhase"),Phase) && FMath::IsFinite(Phase) && Phase>=0 && Phase<8 && std::floor(Phase)==Phase) NativeMoonPhase=int32(Phase);
+    bool HasSky=true;Values->TryGetBoolField(TEXT("hasSky"),HasSky);
+    FString Skybox;Values->TryGetStringField(TEXT("skybox"),Skybox);
+    NativeHasCelestials=BridgeSkyMath::HasCelestialBodies(TCHAR_TO_UTF8(*Dimension),HasSky,TCHAR_TO_UTF8(*Skybox));
     double Color=0x78a7ff;Values->TryGetNumberField(TEXT("skyBackgroundColor"),Color);
     const uint32 RGB=static_cast<uint32>(FMath::Clamp(FMath::IsFinite(Color)?Color:double(0x78a7ff),0.,16777215.));
     NativeBackgroundColor=FLinearColor(((RGB>>16)&255)/255.f,((RGB>>8)&255)/255.f,(RGB&255)/255.f,1);
     if(NativeSkyMaterial) NativeSkyMaterial->SetVectorParameterValue(TEXT("NativeSkyColor"),NativeBackgroundColor);
-    UpdateNativeSky();
+    SetNativeSkyPalette(NativeSkyPalette);
 }
 void UBridgeVideo::CreateNativeSky() {
     if(NativeSky || !GetWorld()) return;
@@ -191,8 +219,8 @@ void UBridgeVideo::CreateNativeSky() {
     if(Plane && Celestial) {
         NativeSunMaterial=UMaterialInstanceDynamic::Create(Celestial,this);NativeMoonMaterial=UMaterialInstanceDynamic::Create(Celestial,this);
         NativeSun=Prepare(TEXT("NativeSun"),Plane,NativeSunMaterial);NativeMoon=Prepare(TEXT("NativeMoon"),Plane,NativeMoonMaterial);
-        NativeSun->SetAbsolute(false,true,true);NativeMoon->SetAbsolute(false,true,true);NativeSun->SetWorldScale3D(FVector(1400));NativeMoon->SetWorldScale3D(FVector(1000));
-        NativeMoonMaterial->SetVectorParameterValue(TEXT("CelestialUVScale"),FLinearColor(.25,.5,0,0));
+        NativeSun->SetAbsolute(false,true,true);NativeMoon->SetAbsolute(false,true,true);
+        NativeSun->SetWorldScale3D(FVector(BridgeSkyMath::PlaneScale(false)));NativeMoon->SetWorldScale3D(FVector(BridgeSkyMath::PlaneScale(true)));
     }
     SetNativeSkyPalette(NativeSkyPalette);
 }
@@ -200,16 +228,16 @@ void UBridgeVideo::UpdateNativeSky() {
     if(!NativeSky || !SavedNativeFlags || LightingEnabled || !GetWorld()) return;
     auto* PC=GetWorld()->GetFirstPlayerController();if(!PC || !PC->PlayerCameraManager) return;
     const FVector Camera=PC->PlayerCameraManager->GetCameraLocation();NativeSky->SetActorLocation(Camera);
-    const double Time=NativeTimeOfDay+(NativeSkyEpoch>0?(FPlatformTime::Seconds()-NativeSkyEpoch)*20:0);
-    const double Angle=FMath::Fmod(Time,24000.)/24000.*2*PI;
-    const FVector SunDirection(FMath::Cos(Angle),0,FMath::Sin(Angle));
     auto Place=[&](UStaticMeshComponent* Component,const FVector& Direction,bool Available) {
-        if(!Component) return;Component->SetHiddenInGame(!Available || NativeRain>=.95f);
-        Component->SetWorldLocation(Camera+Direction*450000.);Component->SetWorldRotation(FRotationMatrix::MakeFromZ(-Direction).Rotator());
+        if(!Component) return;Component->SetHiddenInGame(!NativeHasCelestials || !Available || NativeRain>=1.f);
+        Component->SetWorldLocation(Camera+Direction*BridgeSkyMath::CelestialRadius);Component->SetWorldRotation(FRotationMatrix::MakeFromZ(-Direction).Rotator());
     };
-    Place(NativeSun,SunDirection,NativeSkyPalette && NativeSkyPalette->FindSprite(TEXT("environment/sun")));
-    Place(NativeMoon,-SunDirection,NativeSkyPalette && NativeSkyPalette->FindSprite(TEXT("environment/moon_phases")));
-    if(NativeMoonMaterial) {const int32 Phase=(FMath::FloorToInt(Time/24000.)%8+8)%8;NativeMoonMaterial->SetVectorParameterValue(TEXT("CelestialUVOffset"),FLinearColor((Phase%4)*.25,(Phase/4)*.5,0,0));}
+    const auto Sun=BridgeSkyMath::Direction(NativeSunAngle),Moon=BridgeSkyMath::Direction(NativeMoonAngle);
+    bool PhaseSheet=false;
+    Place(NativeSun,FVector(Sun[0],Sun[1],Sun[2]),NativeSunTexture(NativeSkyPalette)!=nullptr);
+    Place(NativeMoon,FVector(Moon[0],Moon[1],Moon[2]),NativeMoonTexture(NativeSkyPalette,NativeMoonPhase,PhaseSheet)!=nullptr);
+    if(NativeSunMaterial) NativeSunMaterial->SetScalarParameterValue(TEXT("CelestialOpacity"),1.f-NativeRain);
+    if(NativeMoonMaterial) NativeMoonMaterial->SetScalarParameterValue(TEXT("CelestialOpacity"),1.f-NativeRain);
 }
 void UBridgeVideo::ConfigureCapture(USceneCaptureComponent2D* Component,bool Mask) {
     if(!Component) return;

@@ -101,6 +101,16 @@ void ABridgeNativeHUD::DrawHotbar() {
     if (Resources && Resources->FindSprite(TEXT("hud/hotbar_selection"))) Sprite(TEXT("hud/hotbar_selection"), SelectionX, Y - 1, 24, 23);
     else { Solid(SelectionX, Y - 1, 24, 1, FLinearColor::White); Solid(SelectionX, Y + 21, 24, 1, FLinearColor::White); Solid(SelectionX, Y, 1, 21, FLinearColor::White); Solid(SelectionX + 23, Y, 1, 21, FLinearColor::White); }
     const auto& Slots = Contents->GetSlots(); for (int32 I = 0; I < 9 && Slots.IsValidIndex(I); ++I) Item(Slots[I].ItemId, Slots[I].Count, X + 3 + I * 20, Y + 3);
+    const auto& Offhand = Contents->GetOffhand();
+    if (!Offhand.IsEmpty()) {
+        const auto* Control = NativeController();
+        const bool RightSide = Control && Control->IsNativeLeftHanded();
+        const float OffhandX = RightSide ? X + 182 : X - 29;
+        const FString Backing = RightSide ? TEXT("hud/hotbar_offhand_right") : TEXT("hud/hotbar_offhand_left");
+        if (Resources && Resources->FindSprite(Backing)) Sprite(Backing, OffhandX, Y - 1, 29, 24);
+        else { Solid(OffhandX, Y - 1, 29, 24, FLinearColor(.1f, .1f, .1f, .8f)); Solid(OffhandX + (RightSide ? 10 : 3), Y + 3, 16, 16, FLinearColor(.35f, .35f, .35f)); }
+        Item(Offhand.ItemId, Offhand.Count, OffhandX + (RightSide ? 10 : 3), Y + 3);
+    }
     const FString Selected = Contents->GetSelectedItemId();
     if (Selected != LastSelectedItem) { LastSelectedItem = Selected; SelectedAt = FPlatformTime::Seconds(); }
     const float Age = float(FPlatformTime::Seconds() - SelectedAt);
@@ -161,7 +171,7 @@ void ABridgeNativeHUD::DrawInventory() {
         FSlotHit Hit; Hit.Bounds = FBox2D(FVector2D(SX, SY) * GuiScale, FVector2D(SX + 16, SY + 16) * GuiScale); Hit.Slot = Index; Hit.CatalogueItem = CatalogueId; SlotHits.Add(Hit);
         FString Id; int32 Count = 0;
         if (!CatalogueId.IsEmpty()) { Id = CatalogueId; Count = 1; }
-        else if (Contents->GetSlots().IsValidIndex(Index)) { Id = Contents->GetSlots()[Index].ItemId; Count = Contents->GetSlots()[Index].Count; }
+        else { const auto& Stack = Contents->GetStack(Index); Id = Stack.ItemId; Count = Stack.Count; }
         Item(Id, Count, SX, SY);
         if (Within(Hit.Bounds, Pointer)) { Solid(SX, SY, 16, 16, FLinearColor(1, 1, 1, .3f)); const auto* Entry = Resources ? Resources->FindItem(Id) : nullptr; Tooltip = Entry ? Entry->DisplayName : Id; }
     };
@@ -179,6 +189,7 @@ void ABridgeNativeHUD::DrawInventory() {
         SearchBounds = FBox2D(ForceInit); Text(TEXT("インベントリ"), X + 8, Y + 72, FLinearColor(.15f, .15f, .15f), false);
         for (int32 Row = 0; Row < 3; ++Row) for (int32 Column = 0; Column < 9; ++Column) DrawSlot(9 + Row * 9 + Column, X + 8 + Column * 18, Y + 84 + Row * 18);
         for (int32 I = 0; I < 9; ++I) DrawSlot(I, X + 8 + I * 18, Y + 142);
+        DrawSlot(UBridgeNativeInventory::OffhandSlot, X + 77, Y + 62);
         Text(TEXT("クラフトは未対応です"), X + 90, Y + 12, FLinearColor(.3f, .3f, .3f), false);
     }
     if (!Tooltip.IsEmpty() && Contents->GetCursor().IsEmpty()) {
@@ -289,8 +300,12 @@ bool ABridgeNativeHUD::HandleKey(FKey Key) {
     if (Control->GetNativeReceiver() && Control->GetNativeReceiver()->IsNativeSaving()) return true;
     if (Key == EKeys::BackSpace && !HasSearchFocus() && !Search.IsEmpty()) { Search.LeftChopInline(1); RebuildCatalogue(); return true; }
     if (HasSearchFocus()) return false;
-    const FKey Numbers[] = {EKeys::One,EKeys::Two,EKeys::Three,EKeys::Four,EKeys::Five,EKeys::Six,EKeys::Seven,EKeys::Eight,EKeys::Nine};
-    for (int32 I = 0; I < 9; ++I) if (Key == Numbers[I]) {
+    if (Control->MatchesBinding(TEXT("key.swapOffhand"), Key)) {
+        for (const auto& Hit : SlotHits) if (Within(Hit.Bounds, Pointer) && Hit.Slot >= 0)
+            return Contents->SwapSlots(Hit.Slot, UBridgeNativeInventory::OffhandSlot);
+        return true;
+    }
+    for (int32 I = 0; I < 9; ++I) if (Control->MatchesBinding(FString::Printf(TEXT("key.hotbar.%d"), I + 1), Key)) {
         for (const auto& Hit : SlotHits) if (Within(Hit.Bounds, Pointer)) {
             if (!Hit.CatalogueItem.IsEmpty()) return Contents->AssignHotbar(Hit.CatalogueItem, I, Contents->MaxCount(Hit.CatalogueItem));
             if (Hit.Slot >= 0 && Contents->GetCursor().IsEmpty()) {

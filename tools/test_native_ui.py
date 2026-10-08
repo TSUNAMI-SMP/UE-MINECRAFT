@@ -80,6 +80,17 @@ class NativeUiValidation(unittest.TestCase):
         self.manifest['sprites']['my_pack:hud/custom'] = dict(self.entry)
         self.assertIn('my_pack:hud/custom', self.load()['sprites'])
 
+    def test_current_celestial_sprites_keep_phase_keys_and_verified_pixels(self):
+        phases = ('full_moon', 'waning_gibbous', 'third_quarter', 'waning_crescent',
+                  'new_moon', 'waxing_crescent', 'first_quarter', 'waxing_gibbous')
+        keys = ['environment/celestial/sun'] + ['environment/celestial/moon/' + phase for phase in phases]
+        for key in keys:
+            self.manifest['sprites'][key] = dict(self.entry)
+        result = self.load()
+        for key in keys:
+            self.assertEqual(result['sprites'][key]['sha256'], self.entry['sha256'])
+            self.assertEqual(pathlib.Path(result['sprites'][key]['source']).read_bytes(), self.data)
+
     def test_malformed_sprite_namespace_is_rejected(self):
         self.manifest['sprites']['my_pack:other:hud/custom'] = dict(self.entry)
         with self.assertRaisesRegex(ValueError, 'sprite ID'):

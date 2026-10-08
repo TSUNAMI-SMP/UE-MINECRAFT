@@ -92,6 +92,7 @@ def import_minecraft_sounds(filename):
     if len(receivers) != 1:
         raise RuntimeError("The saved level must contain exactly one BridgeReceiver")
     receiver = receivers[0]
+    previous = receiver.get_editor_property("native_sound_palette")
     assets, tools = unreal.EditorAssetLibrary, unreal.AssetToolsHelpers.get_asset_tools()
     root, waves, events = "/Game/Bridge/Minecraft/Sounds", {}, []
     unreal.log("Minecraft sound import: validated events=" + str(len(manifest["sounds"])))
@@ -123,24 +124,41 @@ def import_minecraft_sounds(filename):
         events.append(event)
     name = "DA_MinecraftSounds_v1_" + manifest["manifestHash"][:24]
     palette = unreal.load_asset(root + "/" + name)
+    previous_events = list(palette.get_editor_property("events")) if isinstance(palette, palette_class) else None
     if palette is None:
         factory = unreal.DataAssetFactory()
         factory.set_editor_property("data_asset_class", palette_class)
         palette = tools.create_asset(name, root, palette_class, factory)
     if not isinstance(palette, palette_class):
         raise RuntimeError("Cannot create native sound palette")
-    palette.set_editor_property("events", events)
-    if not assets.save_loaded_asset(palette, False):
-        raise RuntimeError("Cannot save native sound palette")
-    previous = receiver.get_editor_property("native_sound_palette")
+    def restore_events():
+        if previous_events is not None:
+            try:
+                palette.set_editor_property("events", previous_events)
+                if not assets.save_loaded_asset(palette, False):
+                    unreal.log_error("Cannot save restored native sound palette")
+            except Exception as restore_error:
+                unreal.log_error("Cannot restore native sound palette: " + str(restore_error))
+    try:
+        palette.set_editor_property("events", events)
+        if not assets.save_loaded_asset(palette, False):
+            raise RuntimeError("Cannot save native sound palette")
+    except Exception:
+        restore_events()
+        raise
     try:
         with unreal.ScopedEditorTransaction("Assign Minecraft native sounds"):
             receiver.set_editor_property("native_sound_palette", palette)
         if not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level() or receiver.get_editor_property("native_sound_palette") != palette:
             raise RuntimeError("Cannot save/verify native sound palette assignment")
     except Exception:
-        receiver.set_editor_property("native_sound_palette", previous)
-        unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level()
+        restore_events()
+        try:
+            receiver.set_editor_property("native_sound_palette", previous)
+            if not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level():
+                unreal.log_error("Cannot save restored native sound palette assignment")
+        except Exception as restore_error:
+            unreal.log_error("Cannot restore native sound palette assignment: " + str(restore_error))
         raise
     unreal.log("Minecraft native sounds ready: events=" + str(len(events)) + " samples=" + str(len(waves)) + "; assigned and saved")
     return palette

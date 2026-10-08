@@ -71,15 +71,30 @@ def setup_bridge_rendering(asset_root='/Game/Bridge/Minecraft'):
     material.set_editor_property('blend_mode', unreal.BlendMode.BLEND_OPAQUE)
     material.set_editor_property('two_sided', True)
     black = editing.create_material_expression(material, unreal.MaterialExpressionConstant3Vector, -200, 0)
+    if black is None:
+        raise RuntimeError('Cannot create outline colour expression')
     black.set_editor_property('constant', unreal.LinearColor(0, 0, 0, 1))
     if not editing.connect_material_property(black, '', unreal.MaterialProperty.MP_EMISSIVE_COLOR):
         raise RuntimeError('Cannot connect outline emissive')
     editing.recompile_material(material)
     if not assets.save_loaded_asset(material, False):
         raise RuntimeError('Cannot save outline material')
-    with unreal.ScopedEditorTransaction('Assign Minecraft native outline'):
-        receivers[0].set_editor_property('outline_material', material)
-        if not unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level():
-            raise RuntimeError('Cannot save the current level')
-        unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)
+    receiver = receivers[0]
+    previous = receiver.get_editor_property('outline_material')
+    level = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+    try:
+        with unreal.ScopedEditorTransaction('Assign Minecraft native outline'):
+            receiver.set_editor_property('outline_material', material)
+        if not level.save_current_level() or receiver.get_editor_property('outline_material') != material:
+            raise RuntimeError('Cannot save/verify the current level with native outline')
+    except Exception:
+        try:
+            receiver.set_editor_property('outline_material', previous)
+            if not level.save_current_level():
+                getattr(unreal, 'log_warning', unreal.log)('Native outline rollback restored the assignment but could not save the current level.')
+        except Exception:
+            getattr(unreal, 'log_warning', unreal.log)('Native outline rollback could not restore/save the previous assignment.')
+        raise
+    # Every generated material and this level was explicitly saved above. Saving
+    # all dirty packages here would also save unrelated user assets.
     unreal.log('Bridge rendering ready: lighting revision 2, migrated=' + str(migrated) + ', native OFF sky, black outline. Compare day/night, roof and torch placement.')

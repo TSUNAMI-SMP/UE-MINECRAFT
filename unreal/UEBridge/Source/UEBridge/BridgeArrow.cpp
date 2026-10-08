@@ -20,7 +20,18 @@ ABridgeArrow::ABridgeArrow() {
 }
 void ABridgeArrow::Launch(const FVector& Direction, float Pull, AActor* IgnoreActor) {
     if (IgnoreActor) Collision->IgnoreActorWhenMoving(IgnoreActor, true);
-    SetActorRotation(Direction.Rotation()); Movement->Velocity = Direction.GetSafeNormal() * 6000.f * FMath::Clamp(Pull, 0.1f, 1.f);
+    LaunchDirection=Direction.GetSafeNormal();ImpactDelivered=false;
+    const float Strength=FMath::IsFinite(Pull) ? FMath::Clamp(Pull,0.1f,1.f) : 0.f;
+    // Basic unenchanted launch-speed damage: 3 blocks/tick * 2 base damage.
+    // Impact-speed drag, critical randomness and enchantments are not simulated.
+    NativeDamage=FMath::CeilToInt(6.f*Strength);
+    SetActorRotation(Direction.Rotation()); Movement->Velocity = LaunchDirection * 6000.f * Strength;
     Movement->Activate(true);
 }
-void ABridgeArrow::Stopped(const FHitResult& Hit) { SetLifeSpan(2.f); }
+void ABridgeArrow::Stopped(const FHitResult& Hit) {
+    if(!ImpactDelivered) {
+        ImpactDelivered=true;
+        if(NativeImpact && NativeDamage>0) NativeImpact(Hit.GetActor(),LaunchDirection,NativeDamage);
+    }
+    SetLifeSpan(2.f);
+}

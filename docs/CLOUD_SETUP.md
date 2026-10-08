@@ -9,6 +9,7 @@ python tools/build_mod.py test build
 python -m unittest discover -s bridge/tests -p 'test_*.py'
 python -m unittest discover -s tools -p 'test_native_*.py'
 python tools/test_character_math.py
+python tools/test_sky_math.py
 python tools/test_lighting_math.py
 python tools/test_meshing_math.py
 python tools/test_outline_math.py
@@ -19,7 +20,7 @@ python -m compileall -q tools bridge
 git diff --check
 ```
 
-PowerShellがPATHにある場合、Pythonのnative setupテストも実際のプラグイン設定関数を実行します。単独実行は `pwsh -NoProfile -File tools/test_native_build_plugins.ps1` です。既存のEngineAssociation・独自設定・プラグインmetadataの保持、有効化、再実行、重複拒否を確認します。PowerShellがない場合、この1件をスキップします。
+PowerShellがPATHにある場合、Pythonのnative setupテストも実際のプラグイン設定関数を実行します。単独実行は `pwsh -NoProfile -File tools/test_native_build_plugins.ps1` です。既存のEngineAssociation・独自設定・プラグインmetadataの保持、有効化、再実行、重複拒否を確認します。PowerShellがない場合、この1件をスキップします。`pwsh -NoProfile -File tools/test_native_import_log.ps1` は取り込み失敗ログとPython更新の内容ハッシュを実行検証します。
 
 今回の環境ではMicrosoftのDebian用PowerShell 7.4.19を公式リポジトリから取得し、公開されたSHA-256を照合して `/workspace/toolchains/powershell-7.4.19` へ展開しました。読み取り専用のホームへ書き込まないよう、XDGのcache・config・dataは `/workspace/toolchains/powershell-*` 配下へ設定しています。これはLinuxでの構文・設定関数の実行確認です。Windowsのエンジン検出・ビルド・ファイル選択・ゲーム起動は [NATIVE_PLAY.md](NATIVE_PLAY.md) の実機確認が必要です。
 

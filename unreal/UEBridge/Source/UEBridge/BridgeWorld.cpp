@@ -18,7 +18,7 @@ void ABridgeWorld::Clear(uint64 Barrier) {
     ++MutationSerial;
     for (auto& Pair:Cells) if (IsValid(Pair.Value)) { Pair.Value->Clear(); Pair.Value->Destroy(); }
     for(auto& Box:Boundary) if(Box) Box->DestroyComponent(); Boundary.Empty();
-    Sealed=false;ImportId.Empty();Stored.Empty();ButtonRelease.Empty();LastModelError.Empty();SurfaceReason=TEXT("not_sampled");
+    Sealed=false;ImportId.Empty();Stored.Empty();ButtonRelease.Empty();ButtonTimerOwners.Empty();LastModelError.Empty();SurfaceReason=TEXT("not_sampled");
     Cells.Empty(); Counts.Empty(); Revisions.Empty(); Stages.Empty(); Shapes=0; Scoped=false; ScopeSequence=0; ClearBarrier=Barrier;
     OpaqueCells.Empty();RebuildQueue.Empty();LightQueue.Empty();EditedBlocks.Empty();EditedCellOwners.Empty();RemovedBlocks.Empty();SkyTops.Empty();PhysicsCells.Empty();AdditionalCollisionPositions.Empty();HasCollisionCenter=false;
     if(Lighting) Lighting->Clear();Lighting.Reset();PendingLighting.Reset();LightSeedCells.Empty();LightSeedCursor=0;PendingLightInitialized=false;LightingRadius=LightingHeight=0;
@@ -27,10 +27,7 @@ void ABridgeWorld::EndPlay(const EEndPlayReason::Type Reason) { Clear(); Super::
 void ABridgeWorld::Tick(float DeltaSeconds) {
     Super::Tick(DeltaSeconds); const double Now=FPlatformTime::Seconds();
     for (auto It=Stages.CreateIterator();It;++It) if (Now>It.Value().Deadline) It.RemoveCurrent();
-    TArray<FIntVector> Released;
-    for(const auto& Pair:ButtonRelease) if(Now>=Pair.Value) Released.Add(Pair.Key);
-    for(const auto& Block:Released) {ButtonRelease.Remove(Block);const auto* Visual=FindVisual(Block);
-        if(Visual && StateProperties(Visual->StateKey).FindRef(TEXT("powered"))==TEXT("true")) UseBlock(Block,true);}
+    if(GetWorld()) TickButtonTimers(GetWorld()->GetTimeSeconds());
     if(Lighting && Sealed) {Lighting->Tick(100000);LightQueue.Append(Lighting->ConsumeChangedCells());}
     if(Sealed && !PendingLighting && (LightingCenter!=Center || LightingRadius!=Radius || LightingHeight!=HalfHeight)) BeginLightingRecenter();
     if(PendingLighting) {
@@ -137,6 +134,7 @@ bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterial
     if(IsImporting() || Sealed) {
         if(const auto* Previous=Stored.Find(P.Cell)) for(const auto& Block:*Previous) {if(Lighting) Lighting->ClearVoxel(OwnerOf(Block));if(PendingLighting) PendingLighting->ClearVoxel(OwnerOf(Block));}
         Stored.Add(P.Cell,Blocks);SavedMaterial=Material;SavedPalette=Palette;RefreshLogicalCell(P.Cell);
+        if(Sealed) RefreshButtonTimersForCell(P.Cell);
         if(Stage->SkyTop.Num()==64) SkyTops.Add(P.Cell,Stage->SkyTop);
         if(const auto* Tops=SkyTops.Find(P.Cell)) if(Tops->Num()==64) {
             for(int32 Z=0;Z<8;++Z) for(int32 X=0;X<8;++X) {if(Lighting && P.Cell.Y==LightingCenter.Y+LightingHeight) Lighting->SetSkyBoundary(P.Cell.X*8+X,P.Cell.Z*8+Z,(*Tops)[X+(Z<<3)]);
@@ -161,7 +159,12 @@ bool ABridgeWorld::CommitImport(const FBridgePacket& P) {
     if(P.ImportId!=ImportId || !Scoped) return false;
     const int32 Expected=(Radius*2+1)*(Radius*2+1)*(HalfHeight*2+1);
     if(P.ImportCells!=Expected || Revisions.Num()!=Expected || !Stages.IsEmpty()) return false;
-    Sealed=true;if(Lighting) Lighting->BeginInitialize();return true;
+    Sealed=true;
+    // Snapshot rows do not contain Minecraft's scheduled block ticks. Restore
+    // a powered button with its normal full release interval so it cannot stay
+    // powered forever. No claim is made to restore the original remaining time.
+    for(const auto& Pair:Stored) RefreshButtonTimersForCell(Pair.Key);
+    if(Lighting) Lighting->BeginInitialize();return true;
 }
 void ABridgeWorld::BuildBoundary() {
     for(auto& Box:Boundary) if(Box) Box->DestroyComponent(); Boundary.Empty();
@@ -423,7 +426,37 @@ void ABridgeWorld::MarkEdited(const FIntVector& Block) {
     if(Rows) for(const auto& Row:*Rows) if(OwnerOf(Row)==Block) Edited.Add(Row);
     if(Edited.IsEmpty()) {EditedBlocks.Remove(Block);if(auto* Owners=EditedCellOwners.Find(CellOf(Block))) Owners->Remove(Block);RemovedBlocks.Add(Block);ClearOpaqueVoxel(Block);if(Lighting) Lighting->ClearVoxel(Block);if(PendingLighting) PendingLighting->ClearVoxel(Block);}
     else {RemovedBlocks.Remove(Block);EditedBlocks.Add(Block,MoveTemp(Edited));EditedCellOwners.FindOrAdd(CellOf(Block)).Add(Block);RefreshLogicalCell(CellOf(Block));}
-    QueueNeighbors(CellOf(Block));
+    RefreshButtonTimersForCell(CellOf(Block));QueueNeighbors(CellOf(Block));
+}
+void ABridgeWorld::RefreshButtonTimersForCell(const FIntVector& Cell) {
+    TSet<FIntVector> Powered;
+    if(Sealed) if(const auto* Rows=Stored.Find(Cell)) for(const auto& Row:*Rows) {
+        if((Row.Role==0 || Row.Role==1) && Row.BlockId.EndsWith(TEXT("_button"))
+            && StateProperties(Row.StateKey).FindRef(TEXT("powered"))==TEXT("true")) Powered.Add(OwnerOf(Row));
+    }
+    // Index by cell rather than rescanning every world's timer for every cell
+    // during a large import or a local block edit.
+    if(auto* Owners=ButtonTimerOwners.Find(Cell)) {
+        for(auto It=Owners->CreateIterator();It;++It) if(!Powered.Contains(*It)) {ButtonRelease.Remove(*It);It.RemoveCurrent();}
+        if(Owners->IsEmpty()) ButtonTimerOwners.Remove(Cell);
+    }
+    if(!GetWorld()) return;
+    const double Now=GetWorld()->GetTimeSeconds();
+    for(const auto& Block:Powered) if(!ButtonRelease.Contains(Block)) if(const auto* Visual=FindVisual(Block)) {
+        const bool Stone=Visual->BlockId==TEXT("minecraft:stone_button") || Visual->BlockId==TEXT("minecraft:polished_blackstone_button");
+        ButtonRelease.Add(Block,Now+(Stone ? 1.0 : 1.5));ButtonTimerOwners.FindOrAdd(Cell).Add(Block);
+    }
+}
+void ABridgeWorld::TickButtonTimers(double GameTime) {
+    TArray<FIntVector> Released;
+    for(const auto& Pair:ButtonRelease) if(GameTime>=Pair.Value) Released.Add(Pair.Key);
+    for(const auto& Block:Released) {
+        ButtonRelease.Remove(Block);const FIntVector Cell=CellOf(Block);
+        if(auto* Owners=ButtonTimerOwners.Find(Cell)) {Owners->Remove(Block);if(Owners->IsEmpty()) ButtonTimerOwners.Remove(Cell);}
+        const auto* Visual=FindVisual(Block);
+        if(Visual && Visual->BlockId.EndsWith(TEXT("_button"))
+            && StateProperties(Visual->StateKey).FindRef(TEXT("powered"))==TEXT("true")) UseBlock(Block,true);
+    }
 }
 void ABridgeWorld::UpdateCollisionCenter(const FVector& UEFeet) {
     UpdateCollisionCenters(UEFeet,AdditionalCollisionPositions);
@@ -701,10 +734,7 @@ bool ABridgeWorld::UseBlock(const FIntVector& Block,bool TimedRelease) {
         Data->Append(Pair.Value);Shapes+=Pair.Value.Num()-Before;Rebuild.Add(CellOf(Pair.Key));
         MarkEdited(Pair.Key);
     }
-    if(Original.BlockId.EndsWith(TEXT("_button"))) {
-        if(Props.FindRef(TEXT("powered"))==TEXT("true")) ButtonRelease.Add(Block,FPlatformTime::Seconds()+(Original.BlockId==TEXT("minecraft:stone_button") || Original.BlockId==TEXT("minecraft:polished_blackstone_button") ? 1.0 : 1.5));
-        else ButtonRelease.Remove(Block);
-    }
+    if(Original.BlockId.EndsWith(TEXT("_button"))) RefreshButtonTimersForCell(CellOf(Block));
     for(const auto& Cell:Rebuild) RebuildCell(Cell);UpdateConnections(Block);
     if(InteractionSound) InteractionSound(Property==TEXT("open") ? (Props.FindRef(Property)==TEXT("true") ? TEXT("open") : TEXT("close"))
         : (Props.FindRef(Property)==TEXT("true") ? TEXT("activate") : TEXT("deactivate")),Original.BlockId,BlockCenter(Block));

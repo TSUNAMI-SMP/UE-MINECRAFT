@@ -9,6 +9,8 @@ import javax.imageio.ImageIO;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.item.*;
 import net.minecraft.registry.Registries;
+import net.minecraft.resource.Resource;
+import net.minecraft.resource.ResourceManager;
 import net.minecraft.util.Identifier;
 
 /** Copies active HUD resources and bakes native GUI item transforms, yielding between icons. */
@@ -21,14 +23,7 @@ public final class NativeUiExport {
     public NativeUiExport(MinecraftClient client,Path root) throws IOException {
         directory=root.resolve("ui");Files.createDirectory(directory);Files.createDirectory(directory.resolve("textures"));Files.createDirectory(directory.resolve("sprites"));Files.createDirectory(directory.resolve("items"));
         manifest.addProperty("kind","native-ui");manifest.addProperty("version",1);manifest.addProperty("language",client.getLanguageManager().getLanguage());manifest.addProperty("exportId",UUID.randomUUID().toString());uniform=client.options.getForceUnicodeFont().getValue();japanese=client.options.getJapaneseGlyphVariants().getValue();
-        var resources=new TreeMap<Identifier,net.minecraft.resource.Resource>(Comparator.comparing(Identifier::toString));
-        resources.putAll(client.getResourceManager().findResources("textures/gui/sprites",id->id.getPath().endsWith(".png")));
-        resources.putAll(client.getResourceManager().findResources("textures/particle",id->id.getPath().matches("textures/particle/explosion(_[0-9]+)?\\.png")));
-        for(String id:List.of("minecraft:textures/gui/container/inventory.png","minecraft:textures/gui/container/creative_inventory/tab_items.png",
-                "minecraft:textures/gui/container/creative_inventory/tab_item_search.png","minecraft:textures/gui/container/creative_inventory/tabs.png",
-                "minecraft:textures/environment/sun.png","minecraft:textures/environment/moon_phases.png")) {
-            var key=Identifier.of(id);client.getResourceManager().getResource(key).ifPresent(value->resources.put(key,value));
-        }
+        var resources=collectSprites(client.getResourceManager());
         if(resources.size()>2048) throw new IOException("HUD sprite limit 2048 exceeded");spriteResources=resources.entrySet().iterator();
         for(int cp=32;cp<=126;cp++) characters.add(cp);
         "照明".codePoints().forEach(characters::add);
@@ -43,17 +38,7 @@ public final class NativeUiExport {
     public void advance(MinecraftClient client,long deadline) throws IOException {
         if(!copiedSprites) {
             do {if(!spriteResources.hasNext()) {copiedSprites=true;break;}
-                var entry=spriteResources.next();String id=entry.getKey().getPath();
-                if(id.startsWith("textures/gui/sprites/")) id=id.substring("textures/gui/sprites/".length(),id.length()-4);
-                else if(id.startsWith("textures/gui/")) id=id.substring("textures/gui/".length(),id.length()-4);
-                else id=id.substring("textures/".length(),id.length()-4);
-                if(!entry.getKey().getNamespace().equals("minecraft")) id=entry.getKey().getNamespace()+":"+id;
-                byte[] bytes;try(var in=entry.getValue().getInputStream()) {bytes=in.readNBytes(4*1024*1024+1);}
-                if(bytes.length>4*1024*1024) throw new IOException("HUD sprite byte budget exceeded");
-                BufferedImage image=decodePng(bytes);String hash=MobModelExport.sha256(bytes),file="sprites/"+hash+".png";
-                if(!Files.exists(directory.resolve(file))) Files.write(directory.resolve(file),bytes,StandardOpenOption.CREATE_NEW);
-                JsonObject metadata=new JsonObject();metadata.addProperty("file",file);metadata.addProperty("sha256",hash);metadata.addProperty("width",image.getWidth());metadata.addProperty("height",image.getHeight());sprites.add(id,metadata);
-                written[0]+=bytes.length;if(written[0]>128L*1024*1024) throw new IOException("UI resource byte budget exceeded");
+                var entry=spriteResources.next();sprites.add(spriteKey(entry.getKey()),copySprite(directory,entry.getValue(),written));
             } while(System.nanoTime()<deadline);
             return;
         }
@@ -81,6 +66,43 @@ public final class NativeUiExport {
         manifest.add("font",NativeFontExport.export(resources,directory,characters,uniform,japanese));
         manifest.addProperty("iconCapture","Native GUI model/UV/tint snapshot; orthographic CPU rasterization, no glint or animated shader effects");
         Path output=directory.resolve("manifest.json");Files.writeString(output,new GsonBuilder().setPrettyPrinting().create().toJson(manifest),StandardOpenOption.CREATE_NEW);return output;
+    }
+    static List<String> additionalSprites() {
+        // 1.21.11 split the moon atlas into individual celestial phase textures.
+        // Query the active ResourceManager so selected packs remain authoritative.
+        return List.of("minecraft:textures/gui/container/inventory.png","minecraft:textures/gui/container/creative_inventory/tab_items.png",
+                "minecraft:textures/gui/container/creative_inventory/tab_item_search.png","minecraft:textures/gui/container/creative_inventory/tabs.png",
+                "minecraft:textures/environment/celestial/sun.png",
+                "minecraft:textures/environment/celestial/moon/full_moon.png","minecraft:textures/environment/celestial/moon/waning_gibbous.png",
+                "minecraft:textures/environment/celestial/moon/third_quarter.png","minecraft:textures/environment/celestial/moon/waning_crescent.png",
+                "minecraft:textures/environment/celestial/moon/new_moon.png","minecraft:textures/environment/celestial/moon/waxing_crescent.png",
+                "minecraft:textures/environment/celestial/moon/first_quarter.png","minecraft:textures/environment/celestial/moon/waxing_gibbous.png",
+                "minecraft:textures/environment/sun.png","minecraft:textures/environment/moon_phases.png");
+    }
+    static Map<Identifier,Resource> collectSprites(ResourceManager manager) {
+        var result=new TreeMap<Identifier,Resource>(Comparator.comparing(Identifier::toString));
+        result.putAll(manager.findResources("textures/gui/sprites",id->id.getPath().endsWith(".png")));
+        result.putAll(manager.findResources("textures/particle",id->id.getPath().matches("textures/particle/explosion(_[0-9]+)?\\.png")));
+        for(String id:additionalSprites()) {
+            var key=Identifier.of(id);manager.getResource(key).ifPresent(value->result.put(key,value));
+        }
+        return result;
+    }
+    static String spriteKey(Identifier key) {
+        String id=key.getPath();
+        if(id.startsWith("textures/gui/sprites/")) id=id.substring("textures/gui/sprites/".length(),id.length()-4);
+        else if(id.startsWith("textures/gui/")) id=id.substring("textures/gui/".length(),id.length()-4);
+        else id=id.substring("textures/".length(),id.length()-4);
+        return key.getNamespace().equals("minecraft") ? id : key.getNamespace()+":"+id;
+    }
+    static JsonObject copySprite(Path directory,Resource resource,long[] written) throws IOException {
+        byte[] bytes;try(var in=resource.getInputStream()) {bytes=in.readNBytes(4*1024*1024+1);}
+        if(bytes.length>4*1024*1024) throw new IOException("HUD sprite byte budget exceeded");
+        BufferedImage image=decodePng(bytes);String hash=MobModelExport.sha256(bytes),file="sprites/"+hash+".png";
+        if(!Files.exists(directory.resolve(file))) Files.write(directory.resolve(file),bytes,StandardOpenOption.CREATE_NEW);
+        JsonObject metadata=new JsonObject();metadata.addProperty("file",file);metadata.addProperty("sha256",hash);metadata.addProperty("width",image.getWidth());metadata.addProperty("height",image.getHeight());
+        written[0]+=bytes.length;if(written[0]>128L*1024*1024) throw new IOException("UI resource byte budget exceeded");
+        return metadata;
     }
     static BufferedImage decodePng(byte[] png) throws IOException {
         try(var in=new javax.imageio.stream.MemoryCacheImageInputStream(new ByteArrayInputStream(png))) {

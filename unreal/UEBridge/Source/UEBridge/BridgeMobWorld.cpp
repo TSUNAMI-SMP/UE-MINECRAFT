@@ -73,7 +73,7 @@ FString ABridgeMobWorld::SpawnEgg(const FString& Type,const FVector& Feet,const 
     FString Key;const FBridgeMobAppearance* Appearance=ResolveTemplate(Type,Key);
     if(!Appearance) {MissingAppearance++;return Fail(TEXT("mob template missing: ")+Type+TEXT("; /uebridge mobs export then setup_minecraft_mobs"));}
     if(!Appearance->Material || Appearance->Parts.IsEmpty()) return Fail(TEXT("mob template model incomplete: ")+Type);
-    if(AliveCount()>=128 || SeenIds.Num()>=4096) return Fail(TEXT("mob limit reached: 128 alive / 4096 history"));
+    if(AliveCount()+PendingRestores.Num()>=128 || SeenIds.Num()>=4096) return Fail(TEXT("mob limit reached: 128 alive or pending / 4096 history"));
     if(PrepareSpawnCollision) PrepareSpawnCollision(Feet);
     FBridgeMobSnapshot Snapshot;Snapshot.Id=Id;Snapshot.Type=Type;Snapshot.Appearance=Key;
     Snapshot.Width=Appearance->Width;Snapshot.Height=Appearance->Height;Snapshot.MaxHealth=Appearance->MaxHealth;Snapshot.Health=Snapshot.MaxHealth;
@@ -88,7 +88,7 @@ FString ABridgeMobWorld::SpawnEgg(const FString& Type,const FVector& Feet,const 
 
 bool ABridgeMobWorld::Reject(const FString& Reason,const FString& Type,const FString& Id) {
     Rejected++;LastReason=Reason;
-    UE_LOG(LogTemp,Warning,TEXT("Bridge mob rejected: stage=%s type=%s id=%s palette=%s appearances=%d templates=%d"),*Reason,*Type,*Id,*GetNameSafe(Palette),Palette ? Palette->Appearances.Num() : 0,Palette ? Palette->Templates.Num() : 0);
+    if(!QuietRestoreRetry) UE_LOG(LogTemp,Warning,TEXT("Bridge mob rejected: stage=%s type=%s id=%s palette=%s appearances=%d templates=%d"),*Reason,*Type,*Id,*GetNameSafe(Palette),Palette ? Palette->Appearances.Num() : 0,Palette ? Palette->Templates.Num() : 0);
     return false;
 }
 
@@ -132,6 +132,18 @@ bool ABridgeMobWorld::FindSpawnFeet(const FVector& Requested,float Radius,float 
 
 void ABridgeMobWorld::SetAuthority(bool Active,ACharacter* NewPlayer) {
     Authority=Active;Player=NewPlayer;
+    if(Active && !PendingRestores.IsEmpty() && GetWorld() && GetWorld()->GetTimeSeconds()>=NextRestoreRetry) {
+        NextRestoreRetry=GetWorld()->GetTimeSeconds()+5;
+        QuietRestoreRetry=true;
+        for(int32 I=PendingRestores.Num()-1;I>=0;--I) {
+            const auto& Pending=PendingRestores[I];
+            if(Import(Pending.Snapshot,Pending.Anchor)) {
+                Mobs.Last()->SetNativeViewPitch(Pending.Pitch);
+                PendingRestores.RemoveAt(I);
+            }
+        }
+        QuietRestoreRetry=false;
+    }
     for(ABridgeMobCharacter* Mob:Mobs) if(IsValid(Mob)) {
         const FVector Feet=Mob->GetActorLocation()-FVector(0,0,Mob->GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
         // A retained far copy must not fall through a streamed-out terrain cell.
@@ -140,6 +152,7 @@ void ABridgeMobWorld::SetAuthority(bool Active,ACharacter* NewPlayer) {
 }
 void ABridgeMobWorld::Clear() {
     for(ABridgeMobCharacter* Mob:Mobs) if(IsValid(Mob)) Mob->Destroy();Mobs.Reset();SeenIds.Reset();
+    PendingRestores.Reset();NextRestoreRetry=0;QuietRestoreRetry=false;
     Imported=MissingAppearance=Rejected=0;PlayerHealth=20;LastPlayerDamage=-1;LastReason=TEXT("not_imported");
 }
 void ABridgeMobWorld::EndPlay(const EEndPlayReason::Type Reason) { Clear();Super::EndPlay(Reason); }
@@ -171,6 +184,7 @@ void ABridgeMobWorld::HitPlayer(float Damage,const FVector& Location) {
 int32 ABridgeMobWorld::AliveCount() const { int32 Count=0;for(const ABridgeMobCharacter* Mob:Mobs) if(IsValid(Mob) && Mob->Alive()) Count++;return Count; }
 TArray<FVector> ABridgeMobWorld::CollisionAnchors() const {
     TArray<FVector> Feet;
+    for(const auto& Pending:PendingRestores) Feet.Add(BridgeProtocol::ToUnreal(Pending.Snapshot.Position,Pending.Anchor));
     for(const ABridgeMobCharacter* Mob:Mobs) if(IsValid(Mob) && Mob->Alive()) Feet.Add(Mob->GetActorLocation()-FVector(0,0,Mob->GetCapsuleComponent()->GetScaledCapsuleHalfHeight()));
     return Feet;
 }
@@ -178,6 +192,9 @@ void ABridgeMobWorld::RespawnPlayer() { PlayerHealth=20;LastPlayerDamage=GetWorl
 
 TArray<TSharedPtr<FJsonValue>> ABridgeMobWorld::ExportNativeSnapshots(const FVector& Anchor,const FVector& SourceOrigin) const {
     TArray<TSharedPtr<FJsonValue>> Result;
+    // Preserve the original canonical coordinates and all captured attributes.
+    // A blocked copy is not dead and must never disappear from the next save.
+    for(const auto& Pending:PendingRestores) Result.Add(Pending.SavedValue);
     for(const ABridgeMobCharacter* Mob:Mobs) {
         if(!IsValid(Mob) || !Mob->Alive()) continue;
         const auto Snapshot=Mob->NativeSnapshot(Anchor,SourceOrigin);
@@ -243,7 +260,14 @@ bool ABridgeMobWorld::ImportNativeSnapshots(const TArray<TSharedPtr<FJsonValue>>
     Clear();PlayerHealth=SavedPlayerHealth;
     bool Complete=true;
     for(int32 I=0;I<Parsed.Num();++I) {
-        if(!Import(Parsed[I],Anchor)) {Complete=false;continue;}
+        if(!Import(Parsed[I],Anchor)) {
+            if(Parsed[I].Type==TEXT("minecraft:bat") && LastReason.StartsWith(TEXT("bat restore blocked:"))) {
+                FPendingRestore Pending;Pending.Snapshot=Parsed[I];Pending.Anchor=Anchor;Pending.Pitch=Pitch[I];Pending.SavedValue=Snapshots[I];
+                PendingRestores.Add(MoveTemp(Pending));
+                UE_LOG(LogTemp,Warning,TEXT("Bridge native mob deferred: id=%s type=%s position=%s retained in save; retry every 5 seconds"),*Parsed[I].Id,*Parsed[I].Type,*Parsed[I].Position.ToString());
+            } else Complete=false;
+            continue;
+        }
         ABridgeMobCharacter* Mob=Mobs.Last();
         // Import already restored yaw and selected a supported, unblocked
         // location. Keep that safety correction if the player occupies the
@@ -251,7 +275,7 @@ bool ABridgeMobWorld::ImportNativeSnapshots(const TArray<TSharedPtr<FJsonValue>>
         Mob->SetNativeViewPitch(Pitch[I]);
     }
     if(Complete) {
-        UE_LOG(LogTemp,Display,TEXT("Bridge native mobs restored: requested=%d alive=%d complete=true"),Snapshots.Num(),AliveCount());
+        UE_LOG(LogTemp,Display,TEXT("Bridge native mobs restored: requested=%d alive=%d pending=%d complete=true"),Snapshots.Num(),AliveCount(),PendingRestores.Num());
     } else {
         UE_LOG(LogTemp,Warning,TEXT("Bridge native mobs restored: requested=%d alive=%d complete=false"),Snapshots.Num(),AliveCount());
     }

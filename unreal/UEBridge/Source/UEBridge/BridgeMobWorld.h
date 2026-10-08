@@ -46,6 +46,15 @@ protected:
 private:
     UPROPERTY() TArray<TObjectPtr<class ABridgeMobCharacter>> Mobs;
     TSet<FString> SeenIds;
+    struct FPendingRestore {
+        FBridgeMobSnapshot Snapshot;
+        FVector Anchor;
+        float Pitch=0;
+        TSharedPtr<class FJsonValue> SavedValue;
+    };
+    TArray<FPendingRestore> PendingRestores;
+    double NextRestoreRetry=0;
+    bool QuietRestoreRetry=false;
     bool Authority=false,Creative=false;
     TWeakObjectPtr<ACharacter> Player;
     double LastPlayerDamage=-1;

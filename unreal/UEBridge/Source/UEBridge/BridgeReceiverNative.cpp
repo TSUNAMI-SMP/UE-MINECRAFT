@@ -278,7 +278,11 @@ void ABridgeReceiver::NativeAction(const FString& Action) {
         NativeBowStart=-1;Character->SetNativeUse(false,0);
         const float Pull=FMath::Min(1.f,(Time*Time+2*Time)/3);
         if(Pull<.1f || LatestInput.HeldItem!=TEXT("minecraft:bow") || !SpawnBowProjectiles || Arrows.Num()>=64) return;
-        if(auto* Arrow=GetWorld()->SpawnActor<ABridgeArrow>(Eye+Aim.Vector()*50,Aim)) {
+        // Start at the player's eye height (vanilla's eye minus 0.1 block),
+        // rather than half a block ahead where a nearby wall could be skipped.
+        FActorSpawnParameters Spawn;Spawn.Owner=Character;Spawn.Instigator=Character;
+        Spawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        if(auto* Arrow=GetWorld()->SpawnActor<ABridgeArrow>(Eye-FVector(0,0,10),Aim,Spawn)) {
             if(!NativeCreative && (!Inventory || !Inventory->ConsumeItem(TEXT("minecraft:arrow"),1))) {Arrow->Destroy();LastAction=TEXT("No arrows");return;}
             const TWeakObjectPtr<ABridgeReceiver> WeakThis(this);
             Arrow->NativeImpact=[WeakThis](AActor* Actor,const FVector& Direction,float Damage) {

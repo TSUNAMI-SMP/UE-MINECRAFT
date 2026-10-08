@@ -9,7 +9,7 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 public class NativeItemApiTest {
     @Test public void dropExportsNativeGroundDisplayWithExistingHands() {
-        assertEquals(java.util.Set.of("firstperson_righthand","firstperson_lefthand","thirdperson_righthand","thirdperson_lefthand","ground"),ItemModelExport.exportedContexts());
+        assertEquals(java.util.Set.of("firstperson_righthand","firstperson_lefthand","thirdperson_righthand","thirdperson_lefthand","ground","none"),ItemModelExport.exportedContexts());
     }
     @Test public void escrowSerializationHooksExistOnActualServerPlayer() throws Exception {
         Class<?> player=Class.forName("net.minecraft.server.network.ServerPlayerEntity",false,getClass().getClassLoader());

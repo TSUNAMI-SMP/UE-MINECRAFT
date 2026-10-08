@@ -27,6 +27,44 @@ public class TextureExportTest {
     private void put(Map<String,byte[]> map,String name,String value) { map.put(name,value.getBytes(StandardCharsets.UTF_8)); }
     private TextureExport make(Map<String,byte[]> source) throws Exception { return new TextureExport(source::get,temp.getRoot().toPath().resolve(UUID.randomUUID().toString())); }
     private TextureExport.Block grass() { return new TextureExport.Block("minecraft:grass_block",Map.of("snowy","false")); }
+    @Test public void fluidExportPreservesAnimationAlphaAndLevelSurface() throws Exception {
+        var map=resources();var image=new BufferedImage(2,4,BufferedImage.TYPE_INT_ARGB);
+        for(int y=0;y<4;y++) for(int x=0;x<2;x++) image.setRGB(x,y,y<2 ? 0xffff0000 : 0xff0000ff);
+        var bytes=new ByteArrayOutputStream();ImageIO.write(image,"png",bytes);
+        map.put("minecraft:textures/block/water_still.png",bytes.toByteArray());
+        put(map,"minecraft:textures/block/water_still.png.mcmeta","{\"animation\":{\"frametime\":3}}");
+        var props=Map.of("level","5");var exporter=make(map);
+        assertTrue(exporter.export(new TextureExport.Block("minecraft:water",props,0x3f76e4,List.of(new TextureExport.State(props,List.of(),List.of())),"")));
+        var manifest=exporter.finish();var json=JsonParser.parseString(Files.readString(manifest)).getAsJsonObject();
+        var metadata=json.getAsJsonObject("textures").getAsJsonObject("minecraft:block/water_still");
+        assertEquals(2,metadata.get("animationFrames").getAsInt());assertEquals(3,metadata.get("animationFrameTime").getAsInt());assertEquals("translucent",metadata.get("alphaMode").getAsString());
+        var png=ImageIO.read(manifest.getParent().resolve(metadata.get("file").getAsString()).toFile());
+        assertEquals(4,png.getHeight());assertEquals(0xb0ff0000,png.getRGB(0,0));assertEquals(0xb00000ff,png.getRGB(0,2));
+        var model=json.getAsJsonObject("models").entrySet().iterator().next().getValue().getAsJsonObject();
+        assertEquals(16./3,model.getAsJsonArray("elements").get(0).getAsJsonObject().getAsJsonArray("to").get(1).getAsDouble(),1e-9);
+        assertEquals("level=5",json.getAsJsonObject("blocks").getAsJsonObject("minecraft:water").get("defaultState").getAsString());
+    }
+    @Test public void missingDedicatedBlockModelRetainsPhysicalStatesForItemFallback() throws Exception {
+        var map=resources();map.put("minecraft:textures/block/stone.png",map.get("minecraft:textures/block/dirt.png"));
+        var boxes=List.of(new double[]{.0625,0,.0625,.9375,.875,.9375});
+        var a=Map.of("facing","north");var b=Map.of("facing","south");var exporter=make(map);
+        assertTrue(exporter.export(new TextureExport.Block("minecraft:chest",a,0xffffff,List.of(new TextureExport.State(a,boxes,boxes),new TextureExport.State(b,boxes,boxes)),"")));
+        var json=JsonParser.parseString(Files.readString(exporter.finish())).getAsJsonObject();
+        assertTrue(json.getAsJsonObject("blocks").getAsJsonObject("minecraft:chest").get("itemFallback").getAsBoolean());
+        assertEquals(2,json.getAsJsonObject("blocks").getAsJsonObject("minecraft:chest").getAsJsonObject("states").size());
+        assertEquals(1,json.getAsJsonObject("models").size());
+        assertEquals(2,json.getAsJsonObject("blockstates").getAsJsonObject("minecraft:chest").getAsJsonObject("variants").size());
+    }
+    @Test public void invisibleBarrierKeepsCollisionWithoutPlaceholderCube() throws Exception {
+        var map=resources();map.put("minecraft:textures/block/stone.png",map.get("minecraft:textures/block/dirt.png"));
+        var boxes=List.of(new double[]{0,0,0,1,1,1});var exporter=make(map);
+        assertTrue(exporter.export(new TextureExport.Block("minecraft:barrier",Map.of(),0xffffff,List.of(new TextureExport.State(Map.of(),boxes,boxes)),"")));
+        var json=JsonParser.parseString(Files.readString(exporter.finish())).getAsJsonObject();
+        var block=json.getAsJsonObject("blocks").getAsJsonObject("minecraft:barrier");
+        assertFalse(block.get("itemFallback").getAsBoolean());
+        assertEquals(1,block.getAsJsonObject("states").getAsJsonObject("").getAsJsonArray("collision").size());
+        assertEquals(0,json.getAsJsonObject("models").entrySet().iterator().next().getValue().getAsJsonObject().getAsJsonArray("elements").size());
+    }
     @Test public void resolvesDefaultVariantParentAndTextureReferences() throws Exception {
         var exporter=make(resources()); var faces=exporter.resolve(grass());
         assertEquals("minecraft:block/grass_top",faces.top().texture()); assertTrue(faces.top().tint());

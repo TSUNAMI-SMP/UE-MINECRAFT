@@ -38,6 +38,8 @@ public:
     int32 GetNativeAttackIndicator() const {return AttackIndicator;}
     void SetNativeSensitivity(float Value);
     void CycleNativePerspective();
+    void SetNativeChatOpen(bool Open);
+    bool IsNativeChatOpen() const {return bChatOpen;}
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Native") int32 NativePerspective=0;
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Native") bool NativeHudVisible=true;
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Native") FString NativeInputStatus;
@@ -46,6 +48,7 @@ private:
     UPROPERTY() TObjectPtr<class UBridgeNativeInventory> NativeInventory;
     UPROPERTY() TObjectPtr<class UBridgeNativeUiPalette> LoadedUiPalette;
     TMap<FString,FKey> Bindings;
+    bool bChatOpen=false;
     bool bInventoryOpen=false,bPauseOpen=false,bWasNative=false,bSettingsConfigured=false,bInventoryInitialized=false;
     bool bLastFocused=true,bFlying=false,bDoubleSprint=false,bToggleSneak=false,bToggleSprint=false;
     bool bFlightApplied=false,bBowHeld=false;

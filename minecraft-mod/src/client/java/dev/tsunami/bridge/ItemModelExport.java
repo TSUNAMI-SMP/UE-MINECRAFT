@@ -29,7 +29,7 @@ import org.joml.Vector3f;
  * resource-pack models, layer tints and each hand's display transform. Local assets only. */
 public final class ItemModelExport {
     private static final ItemDisplayContext[] CONTEXTS={ItemDisplayContext.FIRST_PERSON_RIGHT_HAND,ItemDisplayContext.FIRST_PERSON_LEFT_HAND,
-        ItemDisplayContext.THIRD_PERSON_RIGHT_HAND,ItemDisplayContext.THIRD_PERSON_LEFT_HAND,ItemDisplayContext.GROUND};
+        ItemDisplayContext.THIRD_PERSON_RIGHT_HAND,ItemDisplayContext.THIRD_PERSON_LEFT_HAND,ItemDisplayContext.GROUND,ItemDisplayContext.NONE};
     private ItemModelExport() {}
     static Set<String> exportedContexts() {
         Set<String> names=new HashSet<>();for(ItemDisplayContext context:CONTEXTS) names.add(context.asString());return Set.copyOf(names);
@@ -41,7 +41,7 @@ public final class ItemModelExport {
     }
     /** Native bundles use the same capture, but yield between items instead of blocking a whole registry. */
     public static final class Session {
-        final Path dir; final JsonObject manifest=new JsonObject(),models=new JsonObject(),textures=new JsonObject(),excluded=new JsonObject();
+        final Path dir; final JsonObject manifest=new JsonObject(),models=new JsonObject(),defaults=new JsonObject(),textures=new JsonObject(),excluded=new JsonObject();
         final long[] written={0};final Map<String,String> cache=new HashMap<>();final List<ItemStack> stacks=new ArrayList<>();int cursor;
         public Session(MinecraftClient client,Path root) throws IOException {
         if(!client.isOnThread() || client.player==null || client.world==null) throw new IOException("Enter a world first");
@@ -67,12 +67,12 @@ public final class ItemModelExport {
                     Capture capture=new Capture(client,dir,textures,written,cache);
                     ItemRenderState state=new ItemRenderState();
                     client.getItemModelManager().updateForLivingEntity(state,stack,context,client.player);
-                    if(state.isEmpty()) throw new IOException("Native item model is empty");
+                    if(state.isEmpty()) {if(context==ItemDisplayContext.NONE) continue;throw new IOException("Native item model is empty");}
                     state.render(new MatrixStack(),capture.queue(),0xf000f0,0,0);
-                    if(capture.faces.isEmpty()) throw new IOException("Native renderer emitted no geometry");
+                    if(capture.faces.isEmpty()) {if(context==ItemDisplayContext.NONE) continue;throw new IOException("Native renderer emitted no geometry");}
                     contexts.add(context.asString(),capture.faces);
                 }
-                models.add(id,contexts);
+                models.add(id,contexts);defaults.addProperty(Registries.ITEM.getId(stack.getItem()).toString(),id);
             } catch(IOException | RuntimeException error) {excluded.addProperty(id,error.getMessage()==null ? error.getClass().getSimpleName() : error.getMessage());}
         } while(System.nanoTime()<deadline);
         }
@@ -82,7 +82,7 @@ public final class ItemModelExport {
         // These override only their own ID in this local snapshot, not the Minecraft inventory.
         for(int slot=0;slot<9;slot++) captureStack(client,client.player.getInventory().getStack(slot),dir,textures,written,cache,models,excluded);
         captureStack(client,client.player.getOffHandStack(),dir,textures,written,cache,models,excluded);
-        manifest.add("items",models);manifest.add("textures",textures);manifest.add("excluded",excluded);
+        manifest.add("items",models);manifest.add("defaultModels",defaults);manifest.add("textures",textures);manifest.add("excluded",excluded);
         manifest.addProperty("snapshot","Resolved default stacks and current hotbar/offhand; changing components, animated textures, glint and use-state animation require a fresh export or future live model transfer.");
         return writeManifest(dir,manifest,256L*1024*1024);
         }
@@ -130,7 +130,7 @@ public final class ItemModelExport {
                 Capture capture=new Capture(client,dir,textures,written,cache);ItemRenderState state=new ItemRenderState();
                 client.getItemModelManager().updateForLivingEntity(state,stack,context,client.player);
                 state.render(new MatrixStack(),capture.queue(),0xf000f0,0,0);
-                if(capture.faces.isEmpty()) throw new IOException("No geometry for selected stack");contexts.add(context.asString(),capture.faces);
+                if(capture.faces.isEmpty()) {if(context==ItemDisplayContext.NONE) continue;throw new IOException("No geometry for selected stack");}contexts.add(context.asString(),capture.faces);
             }
             models.add(id,contexts);excluded.remove(id);
         } catch(RuntimeException | IOException error) {excluded.addProperty(id,"selected stack: "+error.getMessage());}

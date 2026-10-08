@@ -188,6 +188,14 @@ class TextureManifestTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.load(value)
 
+    def test_animation_metadata_is_optional_bounded_and_matches_strip(self):
+        data=copy.deepcopy(self.manifest);entry=data['textures']['minecraft:block/stone']
+        entry.update(animationFrames=1,animationFrameTime=2)
+        self.assertEqual(2,self.load(data)['textures']['minecraft:block/stone']['animationFrameTime'])
+        for field,value in (('animationFrames',True),('animationFrames',0),('animationFrames',3),('animationFrameTime',None),('animationFrameTime',2049)):
+            invalid=copy.deepcopy(data);invalid['textures']['minecraft:block/stone'][field]=value
+            with self.subTest(field=field,value=value),self.assertRaises(ValueError): self.load(invalid)
+
     def test_texture_alpha_mode_is_optional_and_strict(self):
         for mode in ("opaque", "cutout", "translucent"):
             value = copy.deepcopy(self.manifest)
@@ -234,8 +242,8 @@ class MaterialGraphTest(unittest.TestCase):
             MaterialShadingModel=types.SimpleNamespace(MSM_DEFAULT_LIT='lit'),
             MaterialParameterCollection=Collection, MaterialParameterCollectionFactoryNew=lambda: None,
             CollectionScalarParameter=Property, CollectionVectorParameter=Property, Guid=lambda *args: args,
-            CustomMaterialOutputType=types.SimpleNamespace(CMOT_FLOAT3='float3'), CustomInput=CustomInput)
-        for name in ("TextureSampleParameter2D", "VectorParameter", "ScalarParameter", "Constant3Vector", "LinearInterpolate", "Multiply", "Constant", 'CollectionParameter', 'Add', 'VertexColor', 'Custom', 'PixelNormalWS', 'TextureCoordinate', 'Frac', 'AppendVector', 'ComponentMask'):
+            CustomMaterialOutputType=types.SimpleNamespace(CMOT_FLOAT3='float3', CMOT_FLOAT2='float2'), CustomInput=CustomInput)
+        for name in ("TextureSampleParameter2D", "VectorParameter", "ScalarParameter", "Constant3Vector", "LinearInterpolate", "Multiply", "Constant", 'CollectionParameter', 'Add', 'VertexColor', 'Custom', 'PixelNormalWS', 'Time', 'TextureCoordinate', 'Frac', 'AppendVector', 'ComponentMask'):
             setattr(self.unreal, "MaterialExpression" + name, type(name, (), {}))
         self.assets = types.SimpleNamespace(does_asset_exist=lambda path: path in self.assets_by_path,
             save_loaded_asset=lambda material, force: self.saved.append(material) is None)
@@ -263,6 +271,17 @@ class MaterialGraphTest(unittest.TestCase):
 
     def build(self, mode):
         return module._model_parent(self.unreal, self.assets, self.tools, self.editing, "/Game/Bridge/Minecraft", object(), mode)
+
+    def test_animation_clock_and_frame_parameters_reach_texture_coordinates(self):
+        material=self.build('translucent')
+        sample=next(n for n in material.nodes if n.kind=='TextureSampleParameter2D')
+        animation=sample.inputs['UVs'][0]
+        self.assertEqual('Custom',animation.kind)
+        self.assertIn('floor(fmod(Clock*20',animation.properties['code'])
+        self.assertEqual('Time',animation.inputs['Clock'][0].kind)
+        for pin,name in (('Frames','AnimationFrames'),('Duration','AnimationFrameTime'),('Revision','BridgeAnimationRevision_v1')):
+            self.assertEqual(name,animation.inputs[pin][0].properties['parameter_name'])
+        self.assertIs(material,self.build('translucent'))
 
     def test_glass_alpha_is_connected_to_opacity_and_cutouts_to_mask(self):
         glass = self.build("translucent")

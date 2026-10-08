@@ -21,11 +21,8 @@ public final class BlockGeometryCapture {
         String id=Registries.BLOCK.getId(state.getBlock()).toString();
         if(!id.startsWith("minecraft:")) return "modded block outside vanilla scope";
         if(state.isAir()) return "air";
-        if(state.isLiquid() || id.equals("minecraft:bubble_column")) return "fluid";
-        if(id.endsWith("_sign") || id.endsWith("_hanging_sign")) return "sign";
-        if(state.hasBlockEntity()) return "block entity / dedicated renderer or inventory logic";
-        if(state.getRenderType()!=BlockRenderType.MODEL) return "non-model renderer";
-        if(SPECIAL.contains(id)) return "special block mechanics";
+        // Dedicated world renderers use the separately captured NONE item
+        // geometry. Stateful block-entity behavior is owned by UE, not exported.
         return "";
     }
     public static boolean supported(BlockState state) { return exclusion(state).isEmpty(); }
@@ -52,6 +49,7 @@ public final class BlockGeometryCapture {
         BlockPos pos=mc.player==null ? BlockPos.ORIGIN : mc.player.getBlockPos();
         if(mc.world==null) return new TextureExport.Block(id,props,0xffffff,List.of(),"open a local world before exporting state shapes");
         int color=mc.getBlockColors().getColor(defaults,mc.world,pos,0)&0xffffff;
+        if(id.equals("minecraft:water") || id.equals("minecraft:bubble_column")) color=net.minecraft.client.color.world.BiomeColors.getWaterColor(mc.world,pos)&0xffffff;
         // BlockColors is a render provider, not the particle provider. Grass top
         // and side overlay need this biome color even though grass dust is white.
         Map<Integer,Integer> renderTints=new TreeMap<>();

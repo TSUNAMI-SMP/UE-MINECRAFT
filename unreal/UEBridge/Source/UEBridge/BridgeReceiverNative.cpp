@@ -17,6 +17,8 @@
 #include "BridgeArrow.h"
 #include "BridgeNativeExplosion.h"
 #include "BridgeCombatMath.h"
+#include "BridgeSkyMath.h"
+#include "BridgeCharacterMovement.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Dom/JsonObject.h"
@@ -24,6 +26,7 @@
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/LexFromString.h"
 #include "Sound/SoundAttenuation.h"
 
 namespace {
@@ -51,6 +54,7 @@ float ABridgeReceiver::GetNativeHealth() const {return IsValid(MobWorld) ? MobWo
 bool ABridgeReceiver::IsNativeSaving() const {return NativePlayActive && NativeStore.IsValid() && NativeStore->IsSaving();}
 
 void ABridgeReceiver::BeginNativePlay() {
+    NativeTimeOfDay=6000;NativeWorldTime=0;NativeTimeAccumulator=0;NativeDaylightCycle=true;NativeSubmergedSeconds=0;NativeEyeInWater=false;NativeLastFluidDamage=-100;
     NativePlayActive=true;NativeInitialized=false;Connected=false;Anchor=FVector::ZeroVector;
     NativeTearDownHandle=FWorldDelegates::OnWorldBeginTearDown.AddUObject(this,&ABridgeReceiver::PrepareNativeExit);
     PrimaryActorTick.bTickEvenWhenPaused=true;
@@ -138,7 +142,16 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
     }
     if(!NativeInitialized) {
         const auto& Metadata=NativeStore->GetMetadata();
-        SourceOrigin=Metadata.Origin;LatestInput.VanillaLight=Metadata.Environment;
+        SourceOrigin=Metadata.Origin;LatestInput.VanillaLight=Metadata.Environment.IsValid() ? MakeShared<FJsonObject>(*Metadata.Environment) : MakeShared<FJsonObject>();
+        LatestInput.VanillaLight->TryGetNumberField(TEXT("timeOfDay"),NativeTimeOfDay);
+        LatestInput.VanillaLight->TryGetNumberField(TEXT("worldTime"),NativeWorldTime);
+        if(Metadata.RuntimeState.IsValid()) {
+            Metadata.RuntimeState->TryGetNumberField(TEXT("timeOfDay"),NativeTimeOfDay);
+            Metadata.RuntimeState->TryGetNumberField(TEXT("worldTime"),NativeWorldTime);
+            Metadata.RuntimeState->TryGetBoolField(TEXT("daylightCycle"),NativeDaylightCycle);
+            Metadata.RuntimeState->TryGetBoolField(TEXT("creative"),NativeCreative);
+            double Gradient;for(const TCHAR* Key:{TEXT("rainGradient"),TEXT("thunderGradient")}) if(Metadata.RuntimeState->TryGetNumberField(Key,Gradient)) LatestInput.VanillaLight->SetNumberField(Key,Gradient);
+        }
         Character->ConfigureAppearance(PlayerAppearance);Character->ConfigureOutline(OutlineMaterial);Character->SetInteractionWorld(SyncedWorld);
         const FVector Feet=BridgeProtocol::ToUnreal(Metadata.Spawn-SourceOrigin,Anchor);
         SyncedWorld->EnsureCollisionForPosition(Feet);
@@ -191,17 +204,27 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
                 }
             }
         }
+        SyncedWorld->EnableNativeFluids(Metadata.Dimension==TEXT("minecraft:the_nether"));
         NativeInitialized=true;NativeLastAutosave=Now;
         UE_LOG(LogTemp,Display,TEXT("Bridge native terrain loaded: package=%s cells=%d spawn=%s save=%s"),
             *Metadata.PackageId,Metadata.Cells,*Metadata.Spawn.ToString(),*Metadata.SaveFile);
     }
     TerrainMovementReady=SyncedWorld->IsMovementReady(Character->GetMinecraftFeetPosition(),Character->GetVelocity());
+    if(!GetWorld()->IsPaused()) TickNativeTime(DeltaSeconds);
     const bool Running=GetNativeHealth()>0 && TerrainMovementReady;
     UEControl=Running;Character->SetAuthorityEnabled(Running);
     Character->SetNativeBlockReach(NativeCreative ? 500.f : 450.f);
     Character->ConfigureVisuals(PreviewMaterial,TexturePalette,LatestInput.HeldItem,LatestInput.HeldBlock,LatestInput.HeldColor,LatestInput.HeldModelKey);
     if(Running && !GetWorld()->IsPaused()) {
         Character->ApplyFlight(NativeCreative,LatestInput.Flying);
+        FVector Flow;const int32 Liquid=SyncedWorld->FluidAt(Character->GetMinecraftFeetPosition()+FVector(0,0,40),&Flow);
+        if(auto* Movement=Cast<UBridgeCharacterMovement>(Character->GetCharacterMovement())) Movement->SetNativeFluid(Character->BridgeFlying ? 0 : Liquid,Flow);
+        const int32 EyeLiquid=SyncedWorld->FluidAt(Character->BridgeCamera->GetComponentLocation());
+        Video->SetNativeSceneTint(EyeLiquid==1 ? FLinearColor(.35f,.65f,1.f) : EyeLiquid==2 ? FLinearColor(1.f,.3f,.05f) : FLinearColor::White);
+        NativeEyeInWater=EyeLiquid==1;NativeSubmergedSeconds=NativeEyeInWater ? NativeSubmergedSeconds+DeltaSeconds : FMath::Max(0.,NativeSubmergedSeconds-DeltaSeconds*4);
+        if(!NativeCreative && MobWorld && ((Liquid==2 && GetWorld()->GetTimeSeconds()-NativeLastFluidDamage>=.5) || (NativeSubmergedSeconds>=16 && GetWorld()->GetTimeSeconds()-NativeLastFluidDamage>=1))) {
+            NativeLastFluidDamage=GetWorld()->GetTimeSeconds();MobWorld->HitPlayer(Liquid==2 ? 4 : 2,Character->GetActorLocation(),false,Liquid==2);
+        }
         Character->ApplyUEInput(ForwardInput,RightInput,JumpHeld,SneakHeld,LatestInput.Sprint);
     }
     if(NativeBowStart>=0) Character->SetNativeUse(true,FMath::Clamp(float(GetWorld()->GetTimeSeconds()-NativeBowStart),0.f,1.f));
@@ -329,7 +352,7 @@ void ABridgeReceiver::NativeAction(const FString& Action) {
         const auto* Movement=Character->GetCharacterMovement();
         const bool SprintKnockback=Charged && Character->IsAuthoritySprinting();
         const bool Critical=Charged && Character->GetMinecraftFallDistance()>0 && Movement->IsFalling()
-            && !Movement->IsSwimming() && !Character->BridgeFlying && !Character->IsAuthoritySprinting();
+            && !Movement->IsSwimming() && Movement->MovementMode!=MOVE_Custom && !Character->BridgeFlying && !Character->IsAuthoritySprinting();
         // Native movement is cm/s; Minecraft getMovement() is blocks/tick.
         const bool Sword=LatestInput.HeldItem.EndsWith(TEXT("_sword"));
         const bool Sweeping=Sword && BridgeCombatMath::sweepAllowed(Charged,Critical,SprintKnockback,Movement->IsMovingOnGround(),Character->GetVelocity().SizeSquared2D()/4000000.,.1);
@@ -342,6 +365,10 @@ void ABridgeReceiver::NativeAction(const FString& Action) {
             const FString Sound= !Accepted ? TEXT("minecraft:entity.player.attack.nodamage") : Critical ? TEXT("minecraft:entity.player.attack.crit")
                 : Sweeping ? TEXT("minecraft:entity.player.attack.sweep") : Charged ? TEXT("minecraft:entity.player.attack.strong") : TEXT("minecraft:entity.player.attack.weak");
             PlayNativeSound(Sound,Character->GetActorLocation(),1,1,TEXT("player"));
+            if(Accepted && VanillaEffects) {
+                if(Critical) VanillaEffects->SpawnCombat(MobWorld->LastAttackPosition,Aim.Vector(),true,false);
+                if(Sweeping) VanillaEffects->SpawnCombat(Character->GetMinecraftFeetPosition()+FVector(0,0,100),Aim.Vector(),false,true);
+            }
             if(Accepted && SprintKnockback) Character->ApplyNativeAttackSlowdown();
             LastAction=Accepted ? TEXT("mob attacked") : TEXT("mob hurt immunity");return;
         }
@@ -350,6 +377,41 @@ void ABridgeReceiver::NativeAction(const FString& Action) {
     // still occludes mining while its invulnerability timer is active.
     if(Action==TEXT("break") && MobWorld && MobWorld->Attack(Eye,Aim.Vector(),NativeCreative ? 500.f : 300.f,0)) return;
     FIntVector Voxel;FVector Normal,Hit;const bool Found=SyncedWorld->Aim(Eye,Aim,NativeCreative ? 500.f : 450.f,Voxel,Normal,Character,&Hit);
+    if(Action==TEXT("place") && Inventory && (LatestInput.HeldItem==TEXT("minecraft:water_bucket") || LatestInput.HeldItem==TEXT("minecraft:lava_bucket") || LatestInput.HeldItem==TEXT("minecraft:bucket"))) {
+        const bool Empty=LatestInput.HeldItem==TEXT("minecraft:bucket");FIntVector Target=Voxel;int32 Fluid=0;bool Success=false;
+        if(Empty) {
+            // Source-fluid ray stops at the first solid hit, so it cannot collect through a wall.
+            const float Limit=Found ? FVector::Distance(Eye,Hit)+.1f : (NativeCreative ? 500.f : 450.f);
+            for(float Distance=0;Distance<=Limit;Distance+=2.f) {
+                const FVector P=Eye+Aim.Vector()*Distance;FString Id,State;
+                Target=SyncedWorld->SourceVoxelAt(P);
+                if(SyncedWorld->GetBlockState(Target,Id,State) && (State.Contains(TEXT("waterlogged=true")) || ((Id==TEXT("minecraft:water") || Id==TEXT("minecraft:lava")) && State==TEXT("level=0")))) {
+                    Fluid=Id==TEXT("minecraft:lava") ? 2 : 1;Success=SyncedWorld->SetFluid(Target,0);break;
+                }
+            }
+        } else if(Found) {
+            Fluid=LatestInput.HeldItem==TEXT("minecraft:lava_bucket") ? 2 : 1;
+            FString Id,State;SyncedWorld->GetBlockState(Voxel,Id,State);
+            if(Fluid==1 && State.Contains(TEXT("waterlogged=false"))) Target=Voxel;
+            else Target=Voxel+FIntVector(FMath::RoundToInt(-Normal.Y),FMath::RoundToInt(Normal.Z),FMath::RoundToInt(Normal.X));
+            Success=SyncedWorld->SetFluid(Target,Fluid);
+        }
+        if(Success) {
+            if(!NativeCreative) {
+                const FString Result=Empty ? (Fluid==2 ? TEXT("minecraft:lava_bucket") : TEXT("minecraft:water_bucket")) : TEXT("minecraft:bucket");
+                const auto BeforeInventory=Inventory->ExportRuntimeState();
+                Inventory->ConsumeSelected(1);
+                if(Inventory->Selected().IsEmpty()) Inventory->AssignHotbar(Result,Inventory->GetSelectedSlot(),1);
+                else if(!Inventory->AddStack(Result,1) && !SpawnNativeDrop(Result,1,Eye-FVector(0,0,30),Aim.Vector()*100,2.f)) {
+                    Inventory->ImportRuntimeState(BeforeInventory);SyncedWorld->SetFluid(Target,Fluid);
+                    LastAction=TEXT("No space for filled bucket; water/lava retained");return;
+                }
+            }
+            NativeSelect(Inventory->GetSelectedItemId());Character->SwingHand();LastAction=Empty ? TEXT("bucket filled") : TEXT("bucket emptied");
+            PlayNativeSound(Empty ? (Fluid==2 ? TEXT("minecraft:item.bucket.fill_lava") : TEXT("minecraft:item.bucket.fill")) : (Fluid==2 ? TEXT("minecraft:item.bucket.empty_lava") : TEXT("minecraft:item.bucket.empty")),SyncedWorld->BlockCenter(Target),1,1,TEXT("player"));
+        }
+        return;
+    }
     if(Action==TEXT("attack") && !Found) {
         // MinecraftClient.doAttack MISS swings/resetTicksSince but has no
         // attack sound; attack.weak/strong are damage-target feedback only.
@@ -381,7 +443,7 @@ void ABridgeReceiver::NativeAction(const FString& Action) {
         Inventory->ConsumeSelected(1);NativeSelect(Inventory->GetSelectedItemId());
     }
 }
-bool ABridgeReceiver::SpawnNativeDrop(const FString& ItemId,int32 Count,const FVector& Position,const FVector& Velocity) {
+bool ABridgeReceiver::SpawnNativeDrop(const FString& ItemId,int32 Count,const FVector& Position,const FVector& Velocity,float PickupDelay) {
     const auto* Item=NativeUiPalette ? NativeUiPalette->FindItem(ItemId) : nullptr;
     if(!Item || Item->ModelKey.IsEmpty() || Count<1 || Count>Item->MaxCount || !EnsureItemWorld()) return false;
     const FString Tx=FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
@@ -389,13 +451,14 @@ bool ABridgeReceiver::SpawnNativeDrop(const FString& ItemId,int32 Count,const FV
     const FString Result=ItemWorld->Drop(Tx,ItemId,Item->ModelKey,Count,Item->MaxCount,Position,Velocity);
     ItemWorld->Resolve(Tx,0,0);
     if(Result!=TEXT("item_spawned")) {NativeDropItems.Remove(Tx);LastAction=Result;return false;}
-    return true;
+    ItemWorld->SetPickupDelay(Tx,PickupDelay);return true;
 }
 bool ABridgeReceiver::NativeDrop(const FString& ItemId,int32 Count) {
     if(!IsNativeReady() || !UEControl || !TargetCharacter) return false;
     auto* Character=Cast<ABridgeCharacter>(TargetCharacter);if(!Character) return false;
     FVector Eye;FRotator Aim;Character->GetEyeAim(Eye,Aim);
-    return SpawnNativeDrop(ItemId,Count,Eye+Aim.Vector()*35,Aim.Vector()*300+FVector(0,0,100));
+    const float Angle=FMath::FRand()*2*PI,Scatter=FMath::FRand()*40;
+    return SpawnNativeDrop(ItemId,Count,Eye-FVector(0,0,30),Aim.Vector()*600+FVector(FMath::Cos(Angle)*Scatter,FMath::Sin(Angle)*Scatter,200),2.f);
 }
 void ABridgeReceiver::NativeSetLighting(bool Enabled) {
     if(!NativePlayActive) return;NativeLighting=Enabled;
@@ -416,6 +479,8 @@ bool ABridgeReceiver::NativeSave() {
     auto Runtime=MakeShared<FJsonObject>();Runtime->SetNumberField(TEXT("health"),GetNativeHealth());Runtime->SetBoolField(TEXT("lighting"),NativeLighting);
     Runtime->SetArrayField(TEXT("respawn"),JsonVector(NativeRespawnPosition));Runtime->SetBoolField(TEXT("flying"),LatestInput.Flying);Runtime->SetNumberField(TEXT("perspective"),LatestInput.Perspective);
     Runtime->SetObjectField(TEXT("inventory"),Inventory);
+    Runtime->SetNumberField(TEXT("timeOfDay"),NativeTimeOfDay);Runtime->SetNumberField(TEXT("worldTime"),NativeWorldTime);Runtime->SetBoolField(TEXT("daylightCycle"),NativeDaylightCycle);Runtime->SetBoolField(TEXT("creative"),NativeCreative);
+    double Gradient;for(const TCHAR* Key:{TEXT("rainGradient"),TEXT("thunderGradient")}) if(LatestInput.VanillaLight->TryGetNumberField(Key,Gradient)) Runtime->SetNumberField(Key,Gradient);
     if(MobWorld) Runtime->SetArrayField(TEXT("mobs"),MobWorld->ExportNativeSnapshots(Anchor,SourceOrigin));
     if(ItemWorld) Runtime->SetArrayField(TEXT("drops"),ItemWorld->ExportNativeDrops(Anchor,SourceOrigin));
     TArray<TSharedPtr<FJsonValue>> Fuses;
@@ -429,6 +494,7 @@ bool ABridgeReceiver::NativeSave() {
 }
 void ABridgeReceiver::NativeRespawn() {
     if(!NativePlayActive || !NativeInitialized || NativeRestoreFailed || !NativeStore.IsValid() || !TargetCharacter) return;
+    NativeSubmergedSeconds=0;NativeEyeInWater=false;NativeLastFluidDamage=-100;
     if(MobWorld) MobWorld->RespawnPlayer();
     LatestInput.Flying=false;if(auto* PC=Controller(this)) PC->RestoreNativeView(LatestInput.Yaw,-LatestInput.Pitch,false,LatestInput.Perspective);
     const FVector Feet=BridgeProtocol::ToUnreal(NativeRespawnPosition-SourceOrigin,Anchor);
@@ -488,4 +554,73 @@ void ABridgeReceiver::LogDiagnostics(double Now,bool bForceLog) {
         *GetNameSafe(MobPalette),MobPalette?MobPalette->Appearances.Num():0,MobPalette?MobPalette->Templates.Num():0,MobWorld?MobWorld->AliveCount():0,
         VanillaEffects?VanillaEffects->ParticleCount():0,UEControl?TEXT("ready"):TEXT("waiting"),*NativeStatus,*LastAction,*Sample,*Video->GetDiagnosticSummary());
     if(NativePlayActive) {PerformanceSeconds=0;PerformanceFrames=0;}
+}
+
+void ABridgeReceiver::TickNativeTime(float DeltaSeconds) {
+    if(!LatestInput.VanillaLight.IsValid() || !NativeStore.IsValid()) return;
+    NativeTimeAccumulator+=FMath::Max(0.f,DeltaSeconds);
+    const double Ticks=FMath::FloorToDouble(NativeTimeAccumulator*20);
+    if(Ticks>0) {NativeTimeAccumulator-=Ticks*.05;NativeWorldTime=FMath::Min(9007199254740991.,NativeWorldTime+Ticks);if(NativeDaylightCycle) NativeTimeOfDay=FMath::Min(9007199254740991.,NativeTimeOfDay+Ticks);} else if(DeltaSeconds>0) return;
+    bool HasSky=true;LatestInput.VanillaLight->TryGetBoolField(TEXT("hasSky"),HasSky);
+    if(!HasSky) {LatestInput.VanillaLight->SetNumberField(TEXT("timeOfDay"),NativeTimeOfDay);LatestInput.VanillaLight->SetNumberField(TEXT("worldTime"),NativeWorldTime);return;}
+    const double Sun=BridgeSkyMath::DefaultSunDegrees(NativeTimeOfDay);
+    const double Day=FMath::Clamp(FMath::Cos(FMath::DegreesToRadians(Sun))*2+.5,0.,1.);
+    double Rain=0;LatestInput.VanillaLight->TryGetNumberField(TEXT("rainGradient"),Rain);
+    const double Sky=FMath::Lerp(.2,1.,Day)*(1-Rain*.3);
+    LatestInput.VanillaLight->SetNumberField(TEXT("timeOfDay"),NativeTimeOfDay);
+    LatestInput.VanillaLight->SetNumberField(TEXT("worldTime"),NativeWorldTime);
+    LatestInput.VanillaLight->SetNumberField(TEXT("sunAngle"),Sun);
+    LatestInput.VanillaLight->SetNumberField(TEXT("moonAngle"),Sun+180);
+    LatestInput.VanillaLight->SetNumberField(TEXT("moonPhase"),BridgeSkyMath::DefaultMoonPhase(NativeTimeOfDay));
+    LatestInput.VanillaLight->SetNumberField(TEXT("starAngle"),Sun);
+    LatestInput.VanillaLight->SetNumberField(TEXT("starBrightness"),(1-Day)*.5*(1-Rain));
+    LatestInput.VanillaLight->SetNumberField(TEXT("skyFactor"),Sky);
+    // Recompute the sky/lightmap together; frozen exported angles no longer
+    // override the local clock after a time command or a saved-world restore.
+    LatestInput.VanillaLight->SetNumberField(TEXT("skyBackgroundColor"),FColor(uint8(120*Day),uint8(167*Day),uint8(255*FMath::Max(.15,Day))).ToPackedARGB()&0xffffffu);
+    Video->SetNativeSkyEnvironment(LatestInput.VanillaLight,NativeStore->GetMetadata().Dimension);
+}
+FString ABridgeReceiver::NativeCommand(const FString& Command) {
+    if(!IsNativeReady()) return TEXT("ワールドの読み込み完了を待ってください");
+    FString Line=Command.TrimStartAndEnd();Line.RemoveFromStart(TEXT("/"));
+    TArray<FString> Args;Line.ParseIntoArrayWS(Args);
+    if(Args.IsEmpty()) return FString();
+    auto Number=[](const FString& Value,double& Out) {return LexTryParseString(Out,*Value) && FMath::IsFinite(Out) && Out>=0 && Out<=9007199254740991. && Out==FMath::FloorToDouble(Out);};
+    if(Args[0]==TEXT("help")) return TEXT("/time set day|noon|night|midnight|数値 /time add 数値 /time query daytime /gamerule doDaylightCycle true|false /weather clear|rain|thunder /gamemode creative|survival /give アイテム [個数] /save");
+    if(Args[0]==TEXT("time") && Args.Num()==3) {
+        if(Args[1]==TEXT("query")) {
+            if(Args[2]==TEXT("daytime")) return FString::Printf(TEXT("時刻: %.0f"),BridgeSkyMath::PositiveRemainder(NativeTimeOfDay,24000));
+            if(Args[2]==TEXT("day")) return FString::Printf(TEXT("日数: %.0f"),FMath::FloorToDouble(NativeTimeOfDay/24000));
+            if(Args[2]==TEXT("gametime")) return FString::Printf(TEXT("経過tick: %.0f"),NativeWorldTime);
+        }
+        double Value=0;
+        if(Args[1]==TEXT("set")) {
+            if(Args[2]==TEXT("day")) Value=1000;else if(Args[2]==TEXT("noon")) Value=6000;
+            else if(Args[2]==TEXT("night")) Value=13000;else if(Args[2]==TEXT("midnight")) Value=18000;
+            else if(!Number(Args[2],Value)) return TEXT("時刻は0以上の数値または day/noon/night/midnight を指定してください");
+            NativeTimeOfDay=Value;
+        } else if(Args[1]==TEXT("add") && Number(Args[2],Value)) NativeTimeOfDay=FMath::Min(9007199254740991.,NativeTimeOfDay+Value);
+        else return TEXT("使い方: /time set|add|query 値");
+        TickNativeTime(0);return FString::Printf(TEXT("時刻を %.0f に変更しました"),NativeTimeOfDay);
+    }
+    if(Args[0]==TEXT("gamerule") && Args.Num()==3 && Args[1]==TEXT("doDaylightCycle") && (Args[2]==TEXT("true") || Args[2]==TEXT("false"))) {
+        NativeDaylightCycle=Args[2]==TEXT("true");return NativeDaylightCycle ? TEXT("時間サイクル: ON") : TEXT("時間サイクル: OFF");
+    }
+    if(Args[0]==TEXT("weather") && Args.Num()==2 && (Args[1]==TEXT("clear") || Args[1]==TEXT("rain") || Args[1]==TEXT("thunder"))) {
+        LatestInput.VanillaLight->SetNumberField(TEXT("rainGradient"),Args[1]==TEXT("clear") ? 0 : 1);
+        LatestInput.VanillaLight->SetNumberField(TEXT("thunderGradient"),Args[1]==TEXT("thunder") ? 1 : 0);TickNativeTime(0);
+        return TEXT("空と照明の天候を変更しました（雨粒・雷は未対応）");
+    }
+    if(Args[0]==TEXT("gamemode") && Args.Num()==2 && (Args[1]==TEXT("creative") || Args[1]==TEXT("survival"))) {
+        NativeCreative=Args[1]==TEXT("creative");return NativeCreative ? TEXT("クリエイティブモード") : TEXT("サバイバルモード");
+    }
+    if(Args[0]==TEXT("give") && (Args.Num()==2 || Args.Num()==3)) {
+        FString Id=Args[1];if(!Id.Contains(TEXT(":"))) Id=TEXT("minecraft:")+Id;double Count=1;
+        if(Args.Num()==3 && (!Number(Args[2],Count) || Count<1 || Count>2304 || FMath::FloorToDouble(Count)!=Count)) return TEXT("個数は1～2304です");
+        auto* PC=Controller(this);auto* Inventory=PC ? PC->GetNativeInventory() : nullptr;
+        if(!Inventory || !NativeUiPalette || !NativeUiPalette->FindItem(Id)) return TEXT("未取り込みのアイテムです");
+        const int32 Remaining=Inventory->InsertStack(Id,int32(Count));return FString::Printf(TEXT("%s を %d 個追加しました"),*Id,int32(Count)-Remaining);
+    }
+    if(Args[0]==TEXT("save") && Args.Num()==1) return NativeSave() ? TEXT("保存を開始しました") : TEXT("保存できませんでした");
+    return TEXT("未対応のコマンドです。/help で一覧を確認できます");
 }

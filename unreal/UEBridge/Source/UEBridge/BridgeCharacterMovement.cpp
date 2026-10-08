@@ -1,5 +1,6 @@
 #include "BridgeCharacterMovement.h"
 #include "BridgeMovementMath.h"
+#include "BridgeFluidMath.h"
 #include "BridgeCharacter.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/World.h"
@@ -71,4 +72,42 @@ void UBridgeCharacterMovement::MoveAlongFloor(const FVector& InVelocity,float De
             Velocity.Z=0;
         }
     }
+}
+
+void UBridgeCharacterMovement::PhysWalking(float DeltaTime,int32 Iterations) {
+    auto* Bridge=Cast<ABridgeCharacter>(CharacterOwner);
+    const bool Guard=Bridge && Bridge->UEAuthority && CharacterOwner->bIsCrouched && IsMovingOnGround();
+    const FVector Before=UpdatedComponent ? UpdatedComponent->GetComponentLocation() : FVector::ZeroVector;
+    const FVector Feet=Bridge ? Bridge->GetMinecraftFeetPosition() : FVector::ZeroVector;
+    const FFindFloorResult Floor=CurrentFloor;
+    Super::PhysWalking(DeltaTime,Iterations);
+    if(!Guard || !UpdatedComponent || Velocity.Z>0 || MovementMode==MOVE_Flying) return;
+    const FVector After=UpdatedComponent->GetComponentLocation();
+    // PhysWalking may switch to falling AFTER MoveAlongFloor. AABB support
+    // must guard that transition too, while a real lower stair remains legal.
+    if(HasFootSupport(FVector(After.X,After.Y,Feet.Z),.5) && After.Z<Before.Z+.01) {
+        FHitResult Hit;SafeMoveUpdatedComponent(FVector(0,0,Before.Z-After.Z),UpdatedComponent->GetComponentQuat(),true,Hit);
+        if(!Hit.IsValidBlockingHit()) {
+            SetMovementMode(MOVE_Walking);CurrentFloor=Floor;Velocity.Z=0;
+            CurrentFloor.HitResult.Location=UpdatedComponent->GetComponentLocation();CurrentFloor.HitResult.ImpactPoint=FVector(After.X,After.Y,Feet.Z);
+        }
+    }
+}
+
+void UBridgeCharacterMovement::SetNativeFluid(int32 Kind,const FVector& Flow) {
+    FluidKind=Kind;FluidFlow=Flow;
+    if(Kind>0 && MovementMode!=MOVE_Flying && MovementMode!=MOVE_None && MovementMode!=MOVE_Custom) SetMovementMode(MOVE_Custom,1);
+    else if(Kind==0 && MovementMode==MOVE_Custom && CustomMovementMode==1) SetMovementMode(MOVE_Falling);
+}
+void UBridgeCharacterMovement::PhysCustom(float DeltaTime,int32 Iterations) {
+    if(CustomMovementMode!=1 || FluidKind==0) {Super::PhysCustom(DeltaTime,Iterations);return;}
+    if(!UpdatedComponent || DeltaTime<MIN_TICK_TIME) return;
+    const float Dt=FMath::Min(DeltaTime,.1f);const double Drag=FluidKind==2 ? .5 : .8;
+    const FVector Input=Acceleration.GetClampedToMaxSize(MaxAcceleration)/FMath::Max(1.f,MaxAcceleration);
+    const FVector Drive=Input*40.f+FluidFlow+FVector(0,0,(FluidJump ? 80 : 0)-(FluidSneak ? 80 : 0));
+    const auto X=BridgeFluidMath::travel(Velocity.X,Drive.X,Drag,0,Dt),Y=BridgeFluidMath::travel(Velocity.Y,Drive.Y,Drag,0,Dt);
+    const auto Z=BridgeFluidMath::travel(Velocity.Z,Drive.Z,Drag,FluidKind==2 ? 40 : 10,Dt);
+    Velocity=FVector(X.velocity,Y.velocity,Z.velocity);const FVector Delta(X.distance,Y.distance,Z.distance);FHitResult Hit;
+    SafeMoveUpdatedComponent(Delta,UpdatedComponent->GetComponentQuat(),true,Hit);
+    if(Hit.IsValidBlockingHit()) {HandleImpact(Hit,Dt,Delta);SlideAlongSurface(Delta,1-Hit.Time,Hit.Normal,Hit,true);Velocity=FVector::VectorPlaneProject(Velocity,Hit.Normal);if(FluidJump && Hit.Normal.Z<.5f) Velocity.Z=600;}
 }

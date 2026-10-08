@@ -26,6 +26,7 @@ public final class NativeUiExport {
         var resources=collectSprites(client.getResourceManager());
         for(Identifier id:collectDeathPoof(client.getResourceManager(),resources)) deathPoofFrames.add(spriteKey(id));
         for(int cp=32;cp<=126;cp++) characters.add(cp);
+        "時間サイクル時刻日数経過変更数値以上指定使い方値個追加未取り込対応コマンド一覧確認開始保存空照明天候雨粒雷待モード個数".codePoints().forEach(characters::add);
         "照明感度下上視点一人称後前所持品へ検索へアイテムを削除".codePoints().forEach(characters::add);
         "クリエイティブサバイバルインベントリ検索完了読み込み中設定戻る終了経験値保存再開操作アイテムゲームメニューワールド開始地点に所持品クラフトは未対応です".codePoints().forEach(characters::add);
         for(Item item:Registries.ITEM) {ItemStack stack=item.getDefaultStack();if(stack.isEmpty()) continue;if(stacks.size()>=4096) throw new IOException("UI item limit exceeded");stacks.add(stack);stack.getName().getString().codePoints().forEach(characters::add);}
@@ -46,7 +47,7 @@ public final class NativeUiExport {
                 group.getDisplayName().getString().codePoints().forEach(characters::add);
             }
         }
-        if(resources.size()>2048) throw new IOException("HUD sprite limit 2048 exceeded");spriteResources=resources.entrySet().iterator();
+        if(resources.size()>4096) throw new IOException("HUD sprite limit 4096 exceeded");spriteResources=resources.entrySet().iterator();
     }
     public int completed() {return cursor;}
     public int total() {return stacks.size();}
@@ -115,7 +116,7 @@ public final class NativeUiExport {
     static Map<Identifier,Resource> collectSprites(ResourceManager manager) {
         var result=new TreeMap<Identifier,Resource>(Comparator.comparing(Identifier::toString));
         result.putAll(manager.findResources("textures/gui/sprites",id->id.getPath().endsWith(".png")));
-        result.putAll(manager.findResources("textures/particle",id->id.getPath().matches("textures/particle/explosion(_[0-9]+)?\\.png")));
+        result.putAll(manager.findResources("textures/particle",id->id.getPath().endsWith(".png")));
         for(String id:additionalSprites()) {
             var key=Identifier.of(id);manager.getResource(key).ifPresent(value->result.put(key,value));
         }

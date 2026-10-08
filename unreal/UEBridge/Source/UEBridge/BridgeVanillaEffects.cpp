@@ -214,7 +214,8 @@ void ABridgeVanillaEffects::RenderPoof(const FQuat& Facing,float Interpolation) 
     }
 }
 
-void ABridgeVanillaEffects::EndPlay(const EEndPlayReason::Type Reason) { ClearParticles(); Super::EndPlay(Reason); }
+void ABridgeVanillaEffects::EndPlay(const EEndPlayReason::Type Reason) {
+    for(auto& Entry:NativeGroups) if(Entry.Value) Entry.Value->DestroyComponent();NativeGroups.Empty();NativeParticles.Empty(); ClearParticles(); Super::EndPlay(Reason); }
 
 bool ABridgeVanillaEffects::ResolveTexture(const FString& BlockId,FColor& Tint,UTexture*& DustTexture) const {
     if(!IsValid(Palette)) return false;
@@ -362,6 +363,7 @@ void ABridgeVanillaEffects::SampleCharacter(ABridgeCharacter* Character,float De
 }
 void ABridgeVanillaEffects::Tick(float DeltaSeconds) {
     Super::Tick(DeltaSeconds);
+    TickNativeParticles(DeltaSeconds);
     if(Particles.IsEmpty() && PoofParticles.IsEmpty()) return;
     PhysicsClock+=FMath::Clamp(DeltaSeconds,0.f,.1f);
     while(PhysicsClock>=.05f) {
@@ -428,5 +430,69 @@ void ABridgeVanillaEffects::Tick(float DeltaSeconds) {
     Diagnostics.PeakInstances=FMath::Max(Diagnostics.PeakInstances,GetDiagnostics().Instances);
     for(auto It=Groups.CreateIterator();It;++It) if(!InstanceCounts.Contains(It.Key())) {
         if(It.Value()) It.Value()->DestroyComponent(); It.RemoveCurrent();
+    }
+}
+
+void ABridgeVanillaEffects::SpawnCombat(const FVector& Position,const FVector& Direction,bool Critical,bool Sweep) {
+    if(!PoofResources || !PoofMaterial || NativeParticles.Num()>=2048) return;
+    if(Critical) for(int32 I=0;I<32 && NativeParticles.Num()<2048;++I) {
+        auto& Particle=NativeParticles.AddDefaulted_GetRef();Particle.Sprite=TEXT("particle/critical_hit");
+        const FVector Random=FMath::VRand();Particle.Position=Position+Random*40;Particle.Velocity=Random*180+FVector(0,0,80);
+        Particle.Lifetime=FMath::FRandRange(.2f,.4f);Particle.Size=FMath::FRandRange(8.f,16.f);Particle.Gravity=320;
+    }
+    if(Sweep && NativeParticles.Num()<2048) {auto& Particle=NativeParticles.AddDefaulted_GetRef();Particle.Sprite=TEXT("particle/sweep_0");
+        Particle.Position=Position+Direction.GetSafeNormal2D()*40;Particle.Sweep=true;Particle.Size=150;Particle.Lifetime=.4f;}
+}
+void ABridgeVanillaEffects::TickNativeParticles(float DeltaSeconds) {
+    if(!PoofResources || !PoofMaterial || !ParticlePlane || !GetWorld()) return;
+    const float Dt=FMath::Clamp(DeltaSeconds,0.f,.1f);LeafClock+=Dt;
+    if(LeafClock>=.05f && SampledCharacter.IsValid() && Terrain && NativeParticles.Num()<1024) {
+        LeafClock=FMath::Fmod(LeafClock,.05f);
+        for(int32 I=0;I<24;++I) {
+            const FVector Sample=SampledCharacter->GetMinecraftFeetPosition()+FVector(FMath::FRandRange(-1200.f,1200.f),FMath::FRandRange(-1200.f,1200.f),FMath::FRandRange(100.f,1200.f));
+            const FIntVector Voxel=Terrain->SourceVoxelAt(Sample);FString Id,State,Below,BelowState;
+            if(!Terrain->GetBlockState(Voxel,Id,State) || !Id.EndsWith(TEXT("_leaves")) || Terrain->GetBlockState(Voxel-FIntVector(0,1,0),Below,BelowState)) continue;
+            FString Kind=Id==TEXT("minecraft:cherry_leaves") ? TEXT("cherry_") : Id==TEXT("minecraft:pale_oak_leaves") ? TEXT("pale_oak_") : TEXT("leaf_");
+            const FString Sprite=TEXT("particle/")+Kind+FString::FromInt(FMath::RandRange(0,11));if(!PoofResources->FindSprite(Sprite)) continue;
+            auto& Particle=NativeParticles.AddDefaulted_GetRef();Particle.Sprite=Sprite;Particle.Leaf=true;
+            Particle.Position=Terrain->BlockCenter(Voxel)+FVector(FMath::FRandRange(-45.f,45.f),FMath::FRandRange(-45.f,45.f),-50);
+            Particle.Velocity=FVector(FMath::FRandRange(-12.f,12.f),FMath::FRandRange(-12.f,12.f),-8);
+            Particle.Size=FMath::FRandRange(8.f,16.f);Particle.Gravity=12;Particle.Lifetime=FMath::FRandRange(8.f,15.f);Particle.Spin=FMath::FRandRange(0.f,6.28f);
+            if(Kind==TEXT("leaf_")) Particle.Tint=Terrain->RenderTintAt(Voxel,Id);
+        }
+    }
+    for(auto& Particle:NativeParticles) {
+        Particle.Age+=Dt;if(Particle.Sweep) {Particle.Sprite=TEXT("particle/sweep_")+FString::FromInt(FMath::Clamp(int32(Particle.Age*20),0,7));continue;}
+        Particle.Velocity.Z-=Particle.Gravity*Dt;
+        FVector Delta=Particle.Velocity*Dt;
+        if(Particle.Leaf) {Delta.X+=FMath::Sin(Particle.Age*2+Particle.Spin)*20*Dt;Delta.Y+=FMath::Cos(Particle.Age*1.7f+Particle.Spin)*20*Dt;}
+        FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(NativeParticle),false,this);if(SampledCharacter.IsValid()) Query.AddIgnoredActor(SampledCharacter.Get());
+        if(GetWorld()->LineTraceSingleByChannel(Hit,Particle.Position,Particle.Position+Delta,ECC_WorldStatic,Query)) {Particle.Position=Hit.ImpactPoint+Hit.Normal;Particle.Velocity=FVector::ZeroVector;if(Particle.Leaf) Particle.Lifetime=FMath::Min(Particle.Lifetime,Particle.Age+.2f);}
+        else Particle.Position+=Delta;
+        if(!Particle.Leaf) Particle.Velocity*=FMath::Pow(.7f,Dt*20);
+    }
+    NativeParticles.RemoveAll([](const FNativeParticle& P){return P.Age>=P.Lifetime;});
+    FQuat Facing=FQuat::Identity;if(ViewCamera.IsValid()) {const FQuat Camera=ViewCamera->GetComponentQuat();Facing=FRotationMatrix::MakeFromXY(Camera.RotateVector(FVector(0,1,0)),Camera.RotateVector(FVector(0,0,1))).ToQuat();}
+    TMap<FString,int32> Counts;
+    for(const auto& Particle:NativeParticles) {
+        UTexture2D* Texture=PoofResources->FindSprite(Particle.Sprite);if(!Texture) continue;
+        const FString Key=Particle.Sprite+FString::Printf(TEXT("#%u"),Particle.Tint.ToPackedARGB());if(!NativeGroups.Contains(Key) && NativeGroups.Num()>=128) continue;auto& Group=NativeGroups.FindOrAdd(Key);
+        if(!Group && NativeGroups.Num()<=128) {
+            Group=NewObject<UInstancedStaticMeshComponent>(this);Group->SetupAttachment(RootComponent);Group->SetMobility(EComponentMobility::Movable);Group->SetStaticMesh(ParticlePlane);
+            Group->SetCollisionEnabled(ECollisionEnabled::NoCollision);Group->SetCastShadow(false);Group->SetCanEverAffectNavigation(false);Group->NumCustomDataFloats=4;
+            auto* Material=UMaterialInstanceDynamic::Create(PoofMaterial,this);Material->SetTextureParameterValue(TEXT("PoofTexture"),Texture);
+            Material->SetVectorParameterValue(TEXT("PoofColor"),FLinearColor(Particle.Tint.R/255.f,Particle.Tint.G/255.f,Particle.Tint.B/255.f,1));Group->SetMaterial(0,Material);Group->RegisterComponent();
+        }
+        if(!Group) continue;const int32 Index=Counts.FindOrAdd(Key)++;
+        const FQuat Rotation=Particle.Leaf ? Facing*FQuat(FVector::UpVector,Particle.Spin+Particle.Age) : Facing;
+        const FTransform Transform(Rotation,Particle.Position,FVector(Particle.Size*.01f));
+        if(Index<Group->GetInstanceCount()) Group->UpdateInstanceTransform(Index,Transform,true,false,true);else Group->AddInstance(Transform,true);
+        FLinearColor Light=SampleLight ? SafeLight(SampleLight(Particle.Position)) : FLinearColor(1,0,1,1);
+        Group->SetCustomDataValue(Index,0,1,false);Group->SetCustomDataValue(Index,1,Light.R,false);Group->SetCustomDataValue(Index,2,Light.G,false);Group->SetCustomDataValue(Index,3,Light.B,false);
+    }
+    for(auto It=NativeGroups.CreateIterator();It;++It) {
+        auto* Group=It.Value().Get();const int32 Count=Counts.FindRef(It.Key());
+        if(!Group || !Count) {if(Group) Group->DestroyComponent();It.RemoveCurrent();continue;}
+        while(Group->GetInstanceCount()>Count) Group->RemoveInstance(Group->GetInstanceCount()-1);Group->MarkRenderStateDirty();
     }
 }

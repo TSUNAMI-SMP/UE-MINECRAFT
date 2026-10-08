@@ -12,7 +12,8 @@ public:
     ABridgeBlockPreview();
     void Replace(const TArray<FBridgeBlock>& Blocks, const FVector& Anchor, class UMaterialInterface* Material, class UBridgeBlockPalette* Palette=nullptr, bool Physics=false,
         const TFunction<bool(const FIntVector&)>& OpaqueAt={},class FBridgeLightingService* Lighting=nullptr,bool RebuildVisual=true,
-        const TFunction<FColor(const FIntVector&,const FString&,int32)>& RenderTintAt={});
+        const TFunction<FColor(const FIntVector&,const FString&,int32)>& RenderTintAt={},
+        const TFunction<bool(const FIntVector&,FString&,FString&)>& BlockStateAt={});
     void Clear();
     bool ResolveHit(const class UPrimitiveComponent* Component,int32 Instance,FBridgeBlock& Out) const;
     void Relight(class FBridgeLightingService* Lighting);

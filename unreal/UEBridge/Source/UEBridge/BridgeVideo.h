@@ -22,6 +22,7 @@ public:
     void SetNativeSkyEnvironment(const TSharedPtr<class FJsonObject>& Values,const FString& Dimension=TEXT("minecraft:overworld"));
     /** Native CROSSHAIR inverse blend. Three independently cropped GUI sprites. */
     bool SetNativeInverseSprite(int32 Slot,class UTexture2D* Texture,const FVector4& PixelRect,const FVector4& UVRect,bool Enabled);
+    void SetNativeSceneTint(const FLinearColor& Value) {NativeSceneTint=Value;}
     bool IsNativeRenderModeActive() const {return SavedNativeFlags.IsValid();}
     FString GetDiagnosticSummary() const;
     void SetMinecraftOrigin(const FVector& MinecraftOrigin,const FVector& UEAnchor) {MCOrigin=MinecraftOrigin;Anchor=UEAnchor;}
@@ -57,6 +58,7 @@ private:
     bool LightingEnabled=true,VanillaSkyEnabled=false,ClientV3=false,ClientGpu=false;
     TSharedPtr<struct FBridgeSharedTransport,ESPMode::ThreadSafe> SharedGpu;
     TArray<uint8> Acknowledgements;
+    FLinearColor NativeSceneTint=FLinearColor::White;
     float LastCaptureMs=0;
     int32 DroppedFrames=0;
     uint64 CapturedFrames=0,TransmittedFrames=0,ReplacedFrames=0,StaleFrames=0,BackpressureTicks=0,Connections=0;

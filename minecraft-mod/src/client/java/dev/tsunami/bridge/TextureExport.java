@@ -197,7 +197,7 @@ public final class TextureExport {
         if(textures.has(texture)) return;
         if(textures.size()>=4096) throw new IOException("Texture count budget exceeded");
         byte[] raw=read(resource(texture,"textures/",".png"),4*1024*1024);
-        byte[] png=raw; int width,height;String alphaMode="opaque";
+        byte[] png=raw; int width,height;String alphaMode="opaque";boolean fluidTexture=texture.contains("/water_") || texture.contains("/lava_");int frameCount=1,frameTime=2;
         try(var stream=new MemoryCacheImageInputStream(new ByteArrayInputStream(raw))) {
             var readers=ImageIO.getImageReaders(stream); if(!readers.hasNext()) throw new Unsupported("Invalid PNG");
             var reader=readers.next();
@@ -215,14 +215,20 @@ public final class TextureExport {
                         int fw=animation.has("width") ? animation.get("width").getAsInt() : width;
                         int fh=animation.has("height") ? animation.get("height").getAsInt() : fw;
                         if(fw<1 || fh<1 || fw>width || fh>height) throw new Unsupported("Invalid animation frame size");
-                        pixels=pixels.getSubimage(0,0,fw,fh);var out=new ByteArrayOutputStream();
+                        if(fluidTexture) {frameCount=height/fh;frameTime=animation.has("frametime") ? Math.max(1,animation.get("frametime").getAsInt()) : 1;}
+                        else {pixels=pixels.getSubimage(0,0,fw,fh);var out=new ByteArrayOutputStream();
                         if(!ImageIO.write(pixels,"png",out)) throw new IOException("PNG writer unavailable");
-                        png=out.toByteArray(); width=fw; height=fh;
+                        png=out.toByteArray(); width=fw; height=fh;}
                     }
                 }
                 boolean cutout=false,translucent=false;
                 for(int y=0;y<height && !translucent;y++) for(int x=0;x<width;x++) {
                     int alpha=pixels.getRGB(x,y)>>>24;if(alpha==0) cutout=true;else if(alpha!=255) {translucent=true;break;}
+                }
+                if(texture.contains("/water_")) {
+                    var out=new ByteArrayOutputStream();
+                    for(int y=0;y<height;y++) for(int x=0;x<width;x++) pixels.setRGB(x,y,(pixels.getRGB(x,y)&0xffffff)|0xb0000000);
+                    ImageIO.write(pixels,"png",out);png=out.toByteArray();translucent=true;
                 }
                 alphaMode=translucent ? "translucent" : cutout ? "cutout" : "opaque";
             } finally { reader.dispose(); }
@@ -234,6 +240,7 @@ public final class TextureExport {
         Files.createDirectories(target.getParent()); Files.write(target,png,StandardOpenOption.CREATE_NEW);
         JsonObject metadata=new JsonObject(); metadata.addProperty("file",relative); metadata.addProperty("width",width); metadata.addProperty("height",height);
         metadata.addProperty("alphaMode",alphaMode);
+        if(fluidTexture) {metadata.addProperty("animationFrames",frameCount);metadata.addProperty("animationFrameTime",frameTime);}
         try { metadata.addProperty("sha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(png))); }
         catch(NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
         textures.add(texture,metadata);
@@ -242,7 +249,11 @@ public final class TextureExport {
     public boolean export(Block block) throws IOException {
         try {
             if(!block.excludedReason.isEmpty()) { exclusions.addProperty(id(block.id),block.excludedReason); skipped++; return false; }
-            Faces faces=resolve(block); exportTexture(faces.top.texture); exportTexture(faces.side.texture); exportTexture(faces.bottom.texture); exportTexture(faces.particle.texture);
+            boolean fluid=block.id.equals("minecraft:water") || block.id.equals("minecraft:lava") || block.id.equals("minecraft:bubble_column");
+            boolean invisible=Set.of("minecraft:air","minecraft:cave_air","minecraft:void_air","minecraft:barrier","minecraft:light","minecraft:structure_void").contains(block.id);
+            boolean fallback=false;Faces faces;
+            if(fluid) {String base=block.id.equals("minecraft:lava") ? "minecraft:block/lava_still" : "minecraft:block/water_still";faces=new Faces(new Face(base,!block.id.equals("minecraft:lava")),new Face(base,!block.id.equals("minecraft:lava")),new Face(base,!block.id.equals("minecraft:lava")),new Face(base,false));}
+            else try {faces=resolve(block);} catch(Unsupported missing) {fallback=true;faces=new Faces(new Face("minecraft:block/stone",false),new Face("minecraft:block/stone",false),new Face("minecraft:block/stone",false),new Face("minecraft:block/stone",false));} exportTexture(faces.top.texture); exportTexture(faces.side.texture); exportTexture(faces.bottom.texture); exportTexture(faces.particle.texture);
             JsonObject p=new JsonObject(); p.add("top",faceJson(faces.top)); p.add("side",faceJson(faces.side)); p.add("bottom",faceJson(faces.bottom));
             JsonObject particle=faceJson(faces.particle);
             particle.addProperty("color",faces.particle.tint ? block.particleColor & 0xffffff : 0xffffff);
@@ -268,9 +279,23 @@ public final class TextureExport {
                 states.add(stateKey(state.properties),data);
             }
             p.add("states",states);
-            JsonObject sourceState=json(resource(block.id,"blockstates/",".json"));
-            if(sourceState.has("variants")) for(var e:sourceState.getAsJsonObject("variants").entrySet()) bakeReferenced(e.getValue());
-            if(sourceState.has("multipart")) for(var e:sourceState.getAsJsonArray("multipart")) bakeReferenced(e.getAsJsonObject().get("apply"));
+            JsonObject sourceState;
+            if(fluid || fallback || invisible) {
+                sourceState=new JsonObject();JsonObject variants=new JsonObject();
+                for(State state:block.states) {
+                    String key=stateKey(state.properties);String modelName="minecraft:block/uebridge_"+(invisible ? "invisible_" : fluid ? "fluid_" : "fallback_")+block.id.substring(block.id.indexOf(':')+1)+"_"+(fluid ? variants.size() : 0);
+                    JsonObject model=new JsonObject(),element=new JsonObject();JsonArray from=new JsonArray(),to=new JsonArray();from.add(0);from.add(0);from.add(0);to.add(16);
+                    int level=fluid ? Integer.parseInt(state.properties.getOrDefault("level","0")) : 0;
+                    double height=fluid ? (level>=8 ? 8./9 : (8-level)/9.) : 1;to.add(height*16);to.add(16);element.add("from",from);element.add("to",to);
+                    JsonObject nativeFaces=new JsonObject();
+                    for(String side:List.of("up","down","north","south","east","west")) {JsonObject face=new JsonObject();face.addProperty("texture",faces.top.texture);if(fluid && !block.id.equals("minecraft:lava")) face.addProperty("tintindex",0);face.addProperty("cullface",side);nativeFaces.add(side,face);}
+                    element.add("faces",nativeFaces);JsonArray elements=new JsonArray();if(!invisible) elements.add(element);model.add("elements",elements);model.add("textures",new JsonObject());exportedModels.add(modelName,model);
+                    JsonObject apply=new JsonObject();apply.addProperty("model",modelName);variants.add(key,apply);
+                }
+                sourceState.add("variants",variants);p.addProperty("itemFallback",fallback && !invisible);
+            } else sourceState=json(resource(block.id,"blockstates/",".json"));
+            if(!fluid && !fallback && !invisible && sourceState.has("variants")) for(var e:sourceState.getAsJsonObject("variants").entrySet()) bakeReferenced(e.getValue());
+            if(!fluid && !fallback && !invisible && sourceState.has("multipart")) for(var e:sourceState.getAsJsonArray("multipart")) bakeReferenced(e.getAsJsonObject().get("apply"));
             blockstates.add(id(block.id),sourceState);
             blocks.add(id(block.id),p); return true;
         } catch(Unsupported | RuntimeException unsupported) { exclusions.addProperty(block.id,"model: "+unsupported.getMessage()); skipped++; return false; }

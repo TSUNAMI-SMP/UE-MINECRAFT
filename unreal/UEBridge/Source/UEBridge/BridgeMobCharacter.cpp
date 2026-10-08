@@ -1,5 +1,6 @@
 #include "BridgeMobCharacter.h"
 #include "BridgeMeshingMath.h"
+#include "BridgeMobMovement.h"
 #include "BridgeMobWorld.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
@@ -10,7 +11,8 @@
 #include "BridgeMobAIMath.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
-ABridgeMobCharacter::ABridgeMobCharacter() {
+ABridgeMobCharacter::ABridgeMobCharacter(const FObjectInitializer& ObjectInitializer)
+    : Super(ObjectInitializer.SetDefaultSubobjectClass<UBridgeMobMovement>(ACharacter::CharacterMovementComponentName)) {
     PrimaryActorTick.bCanEverTick=true;
     bUseControllerRotationYaw=false;
     VisualRoot=CreateDefaultSubobject<USceneComponent>(TEXT("MinecraftMobModel"));VisualRoot->SetupAttachment(GetCapsuleComponent());
@@ -109,10 +111,14 @@ void ABridgeMobCharacter::Tick(float DeltaSeconds) {
         // after landing so the imported model pivot cannot leave a floating corpse.
         VisualRoot->SetRelativeLocation(DeathRootPosition);
         VisualRoot->SetRelativeRotation(FRotator(0,0,float(BridgeCombatMath::deathRoll(DeathAge))));
-        if(GetCharacterMovement()->IsMovingOnGround()) {
+        if(GetCharacterMovement()->IsMovingOnGround() || (GetCharacterMovement()->Velocity.Z<=0 && DeathAge>.4f)) {
             FBox VisualBounds(ForceInit);
             for(const auto& Part:Parts) {Part->UpdateBounds();VisualBounds+=Part->Bounds.GetBox();}
-            if(VisualBounds.IsValid) VisualRoot->AddWorldOffset(FVector(0,0,GetNativeFeet().Z+2-VisualBounds.Min.Z));
+            if(VisualBounds.IsValid) {
+                FHitResult Ground;FCollisionQueryParams Query(SCENE_QUERY_STAT(MobDeathFloor),false,this);
+                if(GetWorld()->LineTraceSingleByChannel(Ground,GetNativeFeet()+FVector(0,0,8),GetNativeFeet()-FVector(0,0,12),ECC_WorldStatic,Query) && Ground.Normal.Z>.6f)
+                    VisualRoot->AddWorldOffset(FVector(0,0,Ground.ImpactPoint.Z+.5-VisualBounds.Min.Z));
+            }
         }
         if(DeathAge>=1.f) {if(WorldOwner.IsValid() && WorldOwner->NativeDeathPoof) WorldOwner->NativeDeathPoof(this);Destroy();}return;
     }
@@ -122,13 +128,19 @@ void ABridgeMobCharacter::Tick(float DeltaSeconds) {
     // UE consumes movement input once per rendered frame; retain the 20 Hz
     // control intent between decisions instead of pulsing it at 20 FPS.
     const auto Locomotion=BridgeMobAIMath::profile(TCHAR_TO_UTF8(*MinecraftType)).locomotion;
-    if(Now>=KnockbackUntil && GetCharacterMovement()->MovementMode!=MOVE_Flying && !MoveIntent.IsNearlyZero()) AddMovementInput(MoveIntent,1.f,true);
+
     // A knockback impulse changes velocity, not the entity's intended facing.
     const FVector Facing=Now<KnockbackUntil ? FVector::ZeroVector : MoveIntent;
     if(!Facing.IsNearlyZero()) {
         const float MaxTurn=(Locomotion==BridgeMobAIMath::Locomotion::Bat ? 360.f : 180.f)*FMath::Max(0.f,DeltaSeconds);
         const float Yaw=GetActorRotation().Yaw;
         SetActorRotation(FRotator(0,Yaw+FMath::Clamp(FMath::FindDeltaAngleDegrees(Yaw,Facing.Rotation().Yaw),-MaxTurn,MaxTurn),0));
+    }
+    if(Now>=KnockbackUntil && GetCharacterMovement()->MovementMode!=MOVE_Flying && !MoveIntent.IsNearlyZero()) {
+        const float Alignment=FVector::DotProduct(GetActorForwardVector(),MoveIntent.GetSafeNormal2D());
+        // Rotate first; ground locomotion follows the body rather than sliding
+        // sideways toward a waypoint while the visual is still turning.
+        if(Alignment>0) AddMovementInput(GetActorForwardVector(),Alignment,true);
     }
     Animate(FMath::Max(0.f,DeltaSeconds));
 }
@@ -401,6 +413,8 @@ void ABridgeMobCharacter::ApplyNativeKnockback(float StrengthBlocksPerTick,const
     // replacing a deferred launch. Enter falling BEFORE writing positive Z.
     if(Result.z>0 && (Grounded || Movement->IsMovingOnGround())) Movement->SetMovementMode(MOVE_Falling);
     Movement->Velocity=FVector(Result.x,Result.y,Result.z);
+    ConsumeMovementInputVector();
+    if(auto* VanillaMove=Cast<UBridgeMobMovement>(Movement)) VanillaMove->ImpulseUntil=GetWorld()->GetTimeSeconds()+.5;
     KnockbackUntil=GetWorld()->GetTimeSeconds()+.25;
     MoveIntent=FVector::ZeroVector;HasWaypoint=false;PathTicks=0;
 }
@@ -421,6 +435,7 @@ bool ABridgeMobCharacter::Hit(float Amount,const FVector& Direction) {
     BatRoosting=false;
     if(!Alive()) {
         DeathStarted=Now;DeathRootPosition=VisualRoot->GetRelativeLocation();MoveIntent=FVector::ZeroVector;
+        ConsumeMovementInputVector();GetCharacterMovement()->ClearAccumulatedForces();
         // Keep terrain collision/gravity for the 20 death ticks, while making
         // the corpse untargetable and nonblocking to other entities.
         GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Visibility,ECR_Ignore);

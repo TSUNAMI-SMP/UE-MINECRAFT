@@ -18,6 +18,8 @@ public:
     UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Bridge|Models") TMap<FString,FString> Models;
     UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Bridge|Models") TMap<FString,FString> StateShapes;
     UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Bridge|Items") TMap<FString,FString> ItemModels;
+    /** Registry item ID to the captured default stack model key; geometry is stored once. */
+    UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Bridge|Items") TMap<FString,FString> DefaultItemModels;
     UPROPERTY(EditAnywhere,BlueprintReadOnly,Category="Bridge|Items") TMap<FString,TObjectPtr<UMaterialInterface>> ItemMaterials;
     bool BuildItem(const FString& ItemId,const FString& Context,TArray<FBridgeModelFace>& Out) const;
     bool BuildModel(const FString& BlockId,const FString& StateKey,TArray<FBridgeModelFace>& Out) const;

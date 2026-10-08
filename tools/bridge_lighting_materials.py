@@ -361,7 +361,7 @@ def ensure_native_sky_materials(unreal, editing=None):
 def ensure_native_inverse_hud_material(unreal, editing=None):
     """Minecraft CROSSHAIR/GUI_INVERT composition after scene colour output."""
     editing = editing or unreal.MaterialEditingLibrary
-    path = '/Game/Bridge/Minecraft/M_NativeInverseHud_v1'
+    path = '/Game/Bridge/Minecraft/M_NativeInverseHud_v2'
     assets = unreal.EditorAssetLibrary
     default_texture = unreal.load_asset('/Engine/EngineResources/DefaultTexture.DefaultTexture')
     if default_texture is None:
@@ -369,7 +369,7 @@ def ensure_native_inverse_hud_material(unreal, editing=None):
     material = unreal.load_asset(path) if assets.does_asset_exist(path) else None
     if material is None:
         material = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
-            'M_NativeInverseHud_v1', '/Game/Bridge/Minecraft', unreal.Material, unreal.MaterialFactoryNew())
+            'M_NativeInverseHud_v2', '/Game/Bridge/Minecraft', unreal.Material, unreal.MaterialFactoryNew())
     if not isinstance(material, unreal.Material):
         raise RuntimeError('Generated inverse HUD path is occupied by another asset')
     editing.delete_all_material_expressions(material)
@@ -396,7 +396,9 @@ def ensure_native_inverse_hud_material(unreal, editing=None):
     custom.set_editor_property('output_type', unreal.CustomMaterialOutputType.CMOT_FLOAT3)
     custom.set_editor_property('description', 'Minecraft 1.21.11 inverse crosshair blend')
     connections = [('Scene', scene, 'Color'), ('UV', uv, 'ViewportUV'), ('ViewportSize', size, '')]
-    code = 'float3 destination=Scene.rgb; float2 pixel=UV.xy*ViewportSize.xy;\n'
+    tint=node(unreal.MaterialExpressionVectorParameter);tint.set_editor_property('parameter_name','NativeSceneTint');tint.set_editor_property('default_value',unreal.LinearColor(1,1,1,1))
+    connections.append(('SceneTint',tint,'RGB'))
+    code = 'float3 destination=Scene.rgb*SceneTint.rgb;\n'
     for slot in range(3):
         texture = node(unreal.MaterialExpressionTextureObjectParameter)
         texture.set_editor_property('parameter_name', 'InverseTexture' + str(slot))
@@ -416,7 +418,7 @@ def ensure_native_inverse_hud_material(unreal, editing=None):
             rgba.append(append)
         connections.extend([(f'Texture{slot}', texture, ''), (f'Rect{slot}', rgba[0], ''), (f'Crop{slot}', rgba[1], '')])
         code += f'''if(Rect{slot}.z>0 && Rect{slot}.w>0) {{
-float2 p=(pixel-Rect{slot}.xy)/Rect{slot}.zw;
+float2 p=(UV.xy-Rect{slot}.xy)/Rect{slot}.zw;
 if(all(p>=0) && all(p<1)) {{
 float4 texel=Texture2DSample(Texture{slot},Texture{slot}Sampler,Crop{slot}.xy+p*Crop{slot}.zw);
 float3 source=lerp(texel.rgb*12.92,1.055*pow(max(texel.rgb,0),1.0/2.4)-.055,step(.0031308,texel.rgb));

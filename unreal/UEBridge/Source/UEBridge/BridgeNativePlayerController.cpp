@@ -46,7 +46,7 @@ void ABridgeNativePlayerController::ResetDefaultBindings() {
         {TEXT("key.use"),EKeys::RightMouseButton},{TEXT("key.pickItem"),EKeys::MiddleMouseButton},
         {TEXT("key.inventory"),EKeys::E},{TEXT("key.drop"),EKeys::Q},
         {TEXT("key.togglePerspective"),EKeys::F5},{TEXT("key.toggleGui"),EKeys::F1},
-        {TEXT("key.swapOffhand"),EKeys::F}
+        {TEXT("key.swapOffhand"),EKeys::F},{TEXT("key.chat"),EKeys::T},{TEXT("key.command"),EKeys::Slash}
     };
     const FKey Digits[]={EKeys::One,EKeys::Two,EKeys::Three,EKeys::Four,EKeys::Five,EKeys::Six,EKeys::Seven,EKeys::Eight,EKeys::Nine};
     for(int32 I=0;I<9;++I) Bindings.Add(FString::Printf(TEXT("key.hotbar.%d"),I+1),Digits[I]);
@@ -115,7 +115,7 @@ void ABridgeNativePlayerController::ConfigureNativeSettings(const TSharedPtr<FJs
                 const FString Action(*Binding.Key);
                 FString KeyName;if(!Binding.Value->TryGetString(KeyName) || !Bindings.Contains(Action)) continue;
                 const FKey Key=MinecraftKey(KeyName);
-                // Unknown/unbound means disabled. Never silently substitute F5 for a side button.
+                // Unknown/unbound actions are disabled; native perspective is reserved below.
                 Bindings.Add(Action,Key);
                 if(!Key.IsValid() && !KeyName.EndsWith(TEXT("unknown"))) {
                     UE_LOG(LogTemp,Warning,TEXT("Bridge native input: unsupported binding %s=%s"),*Action,*KeyName);
@@ -151,6 +151,8 @@ void ABridgeNativePlayerController::ConfigureNativeSettings(const TSharedPtr<FJs
         BridgePawn->SetMinecraftFov(NativeBaseFov);
     }
     bSettingsConfigured=true;
+    Bindings.Add(TEXT("key.togglePerspective"),EKeys::F5);
+    // F5 is reserved for perspective in native play, including exported side-button bindings.
     bToggleSneak=bToggleSprint=bDoubleSprint=false;PreviousJumpTap=PreviousForwardTap=-1;
     if(PreviousProfile!=SettingsProfile) {bSavedInventoryRejected=false;InventoryRestoreError.Reset();}
     if(NativeInventory && bInventoryInitialized && PreviousProfile!=SettingsProfile) {
@@ -220,11 +222,11 @@ void ABridgeNativePlayerController::StopNativeInput() {
         NativeReceiver->SetNativeInput(0,0,false,false,false,bFlying,NativePerspective,float(NativeLookYaw),float(NativeLookPitch));
     if(auto* BridgePawn=Cast<ABridgeCharacter>(GetPawn())) {
         BridgePawn->StopJumping();
-        if(bInventoryOpen || bPauseOpen || !Focused()) BridgePawn->GetCharacterMovement()->StopMovementImmediately();
+        if(bInventoryOpen || bPauseOpen || bChatOpen || !Focused()) BridgePawn->GetCharacterMovement()->StopMovementImmediately();
     }
 }
 void ABridgeNativePlayerController::SetMenuInput() {
-    const bool Menu=bInventoryOpen || bPauseOpen;
+    const bool Menu=bInventoryOpen || bPauseOpen || bChatOpen;
     bShowMouseCursor=Menu;
     if(Menu) {
         FInputModeGameAndUI Mode;Mode.SetHideCursorDuringCapture(false);Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);SetInputMode(Mode);
@@ -245,6 +247,7 @@ void ABridgeNativePlayerController::ToggleInventory() {
 }
 void ABridgeNativePlayerController::TogglePause() {
     if(!IsValid(NativeReceiver) || !NativeReceiver->NativePlayActive) return;
+    if(bChatOpen) {SetNativeChatOpen(false);return;}
     if(bInventoryOpen) {ToggleInventory();return;}
     bPauseOpen=!bPauseOpen;
     StopNativeInput();
@@ -286,21 +289,24 @@ bool ABridgeNativePlayerController::InputKey(const FInputKeyEventArgs& Params) {
         }
     }
     const bool Result=Super::InputKey(Params);
-    if(IsValid(NativeReceiver) && NativeReceiver->NativePlayActive && (bInventoryOpen || bPauseOpen)
+    // Slate owns chat text and pointer events; inventory shortcuts must not
+    // consume numeric keys or clicks while the command field has focus.
+    if(bChatOpen) return Result;
+    if(IsValid(NativeReceiver) && NativeReceiver->NativePlayActive && (bInventoryOpen || bPauseOpen || bChatOpen)
         && Params.Event==IE_Released && (Params.Key==EKeys::LeftMouseButton || Params.Key==EKeys::RightMouseButton || Params.Key==EKeys::MiddleMouseButton)) {
         float X=0,Y=0;if(GetMousePosition(X,Y)) if(auto* Hud=Cast<ABridgeNativeHUD>(GetHUD()))
             return Hud->HandlePointerReleased(Params.Key,FVector2D(X,Y)) || Result;
     }
     if(IsValid(NativeReceiver) && NativeReceiver->NativePlayActive && Params.Event==IE_Pressed) {
-        if(!bInventoryOpen && !bPauseOpen && Focused() && MatchesBinding(TEXT("key.togglePerspective"),Params.Key)) {CycleNativePerspective();return true;}
-        if((bInventoryOpen || bPauseOpen) && (Params.Key==EKeys::LeftMouseButton || Params.Key==EKeys::RightMouseButton || Params.Key==EKeys::MiddleMouseButton)) {
+        if(!bInventoryOpen && !bPauseOpen && !bChatOpen && Focused() && MatchesBinding(TEXT("key.togglePerspective"),Params.Key)) {CycleNativePerspective();return true;}
+        if((bInventoryOpen || bPauseOpen || bChatOpen) && (Params.Key==EKeys::LeftMouseButton || Params.Key==EKeys::RightMouseButton || Params.Key==EKeys::MiddleMouseButton)) {
             float X=0,Y=0;if(GetMousePosition(X,Y)) if(auto* Hud=Cast<ABridgeNativeHUD>(GetHUD())) return Hud->HandlePointer(Params.Key,FVector2D(X,Y)) || Result;
         }
     }
     if(IsValid(NativeReceiver) && NativeReceiver->NativePlayActive && Params.Event==IE_Pressed && Params.Key==EKeys::F3) {
         if(auto* Hud=Cast<ABridgeNativeHUD>(GetHUD())) return Hud->HandleKey(Params.Key) || Result;
     }
-    if((bInventoryOpen || bPauseOpen) && (Params.Event==IE_Pressed || Params.Event==IE_Repeat)) {
+    if((bInventoryOpen || bPauseOpen || bChatOpen) && (Params.Event==IE_Pressed || Params.Event==IE_Repeat)) {
         if(auto* Hud=Cast<ABridgeNativeHUD>(GetHUD())) {
             if(Hud->HasSearchFocus()) return Result;
             if(Hud->HandleKey(Params.Key)) return true;
@@ -323,7 +329,7 @@ void ABridgeNativePlayerController::UpdateRotation(float DeltaSeconds) {
     if(!IsValid(NativeReceiver) || !NativeReceiver->NativePlayActive) {
         RawMouseX=RawMouseY=0;NativeLookReady=false;Super::UpdateRotation(DeltaSeconds);return;
     }
-    if(bInventoryOpen || bPauseOpen || !bLastFocused || !Focused() || !NativeReceiver->IsNativeReady()) {
+    if(bInventoryOpen || bPauseOpen || bChatOpen || !bLastFocused || !Focused() || !NativeReceiver->IsNativeReady()) {
         RawMouseX=RawMouseY=0;LookXSmoother.Clear();LookYSmoother.Clear();return;
     }
     const double MouseX=RawMouseX,MouseY=RawMouseY;RawMouseX=RawMouseY=0;
@@ -353,7 +359,14 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
         }
     }
     InitializeNativeInventory();
-    if(WasInputKeyJustPressed(EKeys::Escape)) {TogglePause();return;}
+    if(WasInputKeyJustPressed(EKeys::Escape)) {if(bChatOpen) SetNativeChatOpen(false);else TogglePause();return;}
+    if(bChatOpen) {StopNativeInput();return;}
+    if(!bInventoryOpen && !bPauseOpen && Focused() && NativeReceiver->IsNativeReady() && (Pressed(TEXT("key.chat")) || Pressed(TEXT("key.command")))) {
+        SetNativeChatOpen(true);
+        if(auto* ChatHud=Cast<ABridgeNativeHUD>(GetHUD())) ChatHud->ShowChat(Pressed(TEXT("key.command")) ? TEXT("/") : TEXT(""));
+        return;
+    }
+    if(!bInventoryOpen && !bPauseOpen && Focused() && WasInputKeyJustPressed(EKeys::F6)) {NativeReceiver->NativeSetLighting(!NativeReceiver->NativeLighting);return;}
     // Restore failures stop gameplay but retain Escape and pause-menu access.
     // Saving remains guarded by the receiver's valid-inventory check.
     if(bPauseOpen) {RouteMenuInput();StopNativeInput();return;}
@@ -361,7 +374,7 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
     if(NativeInventory && bInventoryInitialized) NativeInventory->TickAutosave(FPlatformTime::Seconds());
     const auto* NativeHud=Cast<ABridgeNativeHUD>(GetHUD());
     if(Pressed(TEXT("key.inventory")) && (!NativeHud || !NativeHud->HasSearchFocus())) {ToggleInventory();return;}
-    if(bInventoryOpen || bPauseOpen) {RouteMenuInput();StopNativeInput();UpdateSelectedItem();return;}
+    if(bInventoryOpen || bPauseOpen || bChatOpen) {RouteMenuInput();StopNativeInput();UpdateSelectedItem();return;}
     const bool HasFocus=Focused();
     if(!HasFocus) {
         StopNativeInput();bLastFocused=false;RawMouseX=RawMouseY=0;
@@ -441,4 +454,9 @@ void ABridgeNativePlayerController::SetNativeSensitivity(float Value) {
         FPlatformFileManager::Get().GetPlatformFile().CreateDirectoryTree(*FPaths::GetPath(File));
         GConfig->SetFloat(TEXT("Controls"),TEXT("MouseSensitivity"),MouseSensitivity,File);GConfig->Flush(false,File);
     }
+}
+
+void ABridgeNativePlayerController::SetNativeChatOpen(bool Open) {
+    bChatOpen=Open;StopNativeInput();SetMenuInput();
+    if(!Open) if(auto* ChatHud=Cast<ABridgeNativeHUD>(GetHUD())) ChatHud->HideChat();
 }

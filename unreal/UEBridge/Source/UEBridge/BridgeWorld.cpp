@@ -15,7 +15,7 @@ bool ABridgeWorld::Inside(const FIntVector& C) const {
     return Scoped && FMath::Abs(C.X-Center.X)<=Radius && FMath::Abs(C.Y-Center.Y)<=HalfHeight && FMath::Abs(C.Z-Center.Z)<=Radius;
 }
 void ABridgeWorld::Clear(uint64 Barrier) {
-    ++MutationSerial;
+    ++MutationSerial;NativeFluidsEnabled=false;FluidUpdates.Empty();FluidClock=0;
     for (auto& Pair:Cells) if (IsValid(Pair.Value)) { Pair.Value->Clear(); Pair.Value->Destroy(); }
     for(auto& Box:Boundary) if(Box) Box->DestroyComponent(); Boundary.Empty();
     Sealed=false;ImportId.Empty();Stored.Empty();ButtonRelease.Empty();ButtonTimerOwners.Empty();LastModelError.Empty();SurfaceReason=TEXT("not_sampled");
@@ -25,7 +25,7 @@ void ABridgeWorld::Clear(uint64 Barrier) {
 }
 void ABridgeWorld::EndPlay(const EEndPlayReason::Type Reason) { Clear(); Super::EndPlay(Reason); }
 void ABridgeWorld::Tick(float DeltaSeconds) {
-    Super::Tick(DeltaSeconds); const double Now=FPlatformTime::Seconds();
+    Super::Tick(DeltaSeconds);if(NativeFluidsEnabled && Sealed && GetWorld() && !GetWorld()->IsPaused()) TickFluids(DeltaSeconds); const double Now=FPlatformTime::Seconds();
     for (auto It=Stages.CreateIterator();It;++It) if (Now>It.Value().Deadline) It.RemoveCurrent();
     if(GetWorld()) TickButtonTimers(GetWorld()->GetTimeSeconds());
     if(Lighting && Sealed) {Lighting->Tick(100000);LightQueue.Append(Lighting->ConsumeChangedCells());}
@@ -267,7 +267,10 @@ bool ABridgeWorld::GetBlockOutline(const FIntVector& SourceVoxel,TArray<FBox>& M
     return !MinecraftBoxes.IsEmpty();
 }
 bool ABridgeWorld::GetBlockState(const FIntVector& SourceVoxel,FString& BlockId,FString& Key) const {
-    const auto* Visual=FindVisual(SourceVoxel);if(!Visual) return false;
+    const auto* Visual=FindVisual(SourceVoxel);if(!Visual) {
+        const FIntVector Cell=CellOf(SourceVoxel),Local=SourceVoxel-Cell*8;const auto* Water=WaterCells.Find(Cell);
+        if(Water && Water->Contains(uint16(Local.X+Local.Z*8+Local.Y*64))) {BlockId=TEXT("minecraft:water");Key=TEXT("level=0");return true;}return false;
+    }
     BlockId=Visual->BlockId;Key=Visual->StateKey;return true;
 }
 bool ABridgeWorld::GetSupportingBlock(const FVector& Feet,FIntVector& SourceVoxel,FString& BlockId,FColor& Tint,FVector& ImpactPoint,const AActor* Ignored) const {
@@ -350,7 +353,8 @@ void ABridgeWorld::RebuildCell(const FIntVector& CellKey) {
     if(!IsValid(Actor)) Actor=GetWorld()->SpawnActor<ABridgeBlockPreview>();
     if(Actor) {
         Actor->Replace(Stored.FindChecked(CellKey),ImportAnchor,SavedMaterial,SavedPalette,NearCollision(CellKey),[this](const FIntVector& P){return IsOpaqueVoxel(P);},Lighting.Get(),true,
-            [this](const FIntVector& Voxel,const FString& Id,int32 Index){return RenderTintAt(Voxel,Id,Index);});
+            [this](const FIntVector& Voxel,const FString& Id,int32 Index){return RenderTintAt(Voxel,Id,Index);},
+            [this](const FIntVector& Voxel,FString& Id,FString& State){return GetBlockState(Voxel,Id,State);});
         if(!Actor->HasContent()) {Actor->Clear();Actor->Destroy();Cells.Remove(CellKey);}
     }
     Counts.Add(CellKey,Stored.FindChecked(CellKey).Num());
@@ -428,7 +432,7 @@ void ABridgeWorld::BeginLightingRecenter() {
         for(int32 Z=0;Z<8;++Z) for(int32 X=0;X<8;++X) PendingLighting->SetSkyBoundary(Pair.Key.X*8+X,Pair.Key.Z*8+Z,Pair.Value[X+(Z<<3)]);
 }
 void ABridgeWorld::MarkEdited(const FIntVector& Block) {
-    ++MutationSerial;
+    ++MutationSerial;if(NativeFluidsEnabled) QueueFluid(Block);
     const auto* Rows=Stored.Find(CellOf(Block));TArray<FBridgeBlock> Edited;
     if(Rows) for(const auto& Row:*Rows) if(OwnerOf(Row)==Block) Edited.Add(Row);
     if(Edited.IsEmpty()) {EditedBlocks.Remove(Block);if(auto* Owners=EditedCellOwners.Find(CellOf(Block))) Owners->Remove(Block);RemovedBlocks.Add(Block);ClearOpaqueVoxel(Block);if(Lighting) Lighting->ClearVoxel(Block);if(PendingLighting) PendingLighting->ClearVoxel(Block);}
@@ -529,11 +533,17 @@ bool ABridgeWorld::BreakBlock(const FIntVector& Block) {
     if(!Sealed) return false;
     const FIntVector CellKey=CellOf(Block);auto* Data=Stored.Find(CellKey); if(!Data) return false;
     const FBridgeBlock* Visual=FindVisual(Block); FString PartnerId; FIntVector Partner=Block;
+    const bool LeaveWater=NativeFluidsEnabled && Visual && Visual->StateKey.Contains(TEXT("waterlogged=true"));
     if(Visual) { const auto Properties=StateProperties(Visual->StateKey); const FString Half=Properties.FindRef(TEXT("half"));
-        if(Half==TEXT("upper") || Half==TEXT("lower")) {Partner.Y+=Half==TEXT("lower") ? 1 : -1;PartnerId=Visual->BlockId;}}
+        if(Half==TEXT("upper") || Half==TEXT("lower")) {Partner.Y+=Half==TEXT("lower") ? 1 : -1;PartnerId=Visual->BlockId;}
+        if(Visual->BlockId.EndsWith(TEXT("_bed"))) {const FString Facing=Properties.FindRef(TEXT("facing"));const FIntVector Direction=Facing==TEXT("north") ? FIntVector(0,0,-1) : Facing==TEXT("south") ? FIntVector(0,0,1) : Facing==TEXT("east") ? FIntVector(1,0,0) : FIntVector(-1,0,0);
+            Partner+=Direction*(Properties.FindRef(TEXT("part"))==TEXT("foot") ? 1 : -1);PartnerId=Visual->BlockId;}
+    }
     const int32 Count=Data->RemoveAll([&](const FBridgeBlock& Shape){return OwnerOf(Shape)==Block;});
     if(!Count) return false;
+    const FIntVector WaterLocal=Block-CellKey*8;WaterCells.FindOrAdd(CellKey).Remove(uint16(WaterLocal.X+WaterLocal.Z*8+WaterLocal.Y*64));
     Shapes-=Count;MarkEdited(Block);RebuildCell(CellKey);
+    if(LeaveWater) SetFluid(Block,1);
     if(!PartnerId.IsEmpty()) { const auto* Other=FindVisual(Partner); if(Other && Other->BlockId==PartnerId) {
         auto* PartnerData=Stored.Find(CellOf(Partner)); const int32 Removed=PartnerData->RemoveAll([&](const FBridgeBlock& Shape){return OwnerOf(Shape)==Partner;});
         Shapes-=Removed;MarkEdited(Partner);RebuildCell(CellOf(Partner));UpdateConnections(Partner);
@@ -608,7 +618,9 @@ FString ABridgeWorld::PlaceBlock(const FIntVector& Block,const FString& Requeste
     FString Key=SavedPalette ? SavedPalette->DefaultState(BlockId) : FString(); auto Props=StateProperties(Key);
     const FString Facing=FacingForYaw(Yaw);
     const bool Stairs=BlockId.EndsWith(TEXT("_stairs")),Door=BlockId.EndsWith(TEXT("_door")) && !BlockId.EndsWith(TEXT("_trapdoor"));
-    const FBridgeBlock* Occupant=FindVisual(Block);bool Merge=false;
+    const FBridgeBlock* Occupant=FindVisual(Block);bool Merge=false,ReplaceFluid=false;
+    if(Occupant && (Occupant->BlockId==TEXT("minecraft:water") || Occupant->BlockId==TEXT("minecraft:lava") || Occupant->BlockId==TEXT("minecraft:bubble_column"))) {ReplaceFluid=true;Occupant=nullptr;}
+    const bool WasWater=IsWaterAtUEPosition(BlockCenter(Block));
     if(Occupant) {
         const auto Existing=StateProperties(Occupant->StateKey);
         if(Occupant->BlockId==BlockId && BlockId.EndsWith(TEXT("_slab")) && Existing.FindRef(TEXT("type"))!=TEXT("double")) {
@@ -616,7 +628,7 @@ FString ABridgeWorld::PlaceBlock(const FIntVector& Block,const FString& Requeste
         } else return TEXT("occupied");
     }
     if(!Merge) {
-        if(Props.Contains(TEXT("waterlogged"))) Props.Add(TEXT("waterlogged"),TEXT("false"));
+        if(Props.Contains(TEXT("waterlogged"))) Props.Add(TEXT("waterlogged"),WasWater ? TEXT("true") : TEXT("false"));
         const bool MultiFace=BlockId==TEXT("minecraft:vine") || BlockId==TEXT("minecraft:glow_lichen")
             || BlockId==TEXT("minecraft:sculk_vein") || BlockId==TEXT("minecraft:resin_clump");
         if(MultiFace) {
@@ -653,17 +665,19 @@ FString ABridgeWorld::PlaceBlock(const FIntVector& Block,const FString& Requeste
         if(Props.Contains(TEXT("rotation"))) Props.Add(TEXT("rotation"),FString::FromInt((FMath::RoundToInt((Yaw+180.0)*16.0/360.0)%16+16)%16));
         if(Props.Contains(TEXT("shape")) && BlockId.Contains(TEXT("rail"))) Props.Add(TEXT("shape"),Facing==TEXT("north")||Facing==TEXT("south") ? TEXT("north_south") : TEXT("east_west"));
     }
+    if(BlockId.EndsWith(TEXT("_bed"))) {Props.Add(TEXT("part"),TEXT("foot"));Props.Add(TEXT("facing"),Facing);}
     Color=PlacementTint(Block,BlockId,Color);
     Key=StateKey(Props); TArray<FBridgeBlock> NewShapes;
     if(!AppendState(Block,BlockId,Color,Key,NewShapes)) return TEXT("unsupported block state; export/import textures again");
-    FIntVector Partner=Block; bool TwoBlocks=Props.FindRef(TEXT("half"))==TEXT("lower");
+    FIntVector Partner=Block; const bool Bed=BlockId.EndsWith(TEXT("_bed"));bool TwoBlocks=Bed || Props.FindRef(TEXT("half"))==TEXT("lower");
     if(TwoBlocks) {
-        ++Partner.Y; const FIntVector PartnerCell=CellOf(Partner);
+        if(Bed) Partner+=Facing==TEXT("north") ? FIntVector(0,0,-1) : Facing==TEXT("south") ? FIntVector(0,0,1) : Facing==TEXT("east") ? FIntVector(1,0,0) : FIntVector(-1,0,0);else ++Partner.Y;
+        const FIntVector PartnerCell=CellOf(Partner);
         if(!Inside(PartnerCell) || !Stored.Contains(PartnerCell) || FindVisual(Partner)) return TEXT("upper block unavailable or occupied");
-        auto Upper=Props;Upper.Add(TEXT("half"),TEXT("upper"));
+        auto Upper=Props;Upper.Add(Bed ? TEXT("part") : TEXT("half"),Bed ? TEXT("head") : TEXT("upper"));
         if(!AppendState(Partner,BlockId,Color,StateKey(Upper),NewShapes)) return TEXT("upper state unavailable");
     }
-    const int32 Removing=Merge ? Data->FilterByPredicate([&](const FBridgeBlock& Shape){return OwnerOf(Shape)==Block;}).Num() : 0;
+    const int32 Removing=(Merge || ReplaceFluid) ? Data->FilterByPredicate([&](const FBridgeBlock& Shape){return OwnerOf(Shape)==Block;}).Num() : 0;
     TMap<FIntVector,int32> AddedByCell;for(const auto& Shape:NewShapes) ++AddedByCell.FindOrAdd(CellOf(OwnerOf(Shape)));
     for(const auto& Pair:AddedByCell) if(Stored.FindChecked(Pair.Key).Num()-(Pair.Key==CellKey ? Removing : 0)+Pair.Value>8192) return TEXT("cell shape limit");
     if(Shapes-Removing+NewShapes.Num()>4194304) return TEXT("shape limit");
@@ -682,8 +696,10 @@ FString ABridgeWorld::PlaceBlock(const FIntVector& Block,const FString& Requeste
         const FVector Extent=FVector(Shape.Size.Z,Shape.Size.X,Shape.Size.Y)*50.0-FVector(.1);
         if(GetWorld()->OverlapBlockingTestByChannel(BridgeProtocol::ToUnreal(Shape.Position,ImportAnchor),FQuat::Identity,ECC_Pawn,FCollisionShape::MakeBox(Extent.ComponentMax(FVector(.001))),Params)) return TEXT("blocked by body or geometry");
     }
-    if(Merge) { Data->RemoveAll([&](const FBridgeBlock& Shape){return OwnerOf(Shape)==Block;});Shapes-=Removing; }
+    if(Merge || ReplaceFluid) { Data->RemoveAll([&](const FBridgeBlock& Shape){return OwnerOf(Shape)==Block;});Shapes-=Removing; }
     for(const auto& Shape:NewShapes) { Stored.FindOrAdd(CellOf(OwnerOf(Shape))).Add(Shape);++Shapes; }
+    const FIntVector Local=Block-CellKey*8;const uint16 WaterIndex=uint16(Local.X+Local.Z*8+Local.Y*64);
+    if(Props.FindRef(TEXT("waterlogged"))==TEXT("true")) WaterCells.FindOrAdd(CellKey).AddUnique(WaterIndex);else WaterCells.FindOrAdd(CellKey).Remove(WaterIndex);
     MarkEdited(Block);if(TwoBlocks) MarkEdited(Partner);
     RebuildCell(CellKey);if(TwoBlocks && CellOf(Partner)!=CellKey) RebuildCell(CellOf(Partner));
     UpdateConnections(Block);if(TwoBlocks) UpdateConnections(Partner);return TEXT("placed");
@@ -797,4 +813,9 @@ bool ABridgeWorld::UseBlock(const FIntVector& Block,bool TimedRelease) {
 
 void ABridgeWorld::GetNativeWaterCell(const FIntVector& Cell,TArray<uint16>& Water) const {
     Water.Empty();if(const auto* Found=WaterCells.Find(Cell)) Water=*Found;
+}
+
+FIntVector ABridgeWorld::SourceVoxelAt(const FVector& Position) const {
+    const FVector Relative=(Position-ImportAnchor)/100.;const FVector MC=ImportOrigin+FVector(-Relative.Y,Relative.Z,Relative.X);
+    return FIntVector(FMath::FloorToInt(MC.X),FMath::FloorToInt(MC.Y),FMath::FloorToInt(MC.Z));
 }

@@ -98,7 +98,7 @@ public class NativeUiExportTest {
         manager.put("minecraft:textures/gui/sprites/hud/hotbar.png",pixel);manager.put("custom:textures/gui/sprites/hud/example.png",pixel);
         manager.put("minecraft:textures/particle/explosion_3.png",pixel);manager.put("minecraft:textures/particle/unrelated.png",pixel);
         var found=NativeUiExport.collectSprites(manager);var keys=new HashSet<String>();found.keySet().forEach(id->keys.add(NativeUiExport.spriteKey(id)));
-        assertEquals(Set.of("environment/sun","environment/moon_phases","hud/hotbar","custom:hud/example","particle/explosion_3"),keys);
+        assertEquals(Set.of("environment/sun","environment/moon_phases","hud/hotbar","custom:hud/example","particle/explosion_3","particle/unrelated"),keys);
     }
     @Test public void celestialImagesRetainExistingMalformedAndOversizeRejections() throws Exception {
         var directory=Files.createTempDirectory("bridge-celestial-invalid-");Files.createDirectory(directory.resolve("sprites"));

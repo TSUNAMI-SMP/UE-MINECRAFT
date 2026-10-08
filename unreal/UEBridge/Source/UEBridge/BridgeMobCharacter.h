@@ -8,7 +8,7 @@ UCLASS()
 class UEBRIDGE_API ABridgeMobCharacter : public ACharacter {
     GENERATED_BODY()
 public:
-    ABridgeMobCharacter();
+    ABridgeMobCharacter(const FObjectInitializer& ObjectInitializer=FObjectInitializer::Get());
     bool Initialize(const FBridgeMobSnapshot& Snapshot,const FBridgeMobAppearance& Appearance,class ABridgeMobWorld* OwnerWorld);
     void SetAuthority(bool Active,ACharacter* Target);
     bool Hit(float Damage,const FVector& Direction);

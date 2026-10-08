@@ -16,6 +16,9 @@ public:
     const FString& GetModelKey() const {return ModelKey;}
     int32 GetQuantity() const {return Count;}
     float GetAge() const {return Age;}
+    bool CanPickup() const {return Age>=PickupDelay;}
+    void SetPickupDelay(float Seconds) {PickupDelay=FMath::Clamp(Seconds,0.f,10.f);}
+    float GetPickupDelay() const {return PickupDelay;}
     const FVector& GetNativeVelocity() const {return Velocity;}
     /** File importer validates values before restoring a local simulation. */
     void RestoreNativeMotion(const FVector& SavedVelocity,float SavedAge) {Velocity=SavedVelocity;Age=SavedAge;}
@@ -29,7 +32,7 @@ private:
     FString ModelKey;
     int32 Count=0,Copies=0;
     FVector Velocity=FVector::ZeroVector;
-    float Age=0,Phase=0,VisualOffset=0;
+    float Age=0,Phase=0,VisualOffset=0,PickupDelay=.5f;
     bool Active=false;
     bool BuildMesh();
 };

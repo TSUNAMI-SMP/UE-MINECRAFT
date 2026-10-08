@@ -50,6 +50,17 @@ inline Velocity knockbackVelocity(Velocity old,double strength,double resistance
     return {old.x*.5+awayX/length*impulse,old.y*.5+awayY/length*impulse,
         grounded ? std::min(800.,old.z*.5+impulse) : old.z};
 }
+// One airborne vanilla entity tick: move with old velocity, then gravity and drag.
+inline Velocity airDistance(Velocity old,double seconds) {
+    const double t=std::max(0.,seconds)*20;
+    const double horizontal=.05*(1-std::pow(.91,t))/(1-.91),vertical=.05*(1-std::pow(.98,t))/(1-.98);
+    return {old.x*horizontal,old.y*horizontal,(old.z+7840)*vertical-7840*std::max(0.,seconds)};
+}
+inline Velocity airVelocity(Velocity old,double seconds) {
+    const double ticks=std::max(0.,seconds)*20;
+    const double horizontal=std::pow(.91,ticks),vertical=std::pow(.98,ticks);
+    return {old.x*horizontal,old.y*horizontal,(old.z+7840)*vertical-7840};
+}
 inline double deathRoll(double seconds,double partialTicks=-1) {
     // LivingEntityRenderer uses deathTime + render tick delta (unlike charge).
     const double base=ticks(seconds);

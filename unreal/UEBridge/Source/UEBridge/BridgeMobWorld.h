@@ -34,10 +34,11 @@ public:
     const FBridgeMobAppearance* ResolveTemplate(const FString& Type,FString& Key) const;
     void SetAuthority(bool Active,class ACharacter* Player);
     void Clear();
+    FVector LastAttackPosition=FVector::ZeroVector;
     bool Attack(const FVector& Eye,const FVector& Direction,float Reach=500.f,float Damage=4.f,bool* DamageAccepted=nullptr,float AdditionalKnockback=0,bool Sweeping=false);
     bool ReceiveArrow(const FVector& From,const FVector& To,float Damage);
     void NotifyMobSound(const FString& Type,const FString& Suffix,const FVector& Position,bool Baby=false,float Size=1);
-    void HitPlayer(float Damage,const FVector& Position);
+    void HitPlayer(float Damage,const FVector& Position,bool Knockback=true,bool UseArmor=true);
     void RespawnPlayer();
     int32 AliveCount() const;
     TArray<FVector> CollisionAnchors() const;

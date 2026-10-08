@@ -23,6 +23,18 @@ def fixture():
 
 
 class NativeWorldFormatTest(unittest.TestCase):
+    def test_saved_local_clock_weather_and_game_mode_are_validated_atomically(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=pathlib.Path(folder)/"world.ndjson"
+            header,cells=fixture()
+            header["runtimeState"]={"timeOfDay":18000,"worldTime":99000,"daylightCycle":False,"creative":True,"rainGradient":.5,"thunderGradient":0}
+            write_world_file(path,header,cells);previous=path.read_bytes()
+            self.assertEqual(header["runtimeState"],json.loads(path.read_text().splitlines()[0])["runtimeState"])
+            for key,value in (("timeOfDay",-.1),("worldTime",1.5),("timeOfDay",float("nan")),("daylightCycle",1),("creative","true"),("rainGradient",2),("thunderGradient",None)):
+                invalid=copy.deepcopy(header);invalid["runtimeState"][key]=value
+                with self.subTest(key=key,value=value),self.assertRaises(ValueError): write_world_file(path,invalid,cells)
+                self.assertEqual(previous,path.read_bytes())
+
     def test_biome_tints_cover_empty_positions_and_survive_save(self):
         with tempfile.TemporaryDirectory() as folder:
             path = pathlib.Path(folder) / "world.ndjson"

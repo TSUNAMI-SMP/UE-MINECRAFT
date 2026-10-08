@@ -258,7 +258,10 @@ bool UBridgeBlockPalette::BuildModel(const FString& BlockId,const FString& State
 
 // Item vertices already include vanilla's context-specific model display transform.
 bool UBridgeBlockPalette::BuildItem(const FString& ItemId,const FString& Context,TArray<FBridgeModelFace>& Out) const {
-    Out.Reset();const Object Model=Read(ItemModels.Find(ItemId));
+    Out.Reset();const FString* Encoded=ItemModels.Find(ItemId);
+    if(!Encoded) if(const FString* Default=DefaultItemModels.Find(ItemId)) Encoded=ItemModels.Find(*Default);
+    if(!Encoded && !ItemId.Contains(TEXT("@"))) {const FString Prefix=ItemId+TEXT("@");for(const auto& Pair:ItemModels) if(Pair.Key.StartsWith(Prefix)) {Encoded=&Pair.Value;break;}}
+    const Object Model=Read(Encoded);
     const TArray<TSharedPtr<FJsonValue>>* Faces=nullptr;
     if(!Model.IsValid() || !Model->TryGetArrayField(Context,Faces) || Faces->IsEmpty() || Faces->Num()>8192) return false;
     for(const auto& Value:*Faces) {

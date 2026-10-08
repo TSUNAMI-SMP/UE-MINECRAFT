@@ -94,9 +94,15 @@ def validate_header(header):
             raise NativeWorldError("Runtime state exceeds its data budget")
         if "inventory" in runtime and not isinstance(runtime["inventory"], dict):
             raise NativeWorldError("Saved inventory must be an object; defaults cannot replace corrupt inventory")
-        for key in ("lighting", "flying"):
+        for key in ("lighting", "flying", "daylightCycle", "creative"):
             if key in runtime and not isinstance(runtime[key], bool):
                 raise NativeWorldError(f"Saved {key} must be boolean")
+        for key in ("timeOfDay", "worldTime"):
+            if key in runtime:
+                _number(runtime[key], 0, 9007199254740991, f"saved {key}", True)
+        for key in ("rainGradient", "thunderGradient"):
+            if key in runtime:
+                _number(runtime[key], 0, 1, f"saved {key}")
         if "health" in runtime:
             _number(runtime["health"], 0, 20, "saved health")
         if "perspective" in runtime:

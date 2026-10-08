@@ -9,7 +9,7 @@ import struct
 import zlib
 
 HAND_CONTEXTS = ('firstperson_righthand', 'firstperson_lefthand', 'thirdperson_righthand', 'thirdperson_lefthand')
-CONTEXTS = HAND_CONTEXTS + ('ground',)
+CONTEXTS = HAND_CONTEXTS + ('ground', 'none',)
 MAX_PAYLOAD_BYTES = 256 * 1024 * 1024
 
 def load_item_manifest(filename):
@@ -71,8 +71,14 @@ def load_item_manifest(filename):
     def vector(values, size):
         if not isinstance(values, list) or len(values) != size or any(type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 4096 for v in values):
             raise ValueError('Invalid native item geometry')
+    defaults=manifest.get('defaultModels', {})
+    if not isinstance(defaults, dict) or len(defaults)>4096:
+        raise ValueError('Invalid default item models')
+    for identifier, model in defaults.items():
+        if not isinstance(identifier,str) or not re.fullmatch(r'[a-z0-9_.-]+:[a-z0-9_./-]+',identifier) or '..' in identifier or not isinstance(model,str) or model not in items or not model.startswith(identifier+'@'):
+            raise ValueError('Invalid default item model reference')
     for key, contexts in items.items():
-        if not isinstance(key, str) or not re.fullmatch(r'[a-z0-9_.-]+:[a-z0-9_./-]+@[0-9a-f]{64}', key) or '..' in key or not isinstance(contexts, dict) or set(contexts) not in (set(HAND_CONTEXTS), set(CONTEXTS)):
+        if not isinstance(key, str) or not re.fullmatch(r'[a-z0-9_.-]+:[a-z0-9_./-]+@[0-9a-f]{64}', key) or '..' in key or not isinstance(contexts, dict) or not (set(HAND_CONTEXTS).issubset(contexts) and set(contexts).issubset(CONTEXTS)):
             raise ValueError('Invalid item ID/display contexts')
         for faces in contexts.values():
             if not isinstance(faces, list) or not 1 <= len(faces) <= 8192:
@@ -133,14 +139,22 @@ def import_minecraft_items(filename, asset_root="/Game/Bridge/Minecraft/Items"):
     receiver = receivers[0]; palette = receiver.get_editor_property('texture_palette')
     if palette is None:
         raise RuntimeError('Import block textures before items')
-    # Copy UE's mutable maps before editing either one. A failed property update
+    # Copy UE's mutable maps before editing them. A failed property update
     # or save must leave the already assigned block/item palette usable.
     previous_models = dict(palette.get_editor_property('item_models'))
+    previous_defaults = dict(palette.get_editor_property('default_item_models'))
     previous_materials = dict(palette.get_editor_property('item_materials'))
     models = {key: json.dumps(value, separators=(',', ':'), allow_nan=False) for key, value in manifest['items'].items()}
+    defaults = dict(manifest.get('defaultModels', {}))
     assets, tools, editing = unreal.EditorAssetLibrary, unreal.AssetToolsHelpers.get_asset_tools(), unreal.MaterialEditingLibrary
     helper = runpy.run_path(str(helper_path))
     root = asset_root; materials = {}; render_modes = item_render_modes(manifest); updated_parents = set()
+    world_textures=set()
+    definitions=dict(palette.get_editor_property('blockstate_definitions') or {})
+    for identifier, definition in definitions.items():
+        if 'uebridge_fallback' in str(definition):
+            model=manifest.get('defaultModels',{}).get(str(identifier))
+            for face in manifest['items'].get(model,{}).get('none',[]): world_textures.add(face['texture'])
     with unreal.ScopedSlowTask(len(manifest['textures']), 'Import Minecraft item textures') as progress:
         progress.make_dialog(True)
         for key, entry in manifest['textures'].items():
@@ -186,17 +200,33 @@ def import_minecraft_items(filename, asset_root="/Game/Bridge/Minecraft/Items"):
                 editing.update_material_instance(material)
                 if editing.get_material_instance_texture_parameter_value(material, 'FaceTexture') != texture or not assets.save_loaded_asset(material, False):
                     raise RuntimeError('Cannot save/read back item material: ' + key)
-                materials[key + ('#translucent' if alpha_mode == 'translucent' else '')] = material
+                material_key=key + ('#translucent' if alpha_mode == 'translucent' else '')
+                materials[material_key] = material
+                if key in world_textures:
+                    world_parent=helper['_model_parent'](unreal,assets,tools,editing,root+'/WorldItems',texture,alpha_mode)
+                    world_name='MI_WorldItem_'+key[:24]+('_Translucent' if alpha_mode=='translucent' else '')
+                    world_material=unreal.load_asset(root+'/'+world_name) if assets.does_asset_exist(root+'/'+world_name) else None
+                    if world_material is None: world_material=tools.create_asset(world_name,root,unreal.MaterialInstanceConstant,unreal.MaterialInstanceConstantFactoryNew())
+                    if not isinstance(world_material,unreal.MaterialInstanceConstant): raise RuntimeError('Cannot create world item material')
+                    editing.set_material_instance_parent(world_material,world_parent)
+                    world_material.set_editor_property('texture_parameter_values',[unreal.TextureParameterValue(parameter_info=unreal.MaterialParameterInfo(name='FaceTexture'),parameter_value=texture)])
+                    world_material.set_editor_property('scalar_parameter_values',[unreal.ScalarParameterValue(parameter_info=unreal.MaterialParameterInfo(name='FaceTint'),parameter_value=1.0)])
+                    editing.update_material_instance(world_material)
+                    if editing.get_material_instance_texture_parameter_value(world_material,'FaceTexture')!=texture or not assets.save_loaded_asset(world_material,False): raise RuntimeError('Cannot save world item material')
+                    materials[material_key+'#world']=world_material
     try:
         with unreal.ScopedEditorTransaction('Assign native Minecraft item models'):
             palette.set_editor_property('item_models', models)
+            palette.set_editor_property('default_item_models', defaults)
             palette.set_editor_property('item_materials', materials)
         if not assets.save_loaded_asset(palette, False):
             raise RuntimeError('Cannot save native item palette')
-        if dict(palette.get_editor_property('item_models')) != models or dict(palette.get_editor_property('item_materials')) != materials:
+        if (dict(palette.get_editor_property('item_models')) != models
+                or dict(palette.get_editor_property('default_item_models')) != defaults
+                or dict(palette.get_editor_property('item_materials')) != materials):
             raise RuntimeError('Cannot verify native item palette assignment')
     except Exception:
-        for field, previous in (('item_models', previous_models), ('item_materials', previous_materials)):
+        for field, previous in (('item_models', previous_models), ('default_item_models', previous_defaults), ('item_materials', previous_materials)):
             try:
                 palette.set_editor_property(field, previous)
             except Exception as restore_error:

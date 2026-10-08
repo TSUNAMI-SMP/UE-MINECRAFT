@@ -32,10 +32,19 @@ class ItemManifestTest(unittest.TestCase):
     def test_legacy_hand_only_export_remains_valid_without_fabricated_ground(self):
         data = copy.deepcopy(self.manifest)
         data['items'][self.key].pop('ground')
+        data['items'][self.key].pop('none')
         result = self.load(data)
         self.assertEqual(set(items.HAND_CONTEXTS), set(result['items'][self.key]))
         self.assertEqual(0, items.ground_model_count(result))
         self.assertNotIn('ground', result['items'][self.key])
+    def test_default_stack_reference_preserves_identity_and_rejects_missing_models(self):
+        data = copy.deepcopy(self.manifest)
+        data['defaultModels'] = {'minecraft:diamond_sword': self.key}
+        self.assertEqual(data['defaultModels'], self.load(data)['defaultModels'])
+        for defaults in ({'minecraft:diamond_sword': 'minecraft:diamond_sword@' + 'b' * 64},
+                         {'minecraft:stone': self.key}, {'../stone': self.key}):
+            with self.subTest(defaults=defaults), self.assertRaisesRegex(ValueError, 'default item model'):
+                self.load(dict(data, defaultModels=defaults))
     def test_captured_normals_and_translucent_pipeline_survive_compressed_export(self):
         data = copy.deepcopy(self.manifest)
         face = data['items'][self.key]['ground'][0]

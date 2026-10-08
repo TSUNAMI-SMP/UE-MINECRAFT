@@ -36,6 +36,7 @@ FString ABridgeItemWorld::Drop(const FString& Tx,const FString& Item,const FStri
     Actor->Contains=Contains;Actor->AddTickPrerequisiteActor(this);Actor->SetActive(Authority);Actors.Add(Actor);Entry.Actor=Actor;Entry.Reason=TEXT("item_spawned");
     if(Lighting) Lighting(Actor);return LastReason=TEXT("item_spawned");
 }
+void ABridgeItemWorld::SetPickupDelay(const FString& Tx,float Seconds) {if(auto* Entry=Entries.Find(Tx)) if(auto* Actor=Entry->Actor.Get()) Actor->SetPickupDelay(Seconds);}
 void ABridgeItemWorld::SetAuthority(bool Active,ACharacter* NewPlayer) {
     Authority=Active;Player=NewPlayer;for(ABridgeDroppedItem* Actor:Actors) if(IsValid(Actor)) Actor->SetActive(Active);
 }
@@ -84,7 +85,7 @@ void ABridgeItemWorld::Tick(float DeltaSeconds) {
         if(Authority && Actor && Entry.Spawned && !Entry.Pending && Entry.Count>0) {
             if(Actor->GetAge()>=300.f || Actor->GetActorLocation().Z<-100000.f) {
                 Entry.Action=TEXT("expired");Entry.Requested=Entry.Count;Entry.Pending=true;Entry.Revision++;Entry.Reason=TEXT("item_vanilla_despawn_300s");Entry.LastSent=-1;
-            } else if(Player.IsValid() && Actor->GetAge()>=.5f && Now>=Entry.NextPickup) {
+            } else if(Player.IsValid() && Actor->CanPickup() && Now>=Entry.NextPickup) {
                 const float Half=Player->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
                 FVector Nearest=PlayerCenter;Nearest.Z=FMath::Clamp(Actor->GetActorLocation().Z,PlayerCenter.Z-Half,PlayerCenter.Z+Half);
                 if(FVector::DistSquared(Actor->GetActorLocation(),Nearest)<FMath::Square(85.f)) {
@@ -124,7 +125,7 @@ TArray<TSharedPtr<FJsonValue>> ABridgeItemWorld::ExportNativeDrops(const FVector
         const FVector Absolute=SourceOrigin+FVector(-Relative.Y,Relative.Z,Relative.X);
         auto Json=MakeShared<FJsonObject>();Json->SetStringField(TEXT("id"),Tx);Json->SetStringField(TEXT("item"),Item);Json->SetStringField(TEXT("model"),Model);
         Json->SetNumberField(TEXT("count"),Quantity);Json->SetNumberField(TEXT("maxCount"),Maximum);Json->SetArrayField(TEXT("position"),Vector(Absolute));
-        Json->SetArrayField(TEXT("velocity"),Vector(Actor->GetNativeVelocity()));Json->SetNumberField(TEXT("age"),FMath::Clamp(Actor->GetAge(),0.f,300.f));Saved.Add(MakeShared<FJsonValueObject>(Json));
+        Json->SetArrayField(TEXT("velocity"),Vector(Actor->GetNativeVelocity()));Json->SetNumberField(TEXT("age"),FMath::Clamp(Actor->GetAge(),0.f,300.f));Json->SetNumberField(TEXT("pickupDelay"),Actor->GetPickupDelay());Saved.Add(MakeShared<FJsonValueObject>(Json));
     }
     return Saved;
 }
@@ -133,7 +134,7 @@ bool ABridgeItemWorld::ImportNativeDrops(const TArray<TSharedPtr<FJsonValue>>& D
     auto Reject=[&](const FString& Reason) {LastReason=Reason;UE_LOG(LogTemp,Warning,TEXT("Bridge native drops restore failed: %s"),*Reason);return false;};
     if(Drops.Num()>128 || !Authority || !GetWorld()) return Reject(TEXT("native_drop_save_limit_or_controller_not_ready"));
     if(!Drops.IsEmpty() && !Palette) return Reject(TEXT("native_drop_palette_missing"));
-    struct FDrop {FString Tx,Item,Model;int32 Count=0,Maximum=0;FVector Position,Velocity;float Age=0;};
+    struct FDrop {FString Tx,Item,Model;int32 Count=0,Maximum=0;FVector Position,Velocity;float Age=0,PickupDelay=.5f;};
     TArray<FDrop> Parsed;TSet<FString> UniqueIds;
     auto Identifier=[](const FString& Id) {
         if(Id.Len()<3 || Id.Len()>256 || Id.Contains(TEXT(".."))) return false;
@@ -154,7 +155,7 @@ bool ABridgeItemWorld::ImportNativeDrops(const TArray<TSharedPtr<FJsonValue>>& D
             || !Number(Json,TEXT("count"),1,99,Count) || FMath::FloorToDouble(Count)!=Count || !Number(Json,TEXT("maxCount"),1,99,Maximum) || FMath::FloorToDouble(Maximum)!=Maximum || Count>Maximum
             || !Number(Json,TEXT("age"),0,300,Age) || !ReadVector(Json,TEXT("position"),30000000,Absolute) || (Absolute-SourceOrigin).GetAbs().GetMax()>100000 || !ReadVector(Json,TEXT("velocity"),100000,DropData.Velocity)) return Reject(TEXT("native_drop_save_validation"));
         DropData.Position=Anchor+FVector(Absolute.Z-SourceOrigin.Z,-(Absolute.X-SourceOrigin.X),Absolute.Y-SourceOrigin.Y)*100.;
-        DropData.Count=int32(Count);DropData.Maximum=int32(Maximum);DropData.Age=float(Age);
+        DropData.Count=int32(Count);DropData.Maximum=int32(Maximum);DropData.Age=float(Age);double Delay=.5;if(Json->HasField(TEXT("pickupDelay")) && !Number(Json,TEXT("pickupDelay"),0,10,Delay)) return Reject(TEXT("native_drop_pickup_delay"));DropData.PickupDelay=float(Delay);
         if(Contains && !Contains(DropData.Position)) return Reject(TEXT("native_drop_outside_ready_import"));
         TArray<FBridgeModelFace> Faces;if(!Palette->BuildItem(DropData.Model,TEXT("ground"),Faces) || Faces.IsEmpty()) return Reject(TEXT("native_drop_ground_model_missing"));
         for(const auto& Face:Faces) {const auto* Material=Palette->ItemMaterials.Find(Face.TextureId);if(!Material || !Material->Get()) return Reject(TEXT("native_drop_ground_material_missing"));}
@@ -176,7 +177,7 @@ bool ABridgeItemWorld::ImportNativeDrops(const TArray<TSharedPtr<FJsonValue>>& D
             for(int32 I=0;I<Actors.Num();++I) if(IsValid(Actors[I])) if(auto* Primitive=Cast<UPrimitiveComponent>(Actors[I]->GetRootComponent())) Primitive->SetCollisionEnabled(PreviousCollision[I]);
             return Reject(TEXT("native_drop_spawn_failed: ")+SpawnReason);
         }
-        if(auto* Actor=Entries.FindChecked(Data.Tx).Actor.Get()) Actor->RestoreNativeMotion(Data.Velocity,Data.Age);
+        if(auto* Actor=Entries.FindChecked(Data.Tx).Actor.Get()) {Actor->RestoreNativeMotion(Data.Velocity,Data.Age);Actor->SetPickupDelay(Data.PickupDelay);}
         Restored.Add(Data.Tx,Data.Item);
     }
     for(ABridgeDroppedItem* Actor:PreviousActors) if(IsValid(Actor)) Actor->Destroy();OutTransactionItems=MoveTemp(Restored);LastReason=TEXT("native_drops_restored");

@@ -172,7 +172,9 @@ void ABridgeCharacter::ApplyUEInput(float Forward,float Right,bool JumpHeld,bool
     FVector Direction=Heading.Vector()*Input.z + FRotationMatrix(Heading).GetUnitAxis(EAxis::Y)*Input.x;
     const float Magnitude=FMath::Min(1.f,Direction.Size());
     if(Magnitude>0) AddMovementInput(Direction.GetSafeNormal(),Magnitude);
-    if(BridgeFlying) {
+    if(auto* LiquidMovement=Cast<UBridgeCharacterMovement>(GetCharacterMovement())) {LiquidMovement->FluidJump=JumpHeld;LiquidMovement->FluidSneak=Sneak;}
+    if(GetCharacterMovement()->MovementMode==MOVE_Custom) {StopJumping();}
+    else if(BridgeFlying) {
         if(auto* Movement=Cast<UBridgeCharacterMovement>(GetCharacterMovement())) {
             Movement->FlightIntent=Direction.GetClampedToMaxSize(1)+FVector::UpVector*((JumpHeld ? 1.f : 0.f)-(Sneak ? 1.f : 0.f));
             Movement->FlightSprint=SprintRequested;
@@ -645,7 +647,13 @@ void ABridgeCharacter::UpdateAvatar(float Bob) {
     }
     // Empty-hand attacks animate in third person too. Previously this was inside
     // the held-item branch, so punching with an empty hotbar slot never moved.
-    if(NativeSwing>0) AvatarParts[ActiveArm]->AddLocalRotation(FRotator(float(BridgeCharacterMath::AttackPitch(NativeSwing,GetControlRotation().Pitch)),0,0));
+    if(NativeSwing>0) {
+        const float SwingSide=PlayerLeftHanded ? -1.f : 1.f;
+        const float Twist=FMath::Sin(FMath::Sqrt(NativeSwing)*2*PI)*.2f*SwingSide;
+        AvatarParts[1]->AddLocalRotation(FRotator(0,FMath::RadiansToDegrees(Twist),0));
+        AvatarParts[ActiveArm]->AddLocalRotation(FRotator(float(BridgeCharacterMath::AttackPitch(NativeSwing,GetControlRotation().Pitch)),FMath::RadiansToDegrees(Twist*2),FMath::RadiansToDegrees(-FMath::Sin(NativeSwing*PI)*.4f*SwingSide)));
+        AvatarParts[ActiveArm]->AddLocalOffset(FVector(-FMath::Sin(Twist)*31.25f*SwingSide,0,0));
+    }
     const float Side=PlayerLeftHanded ? -1.f : 1.f;
     const auto ArmPose=BridgeCharacterMath::FirstPersonArm(NativeSwing,PlayerEquip,PlayerLeftHanded,PlayerSlim);
     const auto ItemPose=NativeHeldGeometry ? BridgeCharacterMath::FirstPersonItem(NativeSwing,PlayerEquip,PlayerLeftHanded) : BridgeCharacterMath::FirstPersonBlock(NativeSwing,PlayerEquip,PlayerLeftHanded);

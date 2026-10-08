@@ -70,7 +70,7 @@ public final class NativePlayExport implements AutoCloseable {
         manifest.addProperty("generatedAt",java.time.Instant.now().toString());manifest.addProperty("minecraftVersion","1.21.11");manifest.addProperty("radiusChunks",chunkRadius);manifest.add("settings",settings);
         for(Block block:Registries.BLOCK) blockRegistry.add(block);blockRegistry.sort(Comparator.comparing(block->Registries.BLOCK.getId(block).toString()));
         if(blockRegistry.size()>4096) throw new IOException("ブロック登録上限4096を超えています");
-        manifest.addProperty("sourcePolicy","Read-only finite snapshot of already loaded chunks; no source edits or generation. Unsupported fluids, signs and dedicated renderers are listed.");
+        manifest.addProperty("sourcePolicy","Read-only finite snapshot of already loaded chunks; no source edits or generation. Fluid geometry is included. Dedicated renderers use captured default item geometry; exclusions are listed.");
     }
     public boolean running() {return stage!=Stage.DONE && stage!=Stage.FAILED;}
     public String status() {return worker!=null && worker.isAlive() && !workerStatus.isEmpty()?workerStatus:status;}
@@ -196,7 +196,7 @@ public final class NativePlayExport implements AutoCloseable {
                 if(state.getFluidState().isIn(net.minecraft.registry.tag.FluidTags.WATER)) waterVoxels.add(cursor);
                 if(!state.isAir()) {
                     if(!BlockGeometryCapture.supported(state)) {String key=Registries.BLOCK.getId(state.getBlock())+" / "+BlockGeometryCapture.exclusion(state);worldExcluded.addProperty(key,worldExcluded.has(key)?worldExcluded.get(key).getAsInt()+1:1);}
-                    else {int color=state.getMapColor(sourceWorld,pos).color&0xffffff,tint=client.getBlockColors().getColor(state,sourceWorld,pos,0);if(tint!=-1) color=tint&0xffffff;var offset=state.getModelOffset(pos);
+                    else {int color=state.getMapColor(sourceWorld,pos).color&0xffffff,tint=client.getBlockColors().getColor(state,sourceWorld,pos,0);if(state.isLiquid() && state.getFluidState().isIn(net.minecraft.registry.tag.FluidTags.WATER)) color=BiomeColors.getWaterColor(sourceWorld,pos)&0xffffff;if(tint!=-1) color=tint&0xffffff;var offset=state.getModelOffset(pos);
                         voxels.add(new WorldSnapshot.Shape(x+.5+offset.x-origin.x,y+.5+offset.y-origin.y,z+.5+offset.z-origin.z,color,1,1,1,Registries.BLOCK.getId(state.getBlock()).toString(),false,x,y,z,BlockGeometryCapture.stateKey(state),1,
                             Math.max(0,Math.min(15,sourceWorld.getLightLevel(LightType.SKY,pos))),Math.max(0,Math.min(15,sourceWorld.getLightLevel(LightType.BLOCK,pos))),state.getOpacity(),state.getLuminance()));}
                 }

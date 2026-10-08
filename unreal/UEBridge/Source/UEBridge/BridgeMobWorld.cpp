@@ -187,6 +187,7 @@ bool ABridgeMobWorld::Attack(const FVector& Eye,const FVector& Direction,float R
     if(!Mob || !Mob->Alive()) return false;
     // Base knockback comes from damage-source position, not camera pitch.
     const FVector Away=Player.IsValid() ? Mob->GetActorLocation()-Player->GetActorLocation() : Direction;
+    LastAttackPosition=Mob->GetActorLocation();
     const bool Accepted=Mob->Hit(Damage,Away);
     if(DamageAccepted) *DamageAccepted=Accepted;
     if(Accepted && AdditionalKnockback>0) Mob->ApplyNativeKnockback(AdditionalKnockback,Direction);
@@ -230,7 +231,7 @@ void ABridgeMobWorld::NotifyMobSound(const FString& Type,const FString& Suffix,c
     if(NativeSound) NativeSound(Id,Location,Volume,Pitch,Category);
     else if(Sound) Sound(Id,Location);
 }
-void ABridgeMobWorld::HitPlayer(float Damage,const FVector& Location) {
+void ABridgeMobWorld::HitPlayer(float Damage,const FVector& Location,bool Knockback,bool UseArmor) {
     if(!Authority || Creative || PlayerHealth<=0 || !GetWorld() || !FMath::IsFinite(Damage) || Damage<=0) return;
     const double Now=GetWorld()->GetTimeSeconds();
     const bool Full=LastPlayerDamage<0 || BridgeCombatMath::fullHit(Now-LastPlayerDamage);
@@ -239,9 +240,9 @@ void ABridgeMobWorld::HitPlayer(float Damage,const FVector& Location) {
     PreviousPlayerDamage=Damage;if(Full) LastPlayerDamage=Now;
     const auto* NativeController=Player.IsValid() ? Cast<ABridgeNativePlayerController>(Player->GetController()) : nullptr;
     const auto* Inventory=NativeController ? NativeController->GetNativeInventory() : nullptr;
-    const float Applied=Inventory ? float(BridgeCombatMath::armorDamage(Accepted,Inventory->GetArmorPoints(),Inventory->GetArmorToughness())) : Accepted;
+    const float Applied=Inventory && UseArmor ? float(BridgeCombatMath::armorDamage(Accepted,Inventory->GetArmorPoints(),Inventory->GetArmorToughness())) : Accepted;
     PlayerHealth=FMath::Max(0.f,PlayerHealth-Applied);
-    if(Full && Player.IsValid()) {
+    if(Full && Knockback && Player.IsValid()) {
         const FVector Old=Player->GetVelocity();FVector Away=Player->GetActorLocation()-Location;
         while(Away.SizeSquared2D()<.1) Away=FVector(FMath::FRand()-FMath::FRand(),FMath::FRand()-FMath::FRand(),0);
         const auto Velocity=BridgeCombatMath::knockbackVelocity({Old.X,Old.Y,Old.Z},.4,Inventory ? Inventory->GetArmorKnockbackResistance() : 0,Away.X,Away.Y,Player->GetCharacterMovement()->IsMovingOnGround());

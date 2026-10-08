@@ -34,6 +34,7 @@ public:
     void Configure(class ABridgeWorld* ImportedTerrain,class UBridgeBlockPalette* ImportedPalette,class UMaterialInterface* Material);
     /** Active-pack POOF sequence; independently configured from terrain dust. */
     void ConfigurePoof(class UBridgeNativeUiPalette* Resources,class UMaterialInterface* Material);
+    void SpawnCombat(const FVector& Position,const FVector& Direction,bool Critical,bool Sweep);
     int32 SpawnDeathPoof(const FVector& FeetPosition,float WidthCm,float HeightCm);
     FString DeathPoofReason() const;
     void SetViewCamera(class UCameraComponent* Camera);
@@ -46,7 +47,7 @@ public:
     UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="Bridge|Particles",meta=(ClampMin="0.25",ClampMax="2.0")) float ParticleSizeMultiplier=.75f;
     UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="Bridge|Particles",meta=(ClampMin="0.0",ClampMax="1.0")) float ParticleDensityMultiplier=1.f;
     UPROPERTY(EditAnywhere,BlueprintReadWrite,Category="Bridge|Particles",meta=(ClampMin="0.25",ClampMax="2.0")) float ParticleLifetimeMultiplier=.9f;
-    int32 ParticleCount() const { return Particles.Num()+PoofParticles.Num(); }
+    int32 ParticleCount() const { return Particles.Num()+PoofParticles.Num()+NativeParticles.Num(); }
     FBridgeDustDiagnostics GetDiagnostics() const;
 private:
     struct FDustParticle {
@@ -57,6 +58,14 @@ private:
         float Size=10;
         int32 Age=0, Lifetime=10;
     };
+    struct FNativeParticle {
+        FString Sprite;FVector Position=FVector::ZeroVector,Velocity=FVector::ZeroVector;
+        FColor Tint=FColor::White;float Age=0,Lifetime=.4f,Size=20,Gravity=0,Spin=0;bool Sweep=false,Leaf=false;
+    };
+    TArray<FNativeParticle> NativeParticles;
+    UPROPERTY() TMap<FString,TObjectPtr<class UInstancedStaticMeshComponent>> NativeGroups;
+    float LeafClock=0;
+    void TickNativeParticles(float DeltaSeconds);
     struct FPoofParticle {
         BridgeDeathPoofMath::Particle State;
         FLinearColor Light=FLinearColor(1,0,1,1);

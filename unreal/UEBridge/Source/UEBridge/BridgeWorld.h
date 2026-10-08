@@ -38,6 +38,7 @@ public:
     FVector BlockCenter(const FIntVector& Block) const;
     /** Resolve source metadata without relying on the frozen Minecraft player. */
     bool GetBlockInfo(const FIntVector& SourceVoxel,FString& BlockId,FColor& Tint) const;
+    FIntVector SourceVoxelAt(const FVector& Position) const;
     bool GetBlockState(const FIntVector& SourceVoxel,FString& BlockId,FString& StateKey) const;
     FString GetModelError() const { return LastModelError; }
     TFunction<void(const FString& Type,const FString& Block,const FVector& Position)> InteractionSound;
@@ -56,6 +57,9 @@ public:
     int32 RebuildPending() const {return RebuildQueue.Num()+LightQueue.Num();}
     bool ContainsUEPosition(const FVector& UEPosition) const;
     /** Conservative source query; older exports omit free fluid voxels. */
+    void EnableNativeFluids(bool UltraWarm=false);
+    int32 FluidAt(const FVector& Position,FVector* Flow=nullptr) const;
+    bool SetFluid(const FIntVector& Position,int32 Kind,int32 Level=0);
     bool IsWaterAtUEPosition(const FVector& UEPosition) const;
     bool IsMovementReady(const FVector& UEFeet,const FVector& Velocity=FVector::ZeroVector) const;
     bool EnsureCollisionForPosition(const FVector& UEPosition);
@@ -114,6 +118,11 @@ private:
     TMap<FIntVector,TArray<uint8>> SkyTops;
     TMap<FIntVector,TArray<FIntVector>> BiomeTintCells;
     TMap<FIntVector,TArray<uint16>> WaterCells;
+    bool NativeFluidsEnabled=false,FluidUltraWarm=false;
+    TMap<FIntVector,double> FluidUpdates;
+    double FluidClock=0;
+    void TickFluids(float DeltaSeconds);
+    void QueueFluid(const FIntVector& Position);
     void BuildBoundary();
     bool Inside(const FIntVector& C) const;
     FIntVector OwnerOf(const FBridgeBlock& Block) const;

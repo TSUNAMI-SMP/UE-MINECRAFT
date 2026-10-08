@@ -120,6 +120,8 @@ def build_atlases(manifest, cache_directory, size=2048):
     images, skipped, total = [], {}, 0
     for identifier, entry in manifest["textures"].items():
         try:
+            if entry.get("animationFrames", 1) > 1:
+                raise ValueError("Animated fluid uses its original material")
             width, height, pixels = _decode_png(pathlib.Path(entry["source"]).read_bytes())
             if width + 4 > size or height + 4 > size:
                 raise ValueError("Large tile kept in its original material")

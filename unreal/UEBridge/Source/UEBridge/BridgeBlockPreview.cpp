@@ -1,4 +1,5 @@
 #include "BridgeBlockPreview.h"
+#include "BridgeFluidMath.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/SceneComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -21,7 +22,8 @@ void ABridgeBlockPreview::Clear() {
 }
 void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVector& Anchor, UMaterialInterface* Material,UBridgeBlockPalette* Palette,bool Physics,
     const TFunction<bool(const FIntVector&)>& OpaqueAt,FBridgeLightingService* Lighting,bool RebuildVisual,
-    const TFunction<FColor(const FIntVector&,const FString&,int32)>& RenderTintAt) {
+    const TFunction<FColor(const FIntVector&,const FString&,int32)>& RenderTintAt,
+    const TFunction<bool(const FIntVector&,FString&,FString&)>& BlockStateAt) {
     for(auto& Group:Groups) if(Group) { Group->ClearInstances(); Group->UnregisterComponent(); Group->DestroyComponent(); }
     Groups.Empty();InstanceBlocks.Empty();NativeProxies=0;
     UProceduralMeshComponent* ReusableMesh=nullptr;
@@ -47,6 +49,9 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
     for(const auto& Block:Source) {
         if(Block.Role==1 && !RebuildVisual) { /* visual already retained */ }
         else if((Block.Role!=2 && Block.Role!=3) || Physics) Blocks.Add(Block);
+        if(RebuildVisual && Block.Role==1 && Block.StateKey.Contains(TEXT("waterlogged=true"))) {FBridgeBlock Water=Block;Water.BlockId=TEXT("minecraft:water");Water.StateKey=TEXT("level=0");Water.Color=0x3f76e4;
+            // The original position already includes the cell's import-relative offset.
+            Water.Position=Block.Position-(Palette ? Palette->GetModelOffset(Block.BlockId,Block.SourceBlock) : FVector::ZeroVector);Water.Collision=false;Blocks.Add(Water);}
         if(!Physics || Block.Role!=1 || ExplicitHulls.Contains(Block.SourceBlock) || !Palette) continue;
         TArray<FBox> Collision,Outline;
         if(!Palette->GetStateBoxes(Block.BlockId,Block.StateKey,Collision,Outline)) continue;
@@ -79,14 +84,38 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
         if(Block.Role==1) {
             if(!RebuildVisual) continue;
             TArray<FBridgeModelFace> Faces;
-            if(Palette && Palette->BuildModel(Block.BlockId,Block.StateKey,Faces)) for(const auto& Face:Faces) {
+            const bool Fluid=Block.BlockId==TEXT("minecraft:water") || Block.BlockId==TEXT("minecraft:lava") || Block.BlockId==TEXT("minecraft:bubble_column");
+            bool ItemFallback=false;bool HaveModel=Palette && Palette->BuildModel(Block.BlockId,Block.StateKey,Faces);
+            const FString* Definition=Palette ? Palette->BlockstateDefinitions.Find(Block.BlockId) : nullptr;
+            if(Definition && Definition->Contains(TEXT("uebridge_fallback"))) {
+                TArray<FBridgeModelFace> ItemFaces;
+                if(Palette->BuildItem(Block.BlockId,TEXT("none"),ItemFaces)) {
+                    Faces=MoveTemp(ItemFaces);HaveModel=true;ItemFallback=true;
+                    for(auto& ItemFace:Faces) for(auto& Vertex:ItemFace.Vertices) Vertex+=FVector(.5);
+                }
+            }
+            if(HaveModel) for(auto Face:Faces) {
+                if(Fluid && BlockStateAt) {
+                    FString Neighbor,NeighborState;
+                    auto Same=[&](const FString& Id,const FString& State) {return Id==Block.BlockId || ((Block.BlockId==TEXT("minecraft:water") || Block.BlockId==TEXT("minecraft:bubble_column")) && (Id==TEXT("minecraft:water") || Id==TEXT("minecraft:bubble_column") || State.Contains(TEXT("waterlogged=true"))));};
+                    if(BlockStateAt(Block.SourceBlock+Face.CullOffset,Neighbor,NeighborState) && Same(Neighbor,NeighborState)) continue;
+                    auto Height=[&](const FIntVector& Voxel) {FString Id,State;if(!BlockStateAt(Voxel,Id,State)) return 0.;if(!Same(Id,State)) return -1.;
+                        const int32 At=State.Find(TEXT("level="));const int32 Level=At<0 ? 0 : FCString::Atoi(*State.Mid(At+6));return (8-(Level>=8 ? 0 : Level))/9.;};
+                    for(auto& Vertex:Face.Vertices) if(Vertex.Y>.001) {
+                        const int32 X=Vertex.X<.5 ? -1 : 1,Z=Vertex.Z<.5 ? -1 : 1;
+                        const std::array<FIntVector,4> Samples{Block.SourceBlock,Block.SourceBlock+FIntVector(X,0,0),Block.SourceBlock+FIntVector(0,0,Z),Block.SourceBlock+FIntVector(X,0,Z)};
+                        std::array<double,4> Heights;bool Above=false;
+                        for(int32 I=0;I<4;++I) {Heights[I]=Height(Samples[I]);FString Id,State;Above|=BlockStateAt(Samples[I]+FIntVector(0,1,0),Id,State) && Same(Id,State);}
+                        Vertex.Y=BridgeFluidMath::corner(Heights,Above);
+                    }
+                }
                 const bool OffsetZero=Palette->GetModelOffset(Block.BlockId,Block.SourceBlock).IsNearlyZero();
                 if(OpaqueAt && BridgeMeshingMath::CullNativeFace({Face.CullOffset.X,Face.CullOffset.Y,Face.CullOffset.Z},OpaqueAt(Block.SourceBlock+Face.CullOffset),OffsetZero)) continue;
-                UMaterialInterface* FaceMaterial=Palette->FindFaceMaterial(Face.TextureId,Face.bTint);if(!FaceMaterial) continue;
+                UMaterialInterface* FaceMaterial=ItemFallback ? Palette->ItemMaterials.FindRef(Face.TextureId+TEXT("#world")).Get() : Palette->FindFaceMaterial(Face.TextureId,Face.bTint);if(!FaceMaterial && ItemFallback) FaceMaterial=Palette->ItemMaterials.FindRef(Face.TextureId).Get();if(!FaceMaterial) continue;
                 const FString* Page=Palette->AtlasPages.Find(Face.TextureId);const FVector4* Rect=Palette->AtlasRects.Find(Face.TextureId);
                 const auto* AtlasMaterial=Page ? Palette->AtlasMaterials.Find(*Page) : nullptr;
                 const bool Atlas=Rect && AtlasMaterial && AtlasMaterial->Get();
-                const FColor NativeTint=Face.bTint && Face.TintIndex!=0 ? (RenderTintAt ? RenderTintAt(Block.SourceBlock,Block.BlockId,Face.TintIndex) : Palette->RenderTint(Block.BlockId,Face.TintIndex))
+                const FColor NativeTint=ItemFallback ? Face.Color : Face.bTint && Face.TintIndex!=0 ? (RenderTintAt ? RenderTintAt(Block.SourceBlock,Block.BlockId,Face.TintIndex) : Palette->RenderTint(Block.BlockId,Face.TintIndex))
                     : Face.bTint ? FColor((Block.Color>>16)&255,(Block.Color>>8)&255,Block.Color&255) : FColor::White;
                 const int32 FaceColor=int32(NativeTint.ToPackedARGB()&0xffffffu);
                 // BlockModelRenderer#renderQuad passes byte/255 directly to the
@@ -109,7 +138,9 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
                     Section.Tangents.Add(FProcMeshTangent((Vertices[3]-Vertices[0]).GetSafeNormal(),false));
                 }
                 // This permutation reflects handedness: UE fronts are clockwise: transformed MC order already faces outward.
-                for(int32 TriangleIndex:BridgeMeshingMath::UEFacingQuad({{{Vertices[0].X,Vertices[0].Y,Vertices[0].Z},{Vertices[1].X,Vertices[1].Y,Vertices[1].Z},{Vertices[2].X,Vertices[2].Y,Vertices[2].Z},{Vertices[3].X,Vertices[3].Y,Vertices[3].Z}}},{Normal.X,Normal.Y,Normal.Z},Base)) Section.Indices.Add(TriangleIndex);++RenderedFaces;
+                for(int32 TriangleIndex:BridgeMeshingMath::UEFacingQuad({{{Vertices[0].X,Vertices[0].Y,Vertices[0].Z},{Vertices[1].X,Vertices[1].Y,Vertices[1].Z},{Vertices[2].X,Vertices[2].Y,Vertices[2].Z},{Vertices[3].X,Vertices[3].Y,Vertices[3].Z}}},{Normal.X,Normal.Y,Normal.Z},Base)) Section.Indices.Add(TriangleIndex);
+                if(Fluid || (ItemFallback && Face.DoubleSided)) {const int32 End=Section.Indices.Num();for(int32 I=End-6;I<End;I+=3) {Section.Indices.Add(Section.Indices[I]);Section.Indices.Add(Section.Indices[I+2]);Section.Indices.Add(Section.Indices[I+1]);}}
+                ++RenderedFaces;
             }
             continue;
         }
@@ -129,7 +160,7 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
                 if(CombinedOutline) Group->SetCollisionResponseToChannel(ECC_Visibility,ECR_Block);
                 Group->SetVisibility(false);Group->SetHiddenInGame(true);Group->SetCastShadow(false);++NativeProxies;
             } else if(Physics && Block.Collision) Group->SetCollisionProfileName(TEXT("BlockAll"));else Group->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-            Group->SetCanEverAffectNavigation(false);Group->SetGenerateOverlapEvents(false);
+            Group->SetCanEverAffectNavigation(false);Group->SetGenerateOverlapEvents(false);Group->SetCullDistances(0,0);
             if(!(NativeCollision || NativeOutline) && (Textured || Material)) {
                 auto* Tint=UMaterialInstanceDynamic::Create(Textured ? Textured : Material,this);
                 Tint->SetVectorParameterValue(TEXT("BlockColor"),FLinearColor(((Block.Color>>16)&255)/255.f,((Block.Color>>8)&255)/255.f,(Block.Color&255)/255.f,1));Group->SetMaterial(0,Tint);
@@ -143,7 +174,7 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
         auto* Mesh=ReusableMesh;
         if(!Mesh) {
             Mesh=NewObject<UProceduralMeshComponent>(this);Mesh->SetupAttachment(RootComponent);Mesh->SetMobility(EComponentMobility::Movable);
-            Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);Mesh->SetCanEverAffectNavigation(false);Mesh->SetGenerateOverlapEvents(false);Mesh->RegisterComponent();ModelGroups.Add(Mesh);
+            Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);Mesh->SetCanEverAffectNavigation(false);Mesh->bAllowCullDistanceVolume=false;Mesh->SetGenerateOverlapEvents(false);Mesh->RegisterComponent();ModelGroups.Add(Mesh);
         }
         int32 Index=0;for(auto& Pair:Sections) {
             auto& Section=Pair.Value;Mesh->CreateMeshSection_LinearColor(Index,Section.Vertices,Section.Indices,Section.Normals,Section.UV,Section.UV1,Section.UV2,Section.UV3,Section.Colors,Section.Tangents,false,false);

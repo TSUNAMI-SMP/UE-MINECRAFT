@@ -85,7 +85,7 @@ class Editor:
         api.MaterialParameterCollectionFactoryNew = object
         api.CollectionScalarParameter = api.CollectionVectorParameter = PropertyObject
         api.CustomInput = PropertyObject
-        api.CustomMaterialOutputType = types.SimpleNamespace(CMOT_FLOAT3='float3')
+        api.CustomMaterialOutputType = types.SimpleNamespace(CMOT_FLOAT3='float3', CMOT_FLOAT2='float2')
         api.MaterialShadingModel = types.SimpleNamespace(MSM_DEFAULT_LIT='lit', MSM_UNLIT='unlit')
         api.load_asset = lambda path: self.assets.get(path, object() if path.startswith("/Engine/") else None)
         api.EditorAssetLibrary = types.SimpleNamespace(does_asset_exist=lambda path: path in self.assets,
@@ -99,7 +99,7 @@ class Editor:
         api.MaterialProperty = types.SimpleNamespace(MP_BASE_COLOR="base", MP_OPACITY_MASK="mask", MP_OPACITY="opacity", MP_ROUGHNESS="roughness", MP_SPECULAR="specular", MP_EMISSIVE_COLOR="emissive")
         api.LinearColor = lambda *values: values
         api.log = lambda text: None
-        for name in ("TextureCoordinate", "Constant2Vector", "Multiply", "PerInstanceCustomData", "Add",
+        for name in ("Time", "TextureCoordinate", "Constant2Vector", "Multiply", "PerInstanceCustomData", "Add",
                      "AppendVector", "VertexInterpolator", "TextureSampleParameter2D", "VectorParameter", "Constant",
                      "ScalarParameter", "CollectionParameter", "VertexNormalWS", "PixelNormalWS", "Custom", "VertexColor", "LinearInterpolate", "Constant3Vector", "ComponentMask", "SceneTexture", "ScreenPosition", "ViewSize", "TextureObjectParameter"):
             setattr(api, "MaterialExpression" + name, type(name, (Expression,), {}))

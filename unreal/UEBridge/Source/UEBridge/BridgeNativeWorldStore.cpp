@@ -146,7 +146,9 @@ bool FBridgeNativeWorldStore::ReadHeader(const FString& Text,FBridgeNativeWorldM
         // Optional fields support earlier snapshots, but a present field of the
         // wrong type is corruption, never permission to replace it with defaults.
         if(R->HasField(TEXT("inventory")) && !R->HasTypedField<EJson::Object>(TEXT("inventory"))) return false;
-        for(const TCHAR* Key:{TEXT("lighting"),TEXT("flying")}) if(R->HasField(Key) && !R->HasTypedField<EJson::Boolean>(Key)) return false;
+        for(const TCHAR* Key:{TEXT("lighting"),TEXT("flying"),TEXT("daylightCycle"),TEXT("creative")}) if(R->HasField(Key) && !R->HasTypedField<EJson::Boolean>(Key)) return false;
+        double ClockValue;for(const TCHAR* Key:{TEXT("timeOfDay"),TEXT("worldTime")}) if(R->HasField(Key) && (!Number(R,Key,0,9007199254740991.,ClockValue) || ClockValue!=FMath::FloorToDouble(ClockValue))) return false;
+        for(const TCHAR* Key:{TEXT("rainGradient"),TEXT("thunderGradient")}) if(R->HasField(Key) && !Number(R,Key,0,1,ClockValue)) return false;
         double Health;if(R->HasField(TEXT("health")) && !Number(R,TEXT("health"),0,20,Health)) return false;
         int32 Perspective;if(R->HasField(TEXT("perspective")) && !Integer(R,TEXT("perspective"),0,2,Perspective)) return false;
         if(R->HasField(TEXT("respawn"))) {

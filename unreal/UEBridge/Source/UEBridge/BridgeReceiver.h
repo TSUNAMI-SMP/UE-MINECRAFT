@@ -40,6 +40,8 @@ public:
     bool IsNativeReady() const;
     bool IsNativeSaving() const;
     float GetNativeHealth() const;
+    int32 GetNativeAirTicks() const {return FMath::Clamp(300-FMath::FloorToInt(NativeSubmergedSeconds*20),0,300);}
+    bool IsNativeEyeInWater() const {return NativeEyeInWater;}
     const FString& GetNativeLastAction() const { return LastAction; }
     void SetNativeInput(float Forward,float Right,bool Jump,bool Sneak,bool Sprint,bool Flying,int32 Perspective,float UEYaw,float UEPitch);
     void NativeSelect(const FString& ItemId);
@@ -49,6 +51,8 @@ public:
     void NativeSetLighting(bool Enabled);
     bool NativeSave();
     void NativeRespawn();
+    FString NativeCommand(const FString& Command);
+    double GetNativeTimeOfDay() const {return NativeTimeOfDay;}
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Bow") bool SpawnBowProjectiles = true;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") bool Connected = false;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") int32 InvalidPackets = 0;
@@ -110,6 +114,11 @@ private:
     FVector NativeRespawnPosition=FVector::ZeroVector;
     double NativeBowStart=-1;
     double NativeLastAttack=-100;
+    double NativeLastFluidDamage=-100,NativeSubmergedSeconds=0;
+    bool NativeEyeInWater=false;
+    double NativeTimeOfDay=6000,NativeWorldTime=0,NativeTimeAccumulator=0;
+    bool NativeDaylightCycle=true;
+    void TickNativeTime(float DeltaSeconds);
     float NativeAttackDamage() const;
 public:
     float GetNativeAttackCharge() const;
@@ -123,7 +132,7 @@ private:
     void TickNativePlay(float DeltaSeconds);
     void LogDiagnostics(double Now,bool bForceLog=false);
     void PlayNativeSound(const FString& Id,const FVector& Position,float Volume=1,float Pitch=1,const FString& Category=TEXT(""));
-    bool SpawnNativeDrop(const FString& ItemId,int32 Count,const FVector& Position,const FVector& Velocity);
+    bool SpawnNativeDrop(const FString& ItemId,int32 Count,const FVector& Position,const FVector& Velocity,float PickupDelay=.5f);
     void BlockAction(const FBridgePacket& Packet);
     bool HasNewInput = false;
     uint64 PreviewGeneration = 0;

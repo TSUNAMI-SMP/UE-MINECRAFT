@@ -211,6 +211,9 @@ def load_texture_manifest(filename):
         _identifier(name)
         if not isinstance(entry, dict) or not isinstance(entry.get("file"), str):
             raise ValueError("Invalid texture entry")
+        for key in ('animationFrames', 'animationFrameTime'):
+            if key in entry and (type(entry[key]) is not int or not 1 <= entry[key] <= 2048):
+                raise ValueError('Invalid texture animation')
         if entry.get("alphaMode", "cutout") not in ("opaque", "cutout", "translucent"):
             raise ValueError("Invalid texture alpha mode")
         relative = pathlib.PurePosixPath(entry["file"])
@@ -225,6 +228,8 @@ def load_texture_manifest(filename):
         for key in ("width", "height"):
             if type(entry.get(key)) is not int or not 1 <= entry[key] <= 2048:
                 raise ValueError("Invalid texture dimensions")
+        if entry["height"] % entry.get("animationFrames",1) != 0:
+            raise ValueError("Animation frame count does not divide the texture strip")
         if not isinstance(entry.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"]):
             raise ValueError("Invalid texture checksum")
         data = source.read_bytes()
@@ -283,7 +288,7 @@ def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mo
     scalar_names = {str(value) for value in editing.get_scalar_parameter_names(parent)}
     texture_names = {str(value) for value in editing.get_texture_parameter_names(parent)}
     use_vertex = not root.endswith('/Items')
-    required_scalars = {'FaceTint', 'BridgeUnlit', 'BridgeSpecular', 'BridgeLightingRevision_v5'}
+    required_scalars = {'FaceTint', 'BridgeUnlit', 'BridgeSpecular', 'BridgeLightingRevision_v5', 'AnimationFrames', 'AnimationFrameTime', 'BridgeAnimationRevision_v1'}
     if use_vertex:
         required_scalars.add('BridgeUseVertexLight')
     if required_scalars.issubset(scalar_names) and 'FaceTexture' in texture_names:
@@ -310,6 +315,19 @@ def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mo
             raise RuntimeError('Cannot connect model material: ' + pin)
     sample = expression(unreal.MaterialExpressionTextureSampleParameter2D)
     sample.set_editor_property('parameter_name', 'FaceTexture'); sample.set_editor_property('texture', sample_texture)
+    coordinate = expression(unreal.MaterialExpressionTextureCoordinate)
+    clock = expression(unreal.MaterialExpressionTime)
+    frames = expression(unreal.MaterialExpressionScalarParameter); frames.set_editor_property('parameter_name', 'AnimationFrames'); frames.set_editor_property('default_value', 1.0)
+    duration = expression(unreal.MaterialExpressionScalarParameter); duration.set_editor_property('parameter_name', 'AnimationFrameTime'); duration.set_editor_property('default_value', 1.0)
+    revision = expression(unreal.MaterialExpressionScalarParameter); revision.set_editor_property('parameter_name', 'BridgeAnimationRevision_v1'); revision.set_editor_property('default_value', 1.0)
+    animation = expression(unreal.MaterialExpressionCustom); animation.set_editor_property('output_type', unreal.CustomMaterialOutputType.CMOT_FLOAT2)
+    animation.set_editor_property('code', 'return float2(UV.x,(UV.y+floor(fmod(Clock*20/max(Duration,1),max(Frames*Revision,1))))/max(Frames*Revision,1));')
+    names = ['UV','Clock','Frames','Duration','Revision']; inputs = []
+    for name in names:
+        entry = unreal.CustomInput(); entry.set_editor_property('input_name', name); inputs.append(entry)
+    animation.set_editor_property('inputs', inputs)
+    for name, value in zip(names, [coordinate, clock, frames, duration, revision]): connect(value, animation, name)
+    connect(animation, sample, 'UVs')
     color = expression(unreal.MaterialExpressionVectorParameter)
     color.set_editor_property('parameter_name', 'BlockColor'); color.set_editor_property('default_value', unreal.LinearColor(1, 1, 1, 1))
     tint = expression(unreal.MaterialExpressionScalarParameter)
@@ -594,6 +612,8 @@ def import_minecraft_textures(filename, asset_root="/Game/Bridge/Minecraft"):
                 if not isinstance(instance, unreal.MaterialInstanceConstant):
                     raise RuntimeError("Cannot create model-face instance")
                 editing.set_material_instance_parent(instance, face_parent)
+                editing.set_material_instance_scalar_parameter_value(instance, 'AnimationFrames', float(manifest['textures'][identifier].get('animationFrames', 1)))
+                editing.set_material_instance_scalar_parameter_value(instance, 'AnimationFrameTime', float(manifest['textures'][identifier].get('animationFrameTime', 1)))
                 instance.set_editor_property("texture_parameter_values", [unreal.TextureParameterValue(parameter_info=unreal.MaterialParameterInfo(name="FaceTexture"), parameter_value=texture)])
                 instance.set_editor_property("scalar_parameter_values", [unreal.ScalarParameterValue(parameter_info=unreal.MaterialParameterInfo(name="FaceTint"), parameter_value=float(tinted))])
                 editing.update_material_instance(instance)

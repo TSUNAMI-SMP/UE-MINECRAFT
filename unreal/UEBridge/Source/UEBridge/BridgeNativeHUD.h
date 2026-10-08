@@ -18,6 +18,8 @@ public:
     bool HandleText(TCHAR Character);
     bool HandleKey(FKey Key);
     bool HasSearchFocus() const;
+    void ShowChat(const FString& Initial);
+    void HideChat();
 private:
     struct FSlotHit { FBox2D Bounds; int32 Slot = -1; FString CatalogueItem; bool CatalogueSlot = false; };
     struct FTabHit { FBox2D Bounds; int32 Group = -1; };
@@ -41,6 +43,11 @@ private:
     FVector2D Pointer = FVector2D::ZeroVector;
     FBox2D SearchBounds, SearchWidgetBounds, DeleteBounds, ScrollBounds, PanelBounds;
     TArray<FBox2D> PauseButtons;
+    TSharedPtr<class SWidget> ChatOverlay;
+    TSharedPtr<class SEditableTextBox> ChatField;
+    TArray<FString> ChatMessages;
+    double LastChatAt=0;
+    void DrawChat();
     TSharedPtr<class SWidget> SearchOverlay;
     TSharedPtr<class SEditableTextBox> SearchField;
     TWeakObjectPtr<class UGameViewportClient> SearchViewport;

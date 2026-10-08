@@ -96,7 +96,7 @@ void ABridgeNativeHUD::Text(const FString& Value, float X, float Y, FLinearColor
         if (Entry && Entry->Width > 0 && Entry->Height > 0) {
             const float W = Entry->DrawWidth > 0 ? Entry->DrawWidth : Entry->Width;
             const float H = Entry->DrawHeight > 0 ? Entry->DrawHeight : Entry->Height;
-            DrawTexture(Resources->FontAtlas, FMath::RoundToFloat(X * GuiScale), FMath::RoundToFloat((Y + 7 - Entry->Ascent) * GuiScale), W * GuiScale, H * GuiScale, Entry->X / AtlasW, Entry->Y / AtlasH, Entry->Width / AtlasW, Entry->Height / AtlasH, Color, BLEND_Translucent);
+            DrawTexture(Resources->FontAtlas, FMath::RoundToFloat(X * GuiScale), FMath::RoundToFloat((Y + 7 - Entry->Ascent) * GuiScale), FMath::RoundToFloat(W * GuiScale), FMath::RoundToFloat(H * GuiScale), Entry->X / AtlasW, Entry->Y / AtlasH, Entry->Width / AtlasW, Entry->Height / AtlasH, Color, BLEND_Translucent);
         }
         X += Entry ? Entry->Advance : 6;
     }
@@ -143,6 +143,7 @@ void ABridgeNativeHUD::DrawHotbar() {
 void ABridgeNativeHUD::DrawHealth() {
     const auto* Control = NativeController(); const auto* Receiver = Control ? Control->GetNativeReceiver() : nullptr;
     if (!Receiver || Receiver->NativeCreative) return;
+    if(Receiver->IsNativeEyeInWater() || Receiver->GetNativeAirTicks()<300) {const int32 Air=Receiver->GetNativeAirTicks();for(int32 I=0;I<10;++I) if(Air>I*30) Sprite(Air>=(I+1)*30 ? TEXT("hud/air") : TEXT("hud/air_bursting"),(GuiWidth+182)/2-9-I*8,GuiHeight-49,9,9);}
     const int32 HalfHearts = FMath::Clamp(FMath::CeilToInt(Receiver->GetNativeHealth()), 0, 20);
     const float X = FMath::FloorToFloat((GuiWidth - 182) / 2), Y = GuiHeight - 39;
     if(const auto* Contents=Inventory()) {
@@ -290,7 +291,7 @@ void ABridgeNativeHUD::DrawCrosshair() {
     if(!Receiver) return;
     auto* Video=Receiver->Video.Get();
     if(Video) for(int32 I=0;I<3;++I) Video->SetNativeInverseSprite(I,nullptr,FVector4(0,0,0,0),FVector4(0,0,1,1),false);
-    if(!Control->NativeHudVisible || Control->IsInventoryOpen() || Control->IsPausedMenuOpen()) return;
+    if(!Control->NativeHudVisible || Control->IsInventoryOpen() || Control->IsPausedMenuOpen() || Control->IsNativeChatOpen()) return;
     auto Inverse=[&](int32 Slot,const FString& Key,float X,float Y,float W,float H,float U=0,float V=0,float UW=1,float VH=1) {
         UTexture2D* Texture=Resources ? Resources->FindSprite(Key) : nullptr;
         if(!Texture || W<=0 || H<=0) return;
@@ -299,7 +300,7 @@ void ABridgeNativeHUD::DrawCrosshair() {
     };
     const float Charge=Receiver->GetNativeAttackCharge();
     if(Control->NativePerspective==0) {
-        Inverse(0,TEXT("hud/crosshair"),FMath::FloorToFloat((GuiWidth-15)/2),FMath::FloorToFloat((GuiHeight-15)/2),15,15);
+        Inverse(0,TEXT("hud/crosshair"),(Canvas->SizeX/GuiScale-12)/2,(Canvas->SizeY/GuiScale-12)/2,12,12);
         if(Control->GetNativeAttackIndicator()==1) {
             const float X=FMath::FloorToFloat(GuiWidth/2)-8,Y=FMath::FloorToFloat(GuiHeight/2)+9;
             if(Charge>=1 && Receiver->GetNativeAttackCooldownTicks()>5 && Receiver->IsNativeAttackTargetAlive()) Inverse(1,TEXT("hud/crosshair_attack_indicator_full"),X,Y,16,16);
@@ -350,7 +351,7 @@ void ABridgeNativeHUD::DrawHUD() {
         else if (Control->NativeHudVisible) { DrawHotbar(); DrawHealth(); }
 
     }
-    DrawCrosshair();
+    DrawCrosshair();DrawChat();
     if (!Receiver->IsNativeReady() || !Control->IsSavedInventoryValid()) {
         const FString Message = !Control->IsSavedInventoryValid() ? Control->GetInventoryRestoreError()
             : Receiver->NativeStatus.IsEmpty() ? TEXT("ワールドを読み込み中…") : Receiver->NativeStatus;
@@ -533,8 +534,50 @@ void ABridgeNativeHUD::UpdateSearchWidget(bool Visible) {
 }
 
 void ABridgeNativeHUD::EndPlay(const EEndPlayReason::Type Reason) {
+    HideChat();
     if (SearchViewport.IsValid() && SearchOverlay) SearchViewport->RemoveViewportWidgetContent(SearchOverlay.ToSharedRef());
     if(auto* Control=NativeController()) if(auto* Receiver=Control->GetNativeReceiver()) if(auto* Video=Receiver->Video.Get())
         for(int32 I=0;I<3;++I) Video->SetNativeInverseSprite(I,nullptr,FVector4(0,0,0,0),FVector4(0,0,1,1),false);
     SearchOverlay.Reset(); SearchField.Reset(); Super::EndPlay(Reason);
+}
+
+void ABridgeNativeHUD::ShowChat(const FString& Initial) {
+    if(!GEngine || !GEngine->GameViewport || !FSlateApplication::IsInitialized()) return;
+    if(!ChatOverlay) {
+        ChatOverlay=SNew(SOverlay)
+            + SOverlay::Slot().HAlign(HAlign_Fill).VAlign(VAlign_Bottom).Padding(FMargin(4,0,4,4))
+            [SNew(SBox).HeightOverride_Lambda([this] {return 14*GuiScale;})
+                [SAssignNew(ChatField,SEditableTextBox).Font_Lambda([this] {return FCoreStyle::GetDefaultFontStyle("Regular",FMath::Max(8,int32(8*GuiScale)));})
+                    .SelectAllTextWhenFocused(false).ClearKeyboardFocusOnCommit(false)
+                    .OnKeyDownHandler_Lambda([this](const FGeometry&,const FKeyEvent& Event) {if(Event.GetKey()!=EKeys::Escape) return FReply::Unhandled();if(auto* PC=NativeController()) PC->SetNativeChatOpen(false);return FReply::Handled();})
+                    .OnTextCommitted_Lambda([this](const FText& Value,ETextCommit::Type Commit) {
+                        if(Commit!=ETextCommit::OnEnter) return;
+                        const FString Line=Value.ToString().Left(256).TrimStartAndEnd();
+                        auto* PC=NativeController();auto* Receiver=PC ? PC->GetNativeReceiver() : nullptr;
+                        if(!Line.IsEmpty()) {
+                            ChatMessages.Add(Line.StartsWith(TEXT("/")) && Receiver ? Receiver->NativeCommand(Line) : TEXT("<Player> ")+Line);
+                            while(ChatMessages.Num()>100) ChatMessages.RemoveAt(0);
+                            LastChatAt=FPlatformTime::Seconds();
+                        }
+                        if(PC) PC->SetNativeChatOpen(false);
+                    })]];
+        GEngine->GameViewport->AddViewportWidgetContent(ChatOverlay.ToSharedRef(),110);
+    }
+    ChatField->SetText(FText::FromString(Initial));ChatOverlay->SetVisibility(EVisibility::Visible);
+    FSlateApplication::Get().SetKeyboardFocus(ChatField,EFocusCause::SetDirectly);
+}
+void ABridgeNativeHUD::HideChat() {
+    if(ChatOverlay && GEngine && GEngine->GameViewport) GEngine->GameViewport->RemoveViewportWidgetContent(ChatOverlay.ToSharedRef());
+    ChatOverlay.Reset();ChatField.Reset();
+}
+void ABridgeNativeHUD::DrawChat() {
+    const auto* PC=NativeController();if(!PC) return;
+    const bool Open=PC->IsNativeChatOpen();
+    if(!Open && FPlatformTime::Seconds()-LastChatAt>10) return;
+    const int32 Count=FMath::Min(ChatMessages.Num(),Open ? 12 : 5);
+    for(int32 I=0;I<Count;++I) {
+        const float Y=GuiHeight-42-I*10;
+        const FString& Message=ChatMessages[ChatMessages.Num()-1-I];
+        Solid(2,Y-1,FMath::Min(GuiWidth-4,TextWidth(Message)+4),10,FLinearColor(0,0,0,.5f));Text(Message,4,Y);
+    }
 }

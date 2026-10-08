@@ -144,6 +144,8 @@ void UBridgeVideo::SetNativeRenderMode(bool Lighting) {
     LightingFlags(Viewport->EngineShowFlags,Lighting,false);
     // Native lighting is calibrated against the same exported environment as
     // the lightmap. Automatic exposure and a fixed UE atmosphere destroy that parity.
+    Viewport->EngineShowFlags.SetTemporalAA(false);
+    Viewport->EngineShowFlags.SetAntiAliasing(false);
     Viewport->EngineShowFlags.SetEyeAdaptation(false);
     Viewport->EngineShowFlags.SetTonemapper(false);
     Viewport->EngineShowFlags.SetSpecular(false);
@@ -208,7 +210,7 @@ bool UBridgeVideo::SetNativeInverseSprite(int32 Slot,UTexture2D* Texture,const F
     auto* Camera=Pawn?Pawn->FindComponentByClass<UCameraComponent>():nullptr;
     if(!Camera) return false;
     if(!NativeInverseHudMaterial) {
-        auto* Master=LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/Bridge/Minecraft/M_NativeInverseHud_v1.M_NativeInverseHud_v1"));
+        auto* Master=LoadObject<UMaterialInterface>(nullptr,TEXT("/Game/Bridge/Minecraft/M_NativeInverseHud_v2.M_NativeInverseHud_v2"));
         if(!Master) return false;
         NativeInverseHudMaterial=UMaterialInstanceDynamic::Create(Master,this);
         if(!NativeInverseHudMaterial) return false;
@@ -218,10 +220,12 @@ bool UBridgeVideo::SetNativeInverseSprite(int32 Slot,UTexture2D* Texture,const F
         Camera->PostProcessSettings.WeightedBlendables.Array.Add(FWeightedBlendable(1.f,NativeInverseHudMaterial.Get()));
         Camera->PostProcessBlendWeight=1.f;NativeInverseHudCamera=Camera;
     }
+    int32 Width=0,Height=0;PC->GetViewportSize(Width,Height);if(Width<=0 || Height<=0) return false;
+    NativeInverseHudMaterial->SetVectorParameterValue(TEXT("NativeSceneTint"),NativeSceneTint);
     const FString Suffix=FString::FromInt(Slot);
     if(Texture) NativeInverseHudMaterial->SetTextureParameterValue(FName(*(TEXT("InverseTexture")+Suffix)),Texture);
     const bool Visible=Enabled && Texture && PixelRect.Z>0 && PixelRect.W>0;
-    NativeInverseHudMaterial->SetVectorParameterValue(FName(*(TEXT("InverseRect")+Suffix)),Visible?FLinearColor(PixelRect.X,PixelRect.Y,PixelRect.Z,PixelRect.W):FLinearColor::Transparent);
+    NativeInverseHudMaterial->SetVectorParameterValue(FName(*(TEXT("InverseRect")+Suffix)),Visible?FLinearColor(PixelRect.X/Width,PixelRect.Y/Height,PixelRect.Z/Width,PixelRect.W/Height):FLinearColor::Transparent);
     NativeInverseHudMaterial->SetVectorParameterValue(FName(*(TEXT("InverseUV")+Suffix)),FLinearColor(UVRect.X,UVRect.Y,UVRect.Z,UVRect.W));
     return true;
 }

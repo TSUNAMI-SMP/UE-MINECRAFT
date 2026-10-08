@@ -35,6 +35,8 @@ public final class TextureModelCoverage {
             Path manifest=exporter.finish();JsonObject report=JsonParser.parseString(Files.readString(manifest)).getAsJsonObject();
             JsonObject summary=new JsonObject();summary.addProperty("blockstates",entries.size());summary.addProperty("exported",exporter.exported());
             summary.addProperty("models",report.getAsJsonObject("models").size());summary.addProperty("textures",report.getAsJsonObject("textures").size());
+            long itemFallbacks=report.getAsJsonObject("blocks").entrySet().stream().filter(e->e.getValue().getAsJsonObject().has("itemFallback") && e.getValue().getAsJsonObject().get("itemFallback").getAsBoolean()).count();
+            summary.addProperty("dedicatedItemFallbacks",itemFallbacks);
             for(var entry:report.getAsJsonObject("excluded").entrySet()) if(!entry.getValue().getAsString().equals("model: Model has no renderable face"))
                 throw new IllegalStateException("Unexpected ordinary model failure: "+entry.getKey()+": "+entry.getValue());
             summary.addProperty("excludedDedicatedOrInvisible",report.getAsJsonObject("excluded").size());

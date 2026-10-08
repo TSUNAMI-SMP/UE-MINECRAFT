@@ -1,5 +1,7 @@
 # Minecraft ↔ Unreal Engine bridge MVP
 
+**ネイティブ操作・流体・時間更新0.16.0：** [MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.16.0.jar) / [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.16.0.zip) / [一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UE-Minecraft-MVP-0.16.0.zip) / [更新と確認手順](docs/UPGRADE_0.16.0.md)。照準・しゃがみの端判定・モブの押し出しと死亡・向き、液体、時間サイクル、コマンドチャット、戦闘と落葉の粒子を追加・修正。MOD交換、新規native export、UE再ビルド・再取り込みが必要です。全種固有AI・特殊ブロック機能・原作と同一の流体挙動は未完成で、Windows UE 5.8.3の実ビルド・描画は未検証です。
+
 **診断後の修正版0.15.4：** [MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.15.4.jar) / [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.15.4.zip) / [適用と確認項目](docs/UPGRADE_0.15.4.md)。符号付き視点角・アイテムの両面設定・重なる面・アウトライン・ノックバック・基本AIを変更。MOD交換、新規native export、UE再ビルド・再取り込みが必要です。全種固有AIの移植・実機での全問題解消は未確認です。
 
 **コード・実測取得用MOD 0.15.3：** [診断MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.15.3.jar) / [取得手順](docs/DIAGNOSTICS_0.15.3_JA.md)。`/uebridge diagnose export` でクラスデータ・モデル・約10秒のモブ状態をZIPにします。今回はMODのみで、UEの未解決問題の修正は診断後に行います。
@@ -29,7 +31,7 @@ Fabric **Minecraft Java 1.21.11 / Java 21** から地形・素材・スキン・
 
 [MOD 0.12.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.0/downloads/minecraft-ue-bridge-0.12.0.jar) / [既存UE用更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.0/downloads/UEBridge-update-0.12.0.zip) / [一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.12.0/downloads/UE-Minecraft-MVP-0.12.0.zip) / [最小操作の導入手順](docs/UPGRADE_0.12.0.md)。
 
-**Minecraftの完全移植には未達です。** クラフト、食料・経験値・防具、流体、全モブ固有AI等は未実装です。地形はロード済みの有限範囲で、UEの編集はUEの保存へ記録します。UE 5.8のWindowsビルド・描画・IME・実FPSはクラウドでは未確認です。[対応範囲と実機確認](docs/NATIVE_PLAY.md)に、実装済みの機能と残る機能を記載しています。
+**Minecraftの完全移植には未達です。** クラフト・サバイバル全体、全モブ固有AI、全ブロック機能、原作と同一の流体挙動等は未完成です。地形はロード済みの有限範囲で、UEの編集はUEの保存へ記録します。UE 5.8のWindowsビルド・描画・IME・実FPSはクラウドでは未確認です。[対応範囲と実機確認](docs/NATIVE_PLAY.md)に、実装済みの機能と残る機能を記載しています。
 
 ## 過去版の更新履歴
 
@@ -74,10 +76,10 @@ UE5.8ビルド・描画はWindows実機での確認が必要です。
 
 ## 現在の状態
 
-- 0.12.0ではMinecraftを素材・地形の書き出しに使い、UEで直接入力・HUD描画・プレイ・保存します。Minecraftへの映像配信を省くため、その経路の圧縮・転送待ちは発生しません。UE自体の実FPSは実機で確認します。
+- 0.16.0ではMinecraftを素材・地形の書き出しに使い、UEで直接入力・HUD描画・プレイ・保存します。Minecraftへの映像配信を省くため、その経路の圧縮・転送待ちは発生しません。UE自体の実FPSは実機で確認します。
 - 1回の書き出しパッケージのハッシュ・素材・Paletteを検証し、専用nativeマップを作成します。既存UEレベルとMinecraftの元ワールドは保持します。
 - 地形・プレイヤー・インベントリ・モブ・投下物・着火済みTNTを同じUE保存ファイルへ記録します。書き出しは水平4～6チャンク・上下104ブロックの有限範囲です。
-- MODビルド、Java185件・Python123件と独立C++計算の検証が成功。PowerShellの構文とプラグイン設定保持も確認しました。UEモジュールビルド、実エディター取り込み、実描画、Windows入力・IME・性能は未確認です。[対応範囲と実機確認](docs/NATIVE_PLAY.md)を参照してください。
+- MODビルド、Java210件・bridge Python119件・native形式/UIと独立C++計算の検証が成功。[0.16.0検証記録](docs/AUDIT_0.16.0.md)を参照してください。UEモジュールビルド、実エディター取り込み、実描画、Windows入力・IME・性能は未確認です。[対応範囲と実機確認](docs/NATIVE_PLAY.md)を参照してください。
 
 ### 過去版の確認記録
 
@@ -144,7 +146,7 @@ cd minecraft-mod
 ./gradlew build
 ```
 
-`build/libs/minecraft-ue-bridge-0.12.0.jar` がMOD本体です（`-sources.jar`ではありません）。
+`build/libs/minecraft-ue-bridge-0.16.0.jar` がMOD本体です（`-sources.jar`ではありません）。
 Minecraft Launcherに **1.21.11 / Fabric Loader 0.19.5** の専用インストールを作り、
 ゲームディレクトリを新しい `MC-UE-Test` フォルダに設定してください。その `mods/` に
 本MODと **Fabric API 0.141.6+1.21.11** を配置します。新しいシングルプレイ・クリエイティブ
@@ -159,7 +161,7 @@ Minecraftの購入済みアカウントによる起動認証は通常のLauncher
 `UEBridge.uproject` の隣の **Play-Native.cmd** をダブルクリックし、初回だけ書き出された
 `native_manifest.json` を選びます。必要なビルドと一括取り込みの後、専用レベルでUEゲームが起動します。
 次回は同じCMDをダブルクリックして保存状態を再開します。
-[具体的な更新・導入操作](docs/UPGRADE_0.12.0.md)を参照してください。
+[具体的な更新・導入操作](docs/UPGRADE_0.16.0.md)を参照してください。
 
 ## 従来のUE↔MC接続モード
 

@@ -15,6 +15,7 @@ public:
     TFunction<bool(const FVector& Position)> Contains;
     TFunction<void(const FVector& Position)> PickupSound;
     FString Drop(const FString& Tx,const FString& Item,const FString& Model,int32 Count,int32 MaxCount,const FVector& Position,const FVector& Velocity);
+    void SetPickupDelay(const FString& Tx,float Seconds);
     bool Resolve(const FString& Tx,int32 Revision,int32 Accepted);
     /** Pause physics/pickup without releasing escrow. Full control/session exit calls Clear. */
     void SetAuthority(bool Active,class ACharacter* Player);

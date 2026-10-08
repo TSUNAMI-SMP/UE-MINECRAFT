@@ -38,7 +38,8 @@ class ItemPalette(Palette):
     def __init__(self):
         super().__init__()
         self.properties.update(item_models={'old': 'old geometry'}, item_materials={'old': object()},
-                               materials={'stone': object()})
+                               default_item_models={'minecraft:old': 'old'},
+                               materials={'stone': object()}, blockstate_definitions={})
         self.fail_field = None
 
     def set_editor_property(self, name, value):
@@ -76,7 +77,7 @@ class ItemEditor(MobEditor):
             if self.fail_palette_saves:
                 self.fail_palette_saves -= 1
                 return False
-            self.saved_palette_values.append((dict(asset.properties['item_models']), dict(asset.properties['item_materials'])))
+            self.saved_palette_values.append((dict(asset.properties['item_models']), dict(asset.properties['default_item_models']), dict(asset.properties['item_materials'])))
         return super().save_asset(asset, only_dirty)
 
 
@@ -94,6 +95,7 @@ class ItemImportEditorTest(unittest.TestCase):
         self.editor = ItemEditor(self.project)
         self.palette = ItemPalette()
         self.previous_models = dict(self.palette.properties['item_models'])
+        self.previous_defaults = dict(self.palette.properties['default_item_models'])
         self.previous_materials = dict(self.palette.properties['item_materials'])
         self.blocks = dict(self.palette.properties['materials'])
         self.editor.receivers[0].set_editor_property('texture_palette', self.palette)
@@ -104,9 +106,22 @@ class ItemImportEditorTest(unittest.TestCase):
 
     def assert_previous_palette(self):
         self.assertEqual(self.previous_models, self.palette.properties['item_models'])
+        self.assertEqual(self.previous_defaults, self.palette.properties['default_item_models'])
         self.assertEqual(self.previous_materials, self.palette.properties['item_materials'])
         self.assertEqual(self.blocks, self.palette.properties['materials'])
         self.assertIs(self.palette, self.editor.receivers[0].get_editor_property('texture_palette'))
+
+    def test_dedicated_world_model_uses_default_key_and_vertex_light_material(self):
+        self.fixture.manifest['defaultModels']={'minecraft:diamond_sword':self.fixture.key}
+        self.fixture.load()
+        self.palette.properties['blockstate_definitions']={'minecraft:diamond_sword':'{"variants":{"":{"model":"minecraft:block/uebridge_fallback_test"}}}'}
+        self.run_import()
+        self.assertEqual(self.fixture.key,self.palette.properties['default_item_models']['minecraft:diamond_sword'])
+        self.assertNotIn('minecraft:diamond_sword',self.palette.properties['item_models'])
+        material=self.palette.properties['item_materials'][self.fixture.hash+'#world']
+        parent=material.properties['parent']
+        self.assertIn('BridgeUseVertexLight',self.editor.api.MaterialEditingLibrary.get_scalar_parameter_names(parent))
+        self.assertEqual('FaceTexture',material.properties['texture_parameter_values'][0].parameter_info.name)
 
     def test_real_item_master_and_explicit_overrides_import_tinted_ground_model(self):
         self.run_import()
@@ -127,12 +142,17 @@ class ItemImportEditorTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'Cannot save native item palette'):
             self.run_import()
         self.assert_previous_palette()
-        self.assertEqual([(self.previous_models, self.previous_materials)], self.editor.saved_palette_values)
+        self.assertEqual([(self.previous_models, self.previous_defaults, self.previous_materials)], self.editor.saved_palette_values)
         self.run_import()
         self.assertIn(self.fixture.key, self.palette.properties['item_models'])
 
     def test_second_property_failure_restores_first_map(self):
         self.palette.fail_field = 'item_materials'
+        with self.assertRaisesRegex(RuntimeError, 'item property write failed'):
+            self.run_import()
+        self.assert_previous_palette()
+    def test_default_reference_assignment_failure_restores_all_maps(self):
+        self.palette.fail_field = 'default_item_models'
         with self.assertRaisesRegex(RuntimeError, 'item property write failed'):
             self.run_import()
         self.assert_previous_palette()

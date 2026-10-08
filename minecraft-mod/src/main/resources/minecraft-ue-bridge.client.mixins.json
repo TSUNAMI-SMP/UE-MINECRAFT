@@ -27,7 +27,8 @@
     "SpriteImageAccessor",
     "ItemTextureSpecAccessor",
     "LightmapStateAccessor",
-    "ServerPlayerItemEscrowMixin"
+    "ServerPlayerItemEscrowMixin",
+    "DiagnosticMobAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

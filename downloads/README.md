@@ -1,5 +1,7 @@
 # ダウンロード
 
+**コード・実測取得用MOD 0.15.3：** [診断MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.15.3.jar) / [取得手順](../docs/DIAGNOSTICS_0.15.3_JA.md)。`/uebridge diagnose export` でクラスデータ・モデル・約10秒のモブ状態をZIPにします。今回はMODのみで、UEの未解決問題の修正は診断後に行います。
+
 **描画・入力・戦闘修正0.15.2：** [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.15.2.zip) / [MOD 0.15.2](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.15.2.jar) / [更新手順](../docs/UPGRADE_0.15.2.md)。MOD交換・新しいnative export・UE再ビルド・再取り込みが必要です。Windowsの実描画・入力は未確認です。
 
 **UE 5.8.3ビルド修正0.15.1：** 0.15.0を導入した後に[修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-build-fix-0.15.1.zip)のSourceを適用してください。MOD交換・再書き出しは不要です。[適用手順](../docs/BUILD_FIX_0.15.1.md)。Windows実ビルドは未確認です。

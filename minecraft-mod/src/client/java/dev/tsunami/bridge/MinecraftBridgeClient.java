@@ -113,7 +113,8 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
                 if (p != null) sendEvent("tnt_ignite", new Vec3d(p.x() + 0.5, p.y() + 0.5, p.z() + 0.5), null);
             }
         });
-        ClientTickEvents.END_CLIENT_TICK.register(mc -> tick(mc));
+        DiagnosticCapture.initialize();
+        ClientTickEvents.END_CLIENT_TICK.register(mc -> { tick(mc); DiagnosticCapture.clientTick(mc); });
         ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> { disconnect(); if(textureJob!=null) textureJob.close(); if(nativeJob!=null) nativeJob.close(); });
     }
     private void reload() {
@@ -489,6 +490,12 @@ public final class MinecraftBridgeClient implements ClientModInitializer {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registry) -> dispatcher.register(literal("uebridge")
             .executes(c -> feedback(status()))
             .then(literal("status").executes(c -> feedback(status())))
+            .then(literal("diagnose").then(literal("export").executes(c -> {
+                if(controllerMode()) return feedback("先に /uebridge control off を実行してください");
+                if(nativeJob!=null && nativeJob.running()) return feedback("native export の完了を待ってください");
+                if(config.enabled) return feedback("先に /uebridge off を実行して通常のMinecraftで記録してください");
+                return DiagnosticCapture.start(MinecraftClient.getInstance(),this::feedback);
+            })))
             .then(literal("native").executes(c->feedback(nativeJob==null ? "/uebridge native export でUE単独プレイ用パッケージを書き出します" : nativeJob.status()))
                 .then(literal("export").executes(c->exportNative(4)).then(argument("chunks",IntegerArgumentType.integer(4,6)).executes(c->exportNative(IntegerArgumentType.getInteger(c,"chunks")))))
                 .then(literal("cancel").executes(c->{if(nativeJob!=null) nativeJob.close();return feedback(nativeJob==null ? "書き出しは実行されていません" : nativeJob.status());})))

@@ -395,7 +395,7 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
 
 void ABridgeNativePlayerController::CycleNativePerspective() {
     NativePerspective=(NativePerspective+1)%3;StopNativeInput();
-    if(auto* Pawn=Cast<ABridgeCharacter>(GetPawn())) Pawn->ApplyNativePresentation(NativePerspective,LeftHanded,SkinLayers,SlimArms,0);
+    if(auto* NativeCharacter=Cast<ABridgeCharacter>(GetPawn())) NativeCharacter->ApplyNativePresentation(NativePerspective,LeftHanded,SkinLayers,SlimArms,0);
 }
 void ABridgeNativePlayerController::SetNativeSensitivity(float Value) {
     if(!FMath::IsFinite(Value)) return;

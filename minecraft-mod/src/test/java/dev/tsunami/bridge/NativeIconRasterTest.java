@@ -54,6 +54,14 @@ public class NativeIconRasterTest {
         for(int pixel:image.getRGB(0,0,16,16,null,0,16)) assertEquals(0,pixel);
     }
 
+    @Test public void nativeDiffuseShadeChangesRgbButPreservesOpacity() throws Exception {
+        var face=quad(0,0xffffff,false);face.addProperty("guiShade",.5);
+        var image=NativeIconRaster.render(faces(face),Map.of("test:icon",solid(0x80ffffff)),16);
+        assertEquals(0x807f7f7f,image.getRGB(8,8));
+        face.addProperty("guiShade",Double.NaN);
+        try {NativeIconRaster.render(faces(face),Map.of("test:icon",solid(0xffffffff)),16);fail();}catch(IOException expected) {}
+    }
+
     @Test public void missingTexturesAndBudgetViolationsFailExplicitly() throws Exception {
         try {NativeIconRaster.render(faces(quad(0,0xffffff,false)),Map.of(),16);fail();}catch(IOException expected) {assertTrue(expected.getMessage().contains("missing"));}
         for(int size:new int[]{15,129}) try {NativeIconRaster.render(new JsonArray(),Map.of(),size);fail();}catch(IOException expected) {}

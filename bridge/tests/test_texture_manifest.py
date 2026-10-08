@@ -269,16 +269,17 @@ class MaterialGraphTest(unittest.TestCase):
         self.assertEqual('CollectionParameter', mode.kind)
         self.assertIs(base.inputs['A'][0], emissive.inputs['B'][0].inputs['A'][0])
         self.assertEqual(0.0, base.inputs['B'][0].properties['r'])
-        self.assertEqual(0.0, emissive.inputs['A'][0].properties['r'])
+        self.assertIs(emissive.inputs['A'][0].inputs['A'][0], emissive.inputs['B'][0])
+        self.assertEqual(.45, emissive.inputs['A'][0].inputs['B'][0].properties['default_value'])
         self.assertEqual('lit', material.properties['shading_model'])
         self.assertIs(material, self.build('cutout'))
         self.assertEqual(1, sum(isinstance(value, self.unreal.Material) for value in self.saved))
 
-    def test_specular_is_restored_only_for_ue_branch(self):
+    def test_native_texture_reflection_is_disabled_by_default(self):
         material = self.build('opaque')
         specular = material.outputs['specular'][0]
         self.assertEqual('BridgeSpecular', specular.inputs['A'][0].properties['parameter_name'])
-        self.assertEqual(.5, specular.inputs['A'][0].properties['default_value'])
+        self.assertEqual(0, specular.inputs['A'][0].properties['default_value'])
         self.assertEqual(0, specular.inputs['B'][0].properties['r'])
         self.assertIs(specular.inputs['Alpha'][0], material.outputs['base'][0].inputs['Alpha'][0])
         count = len(material.nodes)

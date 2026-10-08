@@ -5,7 +5,7 @@ material is deleted. Parameter collection values are per UE world at runtime.
 """
 
 COLLECTION_PATH = '/Game/Bridge/Minecraft/MPC_BridgeLighting_v1'
-LIGHTING_REVISION_PARAMETER = 'BridgeLightingRevision_v2'
+LIGHTING_REVISION_PARAMETER = 'BridgeLightingRevision_v3'
 SCALARS = {'BridgeVanillaMode': 0.0, 'BridgeSkyFactor': 1.0, 'BridgeBlockFactor': 1.5,
            'BridgeAmbient': 0.0, 'BridgeGamma': 0.5, 'BridgeNightVision': 0.0,
            'BridgeDarkness': 0.0, 'BridgeDarkenWorld': 0.0}
@@ -98,12 +98,18 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
         result = unreal.CustomInput()
         result.set_editor_property('input_name', name)
         return result
+    hurt_color = node(unreal.MaterialExpressionVectorParameter)
+    hurt_color.set_editor_property('parameter_name', 'BridgeHurtColor'); hurt_color.set_editor_property('default_value', unreal.LinearColor(1, 0, 0, 1))
+    hurt_alpha = node(unreal.MaterialExpressionMultiply); wire(parameter('BridgeHurt', 0.0), hurt_alpha, 'A'); hurt_alpha.set_editor_property('const_b', .3)
+    hurt_pixel = node(unreal.MaterialExpressionLinearInterpolate)
+    wire(pixel_rgb, hurt_pixel, 'A'); wire(hurt_color, hurt_pixel, 'B'); wire(hurt_alpha, hurt_pixel, 'Alpha')
+    pixel_rgb = hurt_pixel
     mode = global_parameter('BridgeVanillaMode')
     # Keep the old public scalar in the generated graph without allowing it to
     # override the shared mode and leave a previous OFF setting stuck on return.
     legacy = parameter('BridgeUnlit', 0.0)
     ignored = node(unreal.MaterialExpressionMultiply); ignored.set_editor_property('const_b', 0.0); wire(legacy, ignored, 'A')
-    revision = parameter(LIGHTING_REVISION_PARAMETER, 2.0)
+    revision = parameter(LIGHTING_REVISION_PARAMETER, 3.0)
     revision_ignored = node(unreal.MaterialExpressionMultiply); revision_ignored.set_editor_property('const_b', 0.0); wire(revision, revision_ignored, 'A')
     zero_compat = node(unreal.MaterialExpressionAdd); wire(ignored, zero_compat, 'A'); wire(revision_ignored, zero_compat, 'B')
     mode_sum = node(unreal.MaterialExpressionAdd); wire(mode, mode_sum, 'A'); wire(zero_compat, mode_sum, 'B')
@@ -148,10 +154,11 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
     base = node(unreal.MaterialExpressionLinearInterpolate)
     wire(pixel_rgb, base, 'A'); wire(zero, base, 'B'); wire(mode_sum, base, 'Alpha')
     emission = node(unreal.MaterialExpressionLinearInterpolate)
-    wire(zero, emission, 'A'); wire(vanilla, emission, 'B'); wire(mode_sum, emission, 'Alpha')
-    # Restore UE's ordinary dielectric reflection for ON. OFF has none.
+    ambient = node(unreal.MaterialExpressionMultiply); wire(vanilla, ambient, 'A'); wire(parameter('BridgeLitAmbient', .45), ambient, 'B')
+    wire(ambient, emission, 'A'); wire(vanilla, emission, 'B'); wire(mode_sum, emission, 'Alpha')
+    # Vanilla textures have no PBR reflection. Keep the optional parameter at zero.
     specular = node(unreal.MaterialExpressionLinearInterpolate)
-    wire(parameter('BridgeSpecular', .5), specular, 'A'); wire(zero, specular, 'B'); wire(mode_sum, specular, 'Alpha')
+    wire(parameter('BridgeSpecular', 0.0), specular, 'A'); wire(zero, specular, 'B'); wire(mode_sum, specular, 'Alpha')
     for expression, prop in ((base, unreal.MaterialProperty.MP_BASE_COLOR),
                              (emission, unreal.MaterialProperty.MP_EMISSIVE_COLOR),
                              (specular, unreal.MaterialProperty.MP_SPECULAR)):

@@ -20,7 +20,8 @@ struct FBridgeNativeWorldMetadata {
 
 /** Finite offline terrain. Two streaming passes validate before replacing a live world.
  * Saves are generated cell by cell in Saved/NativeWorlds, with atomic file replacement.
- * Callers must pause edits during saving; mutation detection preserves the previous save.
+ * Terrain and entity state are captured together; incremental serialization reads
+ * the immutable snapshot, so gameplay may continue while the file is written.
  */
 class UEBRIDGE_API FBridgeNativeWorldStore {
 public:
@@ -59,6 +60,8 @@ private:
     TSet<FIntVector> SeenCells;
     TSet<FString> ValidatedModels;
     TArray<FIntVector> SaveCells;
+    struct FSaveCell { TArray<FBridgeBlock> Rows; TArray<uint8> SkyTop; };
+    TMap<FIntVector,FSaveCell> SaveSnapshot;
     int32 SaveCursor=0;
     TSharedPtr<FJsonObject> SaveHeader;
     FDateTime ReadTimestamp;

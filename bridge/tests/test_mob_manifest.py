@@ -51,7 +51,7 @@ class MobManifestTest(unittest.TestCase):
         data["appearances"][self.key]["stats"] = stats
         data["templates"] = {"minecraft:zombie": self.key}
         self.assertEqual(self.key, self.load(data)["templates"]["minecraft:zombie"])
-        for field, value in (("width", True), ("height", float("nan")), ("maxHealth", 0), ("speed", 3), ("hostile", "true")):
+        for field, value in (("width", True), ("height", float("nan")), ("maxHealth", 0), ("speed", 3), ("hostile", "true"), ("knockbackResistance", 1.1), ("knockbackResistance", float("nan"))):
             invalid = copy.deepcopy(data); invalid["appearances"][self.key]["stats"][field] = value
             with self.assertRaises(ValueError):
                 self.load(invalid)

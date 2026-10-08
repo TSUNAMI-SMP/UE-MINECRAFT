@@ -83,12 +83,12 @@ float FBridgeNativeWorldStore::GetProgress() const {
 void FBridgeNativeWorldStore::Cancel() {
     Reader.Reset();Writer.Reset();
     if(!TemporaryFile.IsEmpty()) FPlatformFileManager::Get().GetPlatformFile().DeleteFile(*TemporaryFile);
-    TemporaryFile.Empty();SaveCells.Empty();SeenCells.Empty();ValidatedModels.Empty();State=EState::Idle;
+    TemporaryFile.Empty();SaveCells.Empty();SaveSnapshot.Empty();SeenCells.Empty();ValidatedModels.Empty();State=EState::Idle;
 }
 void FBridgeNativeWorldStore::Fail(const FString& Reason) {
     const bool Saving=IsSaving();Reader.Reset();Writer.Reset();
     if(!TemporaryFile.IsEmpty()) FPlatformFileManager::Get().GetPlatformFile().DeleteFile(*TemporaryFile);
-    TemporaryFile.Empty();Error=Reason.Left(512);State=Saving && Target.IsValid() && Target->IsSealed() ? EState::Ready : EState::Failed;
+    TemporaryFile.Empty();SaveSnapshot.Empty();SaveCells.Empty();Error=Reason.Left(512);State=Saving && Target.IsValid() && Target->IsSealed() ? EState::Ready : EState::Failed;
     UE_LOG(LogTemp,Error,TEXT("Bridge native world: %s"),*Error);
 }
 bool FBridgeNativeWorldStore::OpenReader(const FString& Path) {
@@ -297,6 +297,11 @@ bool FBridgeNativeWorldStore::BeginSave(ABridgeWorld* World,const FVector& Feet,
     Target=World;FBridgeNativeWorldMetadata Next=Metadata;
     if(!World->GetNativeScope(Next.Center,Next.Radius,Next.HalfHeight,Next.Origin)) return false;
     World->GetNativeCellKeys(SaveCells);Next.Cells=SaveCells.Num();Next.Spawn=Feet;Next.Yaw=Rotation.Yaw;Next.Pitch=FMath::Clamp(-double(Rotation.Pitch),-90.,90.);Next.RuntimeState=RuntimeState;
+    SaveSnapshot.Empty();
+    for(const auto& Cell:SaveCells) {
+        auto& Snapshot=SaveSnapshot.Add(Cell);
+        if(!World->GetNativeCell(Cell,Snapshot.Rows,Snapshot.SkyTop)) {SaveSnapshot.Empty();Error=TEXT("Cannot snapshot offline terrain; previous save preserved");return false;}
+    }
     const TArray<TSharedPtr<FJsonValue>>* CurrentMobs=nullptr;
     if(RuntimeState && RuntimeState->TryGetArrayField(TEXT("mobs"),CurrentMobs)) Next.Mobs=*CurrentMobs;
     auto Candidate=Header(Next);FString Encoded;FJsonSerializer::Serialize(Candidate.ToSharedRef(),TJsonWriterFactory<TCHAR,TCondensedJsonPrintPolicy<TCHAR>>::Create(&Encoded));
@@ -308,20 +313,21 @@ bool FBridgeNativeWorldStore::BeginSave(ABridgeWorld* World,const FVector& Feet,
     if(!WriteLine(Candidate)) {Fail(TEXT("Cannot write offline save header"));return false;}return true;
 }
 bool FBridgeNativeWorldStore::SaveNextCell() {
-    if(!Target.IsValid() || Target->GetMutationSerial()!=SaveSerial) {Fail(TEXT("World changed during saving; previous save preserved. Pause edits and retry."));return false;}
+    if(!Target.IsValid()) {Fail(TEXT("World unavailable during saving; previous save preserved"));return false;}
     if(SaveCursor==SaveCells.Num()) {
         if(!Writer->Flush(true)) {Fail(TEXT("Cannot flush offline save; previous save preserved"));return false;}Writer.Reset();
         // Never delete an existing save before replacing it: a failed commit
         // leaves the previous file intact on Windows as well as POSIX hosts.
         if(!BridgeNativeFile::Replace(Metadata.SaveFile,TemporaryFile)) {Fail(TEXT("Cannot atomically replace offline save; previous save preserved"));return false;}
-        TemporaryFile.Empty();SavedSerial=SaveSerial;State=EState::Ready;Metadata.RuntimeState=SaveHeader->HasTypedField<EJson::Object>(TEXT("runtimeState")) ? SaveHeader->GetObjectField(TEXT("runtimeState")) : nullptr;
+        TemporaryFile.Empty();SaveSnapshot.Empty();SavedSerial=SaveSerial;State=EState::Ready;Metadata.RuntimeState=SaveHeader->HasTypedField<EJson::Object>(TEXT("runtimeState")) ? SaveHeader->GetObjectField(TEXT("runtimeState")) : nullptr;
         FVector Position;if(VectorArray(SaveHeader,TEXT("spawn"),Position,30000000)) Metadata.Spawn=Position;
         SaveHeader->TryGetNumberField(TEXT("yaw"),Metadata.Yaw);SaveHeader->TryGetNumberField(TEXT("pitch"),Metadata.Pitch);
         Metadata.Mobs=SaveHeader->GetArrayField(TEXT("mobs"));
         UE_LOG(LogTemp,Display,TEXT("Bridge native world saved: %s (%d cells)"),*Metadata.SaveFile,SaveCells.Num());return true;
     }
-    const FIntVector Cell=SaveCells[SaveCursor++];TArray<FBridgeBlock> Rows;TArray<uint8> Top;
-    if(!Target->GetNativeCell(Cell,Rows,Top) || Rows.Num()>512) {Fail(TEXT("Offline cell has invalid logical data; previous save preserved"));return false;}
+    const FIntVector Cell=SaveCells[SaveCursor++];const auto* Snapshot=SaveSnapshot.Find(Cell);
+    if(!Snapshot || Snapshot->Rows.Num()>512) {Fail(TEXT("Offline cell has invalid logical data; previous save preserved"));return false;}
+    const auto& Rows=Snapshot->Rows;const auto& Top=Snapshot->SkyTop;
     auto O=MakeShared<FJsonObject>();O->SetStringField(TEXT("type"),TEXT("cell"));O->SetArrayField(TEXT("cell"),Vec(FVector(Cell)));
     TArray<TSharedPtr<FJsonValue>> Types,Blocks;TMap<FString,int32> TypeIndexes;TSet<int32> Owners;
     for(const auto& B:Rows) {

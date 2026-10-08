@@ -94,6 +94,10 @@ public final class ItemModelExport {
         if(state.isEmpty()) throw new IOException("Native GUI item model is empty");
         state.render(new MatrixStack(),capture.queue(),0xf000f0,0,0);
         if(capture.faces.isEmpty()) throw new IOException("Native GUI renderer emitted no geometry");
+        for(var value:capture.faces) {
+            var face=value.getAsJsonObject();var normal=face.getAsJsonArray("normal");
+            if(normal!=null) face.addProperty("guiShade",NativeItemLighting.gui(normal.get(0).getAsFloat(),normal.get(1).getAsFloat(),normal.get(2).getAsFloat(),state.isSideLit()));
+        }
         return capture.faces;
     }
     static Path writeManifest(Path directory,JsonObject manifest,long limit) throws IOException {
@@ -178,7 +182,9 @@ public final class ItemModelExport {
                             long bits=quad.getTexcoords(i);float u=net.minecraft.client.util.math.Vector2f.getX(bits),vcoord=net.minecraft.client.util.math.Vector2f.getY(bits);
                             uv.add(vector((u-sprite.getMinU())/(sprite.getMaxU()-sprite.getMinU()),(vcoord-sprite.getMinV())/(sprite.getMaxV()-sprite.getMinV())));
                         }
-                        add(texture,color,vertices,uv);
+                        Vector3f normal=new Vector3f(quad.face().getOffsetX(),quad.face().getOffsetY(),quad.face().getOffsetZ());
+                        matrices.peek().getNormalMatrix().transform(normal);
+                        add(texture,color,vertices,uv,vector(normal.x,normal.y,normal.z));
                     }
                     return null;
                 }
@@ -231,16 +237,16 @@ public final class ItemModelExport {
                 cache.put(cacheKey,key);return key;
             } finally {if(owned && original!=null) original.close();}
         }
-        void add(String texture,int color,JsonArray vertices,JsonArray uv) throws IOException {
+        void add(String texture,int color,JsonArray vertices,JsonArray uv,JsonArray normal) throws IOException {
             if(faces.size()>=8192) throw new IOException("Item face limit");
-            JsonObject face=new JsonObject();face.addProperty("texture",texture);face.addProperty("color",color & 0xffffff);face.add("vertices",vertices);face.add("uv",uv);faces.add(face);
+            JsonObject face=new JsonObject();face.addProperty("texture",texture);face.addProperty("color",color & 0xffffff);face.add("vertices",vertices);face.add("uv",uv);face.add("normal",normal);faces.add(face);
         }
         final class Collector implements VertexConsumer {
-            final String texture;JsonArray vertices=new JsonArray(),uv=new JsonArray();float x,y,z,u,v;int color=-1;boolean pending;
+            final String texture;JsonArray vertices=new JsonArray(),uv=new JsonArray();float x,y,z,u,v,nx,ny,nz;int color=-1;boolean pending;
             Collector(String t) {texture=t;}
             private void commit() {
                 if(!pending) return;vertices.add(vector(x,y,z));uv.add(vector(u,v));pending=false;
-                if(vertices.size()==4) {try {add(texture,color,vertices,uv);} catch(IOException e){throw new IllegalStateException(e);}vertices=new JsonArray();uv=new JsonArray();}
+                if(vertices.size()==4) {try {add(texture,color,vertices,uv,vector(nx,ny,nz));} catch(IOException e){throw new IllegalStateException(e);}vertices=new JsonArray();uv=new JsonArray();}
             }
             void finish() {commit();if(!vertices.isEmpty()) throw new IllegalStateException("Native renderer emitted incomplete quads");}
             public VertexConsumer vertex(float a,float b,float c) {commit();x=a;y=b;z=c;pending=true;return this;}
@@ -249,7 +255,7 @@ public final class ItemModelExport {
             public VertexConsumer texture(float a,float b) {u=a;v=b;return this;}
             public VertexConsumer overlay(int a,int b) {return this;}
             public VertexConsumer light(int a,int b) {return this;}
-            public VertexConsumer normal(float a,float b,float c) {return this;}
+            public VertexConsumer normal(float a,float b,float c) {nx=a;ny=b;nz=c;return this;}
             public VertexConsumer lineWidth(float width) {return this;}
         }
     }

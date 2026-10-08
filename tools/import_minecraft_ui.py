@@ -77,6 +77,9 @@ def load_ui_manifest(filename):
         seen.add(item["id"])
         if not isinstance(item.get("name"), str) or not 1 <= len(item["name"]) <= 512 or type(item.get("maxCount")) is not int or not 1 <= item["maxCount"] <= 99:
             raise ValueError("Invalid native UI item name/stack size")
+        if "attackDamage" in item or "attackSpeed" in item:
+            if not _finite(item.get("attackDamage"), 0, 2048) or not _finite(item.get("attackSpeed"), .01, 1024):
+                raise ValueError("Invalid native UI weapon attributes")
         for field in ("block", "modelKey", "spawnType"):
             value = item.get(field, "")
             if not isinstance(value, str) or len(value) > 512 or ".." in value:
@@ -172,7 +175,7 @@ def import_minecraft_ui(filename):
             advance(source["id"])
             icon = dict(source, file=source["icon"])
             entry = item_class()
-            for field, value in dict(item_id=source["id"], display_name=source["name"], icon=texture_for("item_" + source["id"], icon), max_count=source["maxCount"], block_id=source.get("block", ""), model_key=source.get("modelKey", ""), spawn_type=source.get("spawnType", "")).items():
+            for field, value in dict(item_id=source["id"], display_name=source["name"], icon=texture_for("item_" + source["id"], icon), max_count=source["maxCount"], attack_damage=source.get("attackDamage", 1), attack_speed=source.get("attackSpeed", 0), block_id=source.get("block", ""), model_key=source.get("modelKey", ""), spawn_type=source.get("spawnType", "")).items():
                 entry.set_editor_property(field, value)
             items.append(entry)
         font_texture, glyphs = None, []

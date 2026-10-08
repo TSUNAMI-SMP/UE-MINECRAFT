@@ -98,7 +98,6 @@ private:
     TSharedPtr<class FBridgeNativeWorldStore> NativeStore;
     bool NativeInitialized=false;
     bool NativeControllerConfigured=false,NativeRestoreFailed=false,NativeExitPrepared=false;
-    bool NativeSavePausedWorld=false;
     FDelegateHandle NativeTearDownHandle;
     double NativeLastDiagnostic=-1,NativeLastAutosave=-1;
     TMap<FString,FString> NativeDropItems;
@@ -109,6 +108,11 @@ private:
     float NativeMasterVolume=1;
     FVector NativeRespawnPosition=FVector::ZeroVector;
     double NativeBowStart=-1;
+    double NativeLastAttack=-100;
+    float NativeAttackDamage() const;
+public:
+    float GetNativeAttackCharge() const;
+private:
     TMap<FString,float> NativeSoundVolumes;
     UPROPERTY() TObjectPtr<class USoundAttenuation> NativeSoundAttenuation;
     void BeginNativePlay();

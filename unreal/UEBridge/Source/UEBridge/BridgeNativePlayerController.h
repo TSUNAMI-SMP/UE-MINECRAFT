@@ -31,6 +31,9 @@ public:
     FString BindingLabel(const FString& Action) const;
     bool MatchesBinding(const FString& Action, const FKey& Key) const;
     bool IsNativeLeftHanded() const {return LeftHanded;}
+    float GetNativeSensitivity() const {return MouseSensitivity;}
+    void SetNativeSensitivity(float Value);
+    void CycleNativePerspective();
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Native") int32 NativePerspective=0;
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Native") bool NativeHudVisible=true;
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Native") FString NativeInputStatus;

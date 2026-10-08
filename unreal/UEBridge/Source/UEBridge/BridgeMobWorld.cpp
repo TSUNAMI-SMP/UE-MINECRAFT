@@ -58,7 +58,7 @@ FString ABridgeMobWorld::SpawnEgg(const FString& Type,const FVector& Feet,const 
     if(PrepareSpawnCollision) PrepareSpawnCollision(Feet);
     FBridgeMobSnapshot Snapshot;Snapshot.Id=Id;Snapshot.Type=Type;Snapshot.Appearance=Key;
     Snapshot.Width=Appearance->Width;Snapshot.Height=Appearance->Height;Snapshot.MaxHealth=Appearance->MaxHealth;Snapshot.Health=Snapshot.MaxHealth;
-    Snapshot.Speed=Appearance->Speed;Snapshot.Damage=Appearance->Damage;Snapshot.Hostile=Appearance->Hostile;Snapshot.Baby=Appearance->Baby;
+    Snapshot.KnockbackResistance=Appearance->KnockbackResistance;Snapshot.Speed=Appearance->Speed;Snapshot.Damage=Appearance->Damage;Snapshot.Hostile=Appearance->Hostile;Snapshot.Baby=Appearance->Baby;
     const float Half=FMath::Clamp(Snapshot.Height*50.f,10.f,1000.f),Radius=FMath::Clamp(Snapshot.Width*50.f,5.f,Half);
     FVector SafeFeet;FString Reason;
     if(!FindSpawnFeet(Feet,Radius,Half,SafeFeet,Reason)) return Fail(Reason);
@@ -131,7 +131,7 @@ bool ABridgeMobWorld::Attack(const FVector& Eye,const FVector& Direction,float R
     FHitResult Hit;
     if(!GetWorld()->LineTraceSingleByChannel(Hit,Eye,Eye+Direction.GetSafeNormal()*FMath::Clamp(Reach,0.f,600.f),ECC_Visibility,Query)) return false;
     ABridgeMobCharacter* Mob=Cast<ABridgeMobCharacter>(Hit.GetActor());
-    return Mob && Mob->Hit(Damage,Direction);
+    if(!Mob) return false;Mob->Hit(Damage,Direction);return true; // Consume aim even during the hurt window; never mine through a mob.
 }
 bool ABridgeMobWorld::ReceiveArrow(const FVector& From,const FVector& To,float Damage) {
     if(!Authority || !GetWorld()) return false;
@@ -169,7 +169,7 @@ TArray<TSharedPtr<FJsonValue>> ABridgeMobWorld::ExportNativeSnapshots(const FVec
         Json->SetNumberField(TEXT("yaw"),Snapshot.Yaw);Json->SetNumberField(TEXT("pitch"),Mob->GetNativeViewPitch());
         Json->SetNumberField(TEXT("width"),Snapshot.Width);Json->SetNumberField(TEXT("height"),Snapshot.Height);
         Json->SetNumberField(TEXT("health"),Snapshot.Health);Json->SetNumberField(TEXT("maxHealth"),Snapshot.MaxHealth);
-        Json->SetNumberField(TEXT("speed"),Snapshot.Speed);Json->SetNumberField(TEXT("damage"),Snapshot.Damage);
+        Json->SetNumberField(TEXT("knockbackResistance"),Snapshot.KnockbackResistance);Json->SetNumberField(TEXT("speed"),Snapshot.Speed);Json->SetNumberField(TEXT("damage"),Snapshot.Damage);
         Json->SetBoolField(TEXT("hostile"),Snapshot.Hostile);Json->SetBoolField(TEXT("baby"),Snapshot.Baby);
         Result.Add(MakeShared<FJsonValueObject>(Json));
     }
@@ -208,7 +208,7 @@ bool ABridgeMobWorld::ImportNativeSnapshots(const TArray<TSharedPtr<FJsonValue>>
         auto DefaultNumber=[&](const TCHAR* Key,double Default) {if(!Packet->HasField(Key)) Packet->SetNumberField(Key,Default);};
         DefaultNumber(TEXT("width"),Appearance->Width);DefaultNumber(TEXT("height"),Appearance->Height);
         DefaultNumber(TEXT("maxHealth"),Appearance->MaxHealth);DefaultNumber(TEXT("health"),Appearance->MaxHealth);
-        DefaultNumber(TEXT("speed"),Appearance->Speed);DefaultNumber(TEXT("damage"),Appearance->Damage);DefaultNumber(TEXT("yaw"),0);
+        DefaultNumber(TEXT("knockbackResistance"),Appearance->KnockbackResistance);DefaultNumber(TEXT("speed"),Appearance->Speed);DefaultNumber(TEXT("damage"),Appearance->Damage);DefaultNumber(TEXT("yaw"),0);
         if(!Packet->HasField(TEXT("hostile"))) Packet->SetBoolField(TEXT("hostile"),Appearance->Hostile);
         if(!Packet->HasField(TEXT("baby"))) Packet->SetBoolField(TEXT("baby"),Appearance->Baby);
         FBridgePacket Decoded;

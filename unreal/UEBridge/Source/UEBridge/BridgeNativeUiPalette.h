@@ -14,6 +14,8 @@ struct FBridgeNativeUiItem {
     UPROPERTY(EditAnywhere, BlueprintReadOnly) FString BlockId;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) FString ModelKey;
     UPROPERTY(EditAnywhere, BlueprintReadOnly) FString SpawnType;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) float AttackDamage = 1;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly) float AttackSpeed = 0; // 0: legacy export, use vanilla fallback.
 };
 
 USTRUCT(BlueprintType)

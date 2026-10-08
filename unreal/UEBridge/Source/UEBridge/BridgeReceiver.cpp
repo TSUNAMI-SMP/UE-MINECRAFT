@@ -75,7 +75,7 @@ void ABridgeReceiver::BeginPlay() {
             return SyncedWorld->GetLighting()->Sample(FIntVector(FMath::FloorToInt(Source.X),FMath::FloorToInt(Source.Y),FMath::FloorToInt(Source.Z)));
         };
     }
-    UE_LOG(LogTemp, Display, TEXT("Bridge 0.12.0 listening on 127.0.0.1:%d"), Port);
+    UE_LOG(LogTemp, Display, TEXT("Bridge 0.14.0 listening on 127.0.0.1:%d"), Port);
     Video->Start(VideoPort);
     if (!TargetCharacter) UE_LOG(LogTemp, Warning, TEXT("Bridge: waiting for player Character; will retry every tick"));
     if (!ExplosionSystem) UE_LOG(LogTemp, Warning, TEXT("Bridge: ExplosionSystem is unset; Niagara will not play"));
@@ -366,7 +366,7 @@ void ABridgeReceiver::SendStatus(const TSharedRef<FInternetAddr>& Sender) {
     Reply->SetBoolField(TEXT("cameraReady"), Camera && Camera->IsActive() && TargetCharacter->GetController());
     Reply->SetBoolField(TEXT("vfxReady"), IsValid(ExplosionSystem)); Reply->SetNumberField(TEXT("walls"), Walls);
     Reply->SetNumberField(TEXT("previewBlocks"), PreviewBlocks);
-    Reply->SetStringField(TEXT("build"),TEXT("0.12.0"));
+    Reply->SetStringField(TEXT("build"),TEXT("0.14.0"));
     Reply->SetBoolField(TEXT("blockModelsV2"),true); Reply->SetBoolField(TEXT("videoV3"),true);
     Reply->SetBoolField(TEXT("blockPaletteReady"),IsValid(TexturePalette) && !TexturePalette->BlockstateDefinitions.IsEmpty()
         && !TexturePalette->StateShapes.IsEmpty() && !TexturePalette->FaceMaterials.IsEmpty());
@@ -517,7 +517,9 @@ void ABridgeReceiver::BlockAction(const FBridgePacket& P) {
     FVector EyePosition;FRotator EyeRotation;Character->GetEyeAim(EyePosition,EyeRotation);
     const float BlockReach=NativePlayActive && !NativeCreative ? 450.f : 500.f;
     const float AttackReach=NativePlayActive ? (NativeCreative ? 500.f : 300.f) : 500.f;
-    if(P.Action==TEXT("break") && IsValid(MobWorld) && MobWorld->Attack(EyePosition,BridgeProtocol::ToRotation(P.Yaw,P.Pitch).Vector(),AttackReach)) {
+    const float AttackDamage=NativePlayActive ? NativeAttackDamage() : 4.f;
+    if(!NativePlayActive && P.Action==TEXT("break") && IsValid(MobWorld) && MobWorld->Attack(EyePosition,BridgeProtocol::ToRotation(P.Yaw,P.Pitch).Vector(),AttackReach,AttackDamage)) {
+        if(NativePlayActive) NativeLastAttack=GetWorld()->GetTimeSeconds();
         LastAction=TEXT("mob attacked");return;
     }
     FIntVector Block;FVector Normal,HitPoint;

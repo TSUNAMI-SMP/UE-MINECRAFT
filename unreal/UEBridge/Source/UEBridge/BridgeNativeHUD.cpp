@@ -50,7 +50,14 @@ void ABridgeNativeHUD::Solid(float X, float Y, float W, float H, FLinearColor Co
 
 void ABridgeNativeHUD::Sprite(const FString& Key, float X, float Y, float W, float H, FLinearColor Color) {
     UTexture2D* Texture = Resources ? Resources->FindSprite(Key) : nullptr;
-    if (Texture) DrawTexture(Texture, X * GuiScale, Y * GuiScale, W * GuiScale, H * GuiScale, 0, 0, 1, 1, Color, BLEND_Translucent);
+    if (Texture) {
+        // Container PNGs include unused atlas space and widgets. Draw the panel
+        // region at its native pixel size instead of shrinking the entire atlas.
+        const bool Container=Key.StartsWith(TEXT("container/"));
+        const float U=Container ? FMath::Min(1.f,W/256.f) : 1.f;
+        const float V=Container ? FMath::Min(1.f,H/256.f) : 1.f;
+        DrawTexture(Texture, X * GuiScale, Y * GuiScale, W * GuiScale, H * GuiScale, 0, 0, U, V, Color, BLEND_Translucent);
+    }
 }
 
 const FBridgeNativeGlyph* ABridgeNativeHUD::Glyph(int32 Codepoint) const {
@@ -163,8 +170,8 @@ void ABridgeNativeHUD::DrawInventory() {
     if (Creative) Sprite(TEXT("container/creative_inventory/tab_item_search"), X, Y, W, H);
     else { Sprite(TEXT("container/inventory"), X, Y, 176, 166); DrawPlayerPreview(X + 33, Y + 12); }
     if (Receiver->NativeCreative) {
-        TabBounds = FBox2D(FVector2D(X, Y - 22) * GuiScale, FVector2D(X + 74, Y - 2) * GuiScale);
-        Solid(X, Y - 22, 74, 20, FLinearColor(.65f, .65f, .65f)); Text(Creative ? TEXT("所持品") : TEXT("アイテム検索"), X + 5, Y - 16, FLinearColor(.1f, .1f, .1f), false);
+        TabBounds = FBox2D(FVector2D(X + W - 76, Y - 22) * GuiScale, FVector2D(X + W, Y - 2) * GuiScale);
+        Solid(X + W - 76, Y - 22, 76, 20, FLinearColor(.65f, .65f, .65f)); Text(Creative ? TEXT("所持品へ") : TEXT("検索へ"), X + W - 71, Y - 16, FLinearColor(.1f, .1f, .1f), false);
     } else TabBounds = FBox2D(ForceInit);
     auto DrawSlot = [&](int32 Index, float SX, float SY, const FString& CatalogueId = FString()) {
         Solid(SX - 1, SY - 1, 18, 18, FLinearColor(.35f, .35f, .35f)); Solid(SX, SY, 16, 16, FLinearColor(.55f, .55f, .55f));
@@ -202,12 +209,14 @@ void ABridgeNativeHUD::DrawInventory() {
 
 void ABridgeNativeHUD::DrawPauseMenu() {
     Solid(0, 0, GuiWidth, GuiHeight, FLinearColor(0, 0, 0, .65f)); PauseButtons.Reset();
-    const FString Title = TEXT("ゲームメニュー"); Text(Title, (GuiWidth - TextWidth(Title)) / 2, GuiHeight / 2 - 72);
+    const FString Title = TEXT("ゲームメニュー"); Text(Title, (GuiWidth - TextWidth(Title)) / 2, GuiHeight / 2 - 115);
     const auto* Control = NativeController(); const auto* Receiver = Control ? Control->GetNativeReceiver() : nullptr;
     const FString Labels[] = {TEXT("ゲームに戻る"), TEXT("ワールドを保存"), TEXT("開始地点に戻る"),
-        Receiver && Receiver->NativeLighting ? TEXT("照明: ON") : TEXT("照明: OFF"), TEXT("終了")};
+        Receiver && Receiver->NativeLighting ? TEXT("照明: ON") : TEXT("照明: OFF"), TEXT("終了"),
+        FString::Printf(TEXT("感度を下げる  %.0f%%"),Control ? Control->GetNativeSensitivity()*200 : 100),
+        TEXT("感度を上げる"),TEXT("視点を切り替える")};
     for (int32 I = 0; I < UE_ARRAY_COUNT(Labels); ++I) {
-        const float X = GuiWidth / 2 - 100, Y = GuiHeight / 2 - 32 + I * 24;
+        const float X = GuiWidth / 2 - 100, Y = GuiHeight / 2 - 88 + I * 23;
         FBox2D Bounds(FVector2D(X, Y) * GuiScale, FVector2D(X + 200, Y + 20) * GuiScale); PauseButtons.Add(Bounds);
         const bool Hovered = Within(Bounds, Pointer); Solid(X, Y, 200, 20, Hovered ? FLinearColor(.5f, .5f, .65f) : FLinearColor(.3f, .3f, .3f));
         Sprite(Hovered ? TEXT("widget/button_highlighted") : TEXT("widget/button"), X, Y, 200, 20);
@@ -228,6 +237,10 @@ void ABridgeNativeHUD::DrawHUD() {
         WasInventoryOpen = false; SlotHits.Reset(); UpdateSearchWidget(false);
         if (Control->IsPausedMenuOpen()) DrawPauseMenu();
         else if (Control->NativeHudVisible) { Sprite(TEXT("hud/crosshair"), FMath::FloorToFloat(GuiWidth / 2) - 7, FMath::FloorToFloat(GuiHeight / 2) - 7, 15, 15); DrawHotbar(); DrawHealth(); }
+        if(!Control->IsPausedMenuOpen() && Control->NativeHudVisible && Receiver->GetNativeAttackCharge()<1) {
+            const float X=FMath::FloorToFloat(GuiWidth/2)-8,Y=FMath::FloorToFloat(GuiHeight/2)+10;
+            Solid(X,Y,16,3,FLinearColor(.1f,.1f,.1f));Solid(X,Y,16*Receiver->GetNativeAttackCharge(),3,FLinearColor::White);
+        }
     }
     if (!Receiver->IsNativeReady() || !Control->IsSavedInventoryValid()) {
         const FString Message = !Control->IsSavedInventoryValid() ? Control->GetInventoryRestoreError()
@@ -257,14 +270,16 @@ bool ABridgeNativeHUD::HandlePointer(FKey Button, FVector2D Position) {
             else if (I == 2) { Receiver->NativeRespawn(); Control->TogglePause(); }
             else if (I == 3) Receiver->NativeSetLighting(!Receiver->NativeLighting);
             else if (I == 4) UKismetSystemLibrary::QuitGame(this, Control, EQuitPreference::Quit, false);
+            else if (I == 5) Control->SetNativeSensitivity(Control->GetNativeSensitivity()-.025f);
+            else if (I == 6) Control->SetNativeSensitivity(Control->GetNativeSensitivity()+.025f);
+            else if (I == 7) Control->CycleNativePerspective();
             return true;
         }
         return true;
     }
     if (!Control->IsInventoryOpen()) return false;
-    if (Receiver->IsNativeSaving()) return true;
-    if (Within(SearchBounds, Position)) { EnsureSearchWidget(); if (SearchField && FSlateApplication::IsInitialized()) FSlateApplication::Get().SetKeyboardFocus(SearchField, EFocusCause::Mouse); return true; }
-    if (Within(TabBounds, Position)) { CatalogueMode = !CatalogueMode; return true; }
+    if (Within(TabBounds, Position)) { CatalogueMode = !CatalogueMode;UpdateSearchWidget(false); return true; }
+    if (CatalogueMode && Within(SearchBounds, Position)) { EnsureSearchWidget(); if (SearchField && FSlateApplication::IsInitialized()) FSlateApplication::Get().SetKeyboardFocus(SearchField, EFocusCause::Mouse); return true; }
     const bool RightClick = Button == EKeys::RightMouseButton;
     const bool Shift = Control->IsInputKeyDown(EKeys::LeftShift) || Control->IsInputKeyDown(EKeys::RightShift);
     for (const auto& Hit : SlotHits) if (Within(Hit.Bounds, Position)) {
@@ -297,7 +312,6 @@ bool ABridgeNativeHUD::HandleKey(FKey Key) {
     auto* Control = NativeController(); auto* Contents = Inventory(); if (!Control || !Contents) return false;
     if (Key == EKeys::F3) { DebugVisible = !DebugVisible; return true; }
     if (!Control->IsInventoryOpen()) return false;
-    if (Control->GetNativeReceiver() && Control->GetNativeReceiver()->IsNativeSaving()) return true;
     if (Key == EKeys::BackSpace && !HasSearchFocus() && !Search.IsEmpty()) { Search.LeftChopInline(1); RebuildCatalogue(); return true; }
     if (HasSearchFocus()) return false;
     if (Control->MatchesBinding(TEXT("key.swapOffhand"), Key)) {
@@ -324,9 +338,9 @@ void ABridgeNativeHUD::EnsureSearchWidget() {
         + SOverlay::Slot().HAlign(HAlign_Left).VAlign(VAlign_Top)
         // Overlay slot padding is a value, not a bound Slate attribute in UE 5.8.
         // SBox owns the dynamic padding so resize/GUI scale still move the field.
-        [ SNew(SBox)
+        [ SNew(SBox).Visibility(EVisibility::SelfHitTestInvisible)
         .Padding_Lambda([this] { return FMargin(SearchWidgetBounds.Min.X, SearchWidgetBounds.Min.Y, 0, 0); })
-        [ SNew(SBox).WidthOverride_Lambda([this] { return SearchWidgetBounds.GetSize().X; }).HeightOverride_Lambda([this] { return SearchWidgetBounds.GetSize().Y; })
+        [ SNew(SBox).Visibility(EVisibility::SelfHitTestInvisible).WidthOverride_Lambda([this] { return SearchWidgetBounds.GetSize().X; }).HeightOverride_Lambda([this] { return SearchWidgetBounds.GetSize().Y; })
           [ SAssignNew(SearchField, SEditableTextBox)
             .Text(FText::FromString(Search)).Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
             .SelectAllTextWhenFocused(false).ClearKeyboardFocusOnCommit(false)

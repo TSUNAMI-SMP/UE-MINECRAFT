@@ -1,5 +1,7 @@
 # UEBridge 0.16.1 ビルド修正
 
+**起動後の地形読み込みクラッシュは[累積修正0.16.2](UPGRADE_0.16.2.md)で修正しています。これから更新する場合は0.16.2のZIPを使用してください。**
+
 0.16.0のWindows UE 5.8.3ビルドで報告されたコンパイルエラーを修正します。
 
 - [UE修正ZIP 0.16.1](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.16.1.zip)

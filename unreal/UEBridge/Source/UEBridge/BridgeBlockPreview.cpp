@@ -139,7 +139,15 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
                 }
                 // This permutation reflects handedness: UE fronts are clockwise: transformed MC order already faces outward.
                 for(int32 TriangleIndex:BridgeMeshingMath::UEFacingQuad({{{Vertices[0].X,Vertices[0].Y,Vertices[0].Z},{Vertices[1].X,Vertices[1].Y,Vertices[1].Z},{Vertices[2].X,Vertices[2].Y,Vertices[2].Z},{Vertices[3].X,Vertices[3].Y,Vertices[3].Z}}},{Normal.X,Normal.Y,Normal.Z},Base)) Section.Indices.Add(TriangleIndex);
-                if(Fluid || (ItemFallback && Face.DoubleSided)) {const int32 End=Section.Indices.Num();for(int32 I=End-6;I<End;I+=3) {Section.Indices.Add(Section.Indices[I]);Section.Indices.Add(Section.Indices[I+2]);Section.Indices.Add(Section.Indices[I+1]);}}
+                if(Fluid || (ItemFallback && Face.DoubleSided)) {
+                    const int32 End=Section.Indices.Num();
+                    for(int32 I=End-6;I<End;I+=3) {
+                        // TArray rejects Add(array[index]); copy before growth
+                        // so both the alias check and reallocation are safe.
+                        const int32 First=Section.Indices[I],Second=Section.Indices[I+1],Third=Section.Indices[I+2];
+                        Section.Indices.Add(First);Section.Indices.Add(Third);Section.Indices.Add(Second);
+                    }
+                }
                 ++RenderedFaces;
             }
             continue;

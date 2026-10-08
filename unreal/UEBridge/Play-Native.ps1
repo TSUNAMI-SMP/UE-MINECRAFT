@@ -10,6 +10,25 @@ function Get-NativeImportSourceHash([string]$ImportScript) {
     try { return ([BitConverter]::ToString($algorithm.ComputeHash([Text.Encoding]::UTF8.GetBytes($hashList)))).Replace('-', '').ToLowerInvariant() }
     finally { $algorithm.Dispose() }
 }
+function Test-NativeImportCompletion($Marker, [string]$AttemptId, [string]$Manifest, [string]$ManifestHash, [string]$Level, [int]$ExitCode, [string]$LogPath) {
+    if (!$Marker -or $Marker.completed -ne $true -or $Marker.importAttemptId -ne $AttemptId -or $Marker.map -ne '/Game/Bridge/Native/NativePlay' -or $Marker.manifest -ne $Manifest -or $Marker.manifestSha256 -ne $ManifestHash -or !(Test-Path -LiteralPath $Level -PathType Leaf)) { return $false }
+    if ((Get-Item -LiteralPath $Level).Length -eq 0) { return $false }
+    if ($ExitCode -eq 0) { return $true }
+    # Only recover the observed access violation after a fully committed import
+    # and logged editor shutdown. Other nonzero exits remain failures.
+    if ($ExitCode -ne -1073741819 -or !(Test-Path -LiteralPath $LogPath -PathType Leaf)) { return $false }
+    $lines = @(Get-Content -LiteralPath $LogPath -Encoding UTF8 -Tail 2000)
+    $phase = 0
+    $completion = 'Native setup COMPLETE: map=/Game/Bridge/Native/NativePlay package=' + $Manifest + '. Minecraft can stay closed; launch Play-Native.cmd.'
+    foreach ($line in $lines) {
+        if ($line -match 'Native automation failed|Native setup FAILED|Traceback|LogPython: Error:|Fatal error:') { return $false }
+        if ($phase -eq 0 -and $line.Contains($completion)) { $phase = 1 }
+        elseif ($phase -eq 1 -and $line.Contains('Cmd: QUIT_EDITOR')) { $phase = 2 }
+        elseif ($phase -eq 2 -and $line.Contains('LogExit: Exiting.')) { $phase = 3 }
+        elseif ($phase -eq 3 -and $line.Contains('Log file closed,')) { $phase = 4 }
+    }
+    return $phase -eq 4
+}
 function Get-NativeImportFailure([string]$LogPath, [int]$ExitCode) {
     $detail = "Native import did not complete (editor exit code: $ExitCode). Import log: $LogPath"
     if (Test-Path -LiteralPath $LogPath) {
@@ -126,8 +145,11 @@ try {
         if (Test-Path -LiteralPath $markerPath) {
             try { $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json } catch { Write-Host "Import completion marker is unreadable." }
         }
-        if ($process.ExitCode -ne 0 -or !$marker -or !$marker.completed -or $marker.importAttemptId -ne $attemptId -or $marker.map -ne "/Game/Bridge/Native/NativePlay" -or $marker.manifest -ne $Manifest -or $marker.manifestSha256 -ne $manifestHash -or !(Test-Path -LiteralPath $level)) {
+        if (!(Test-NativeImportCompletion -Marker $marker -AttemptId $attemptId -Manifest $Manifest -ManifestHash $manifestHash -Level $level -ExitCode $process.ExitCode -LogPath $importLog)) {
             throw (Get-NativeImportFailure -LogPath $importLog -ExitCode $process.ExitCode)
+        }
+        if ($process.ExitCode -ne 0) {
+            Write-Warning "Native import was committed and the editor finished its logged shutdown, but exited with access violation $($process.ExitCode). Starting the saved native map. Import log: $importLog"
         }
         [IO.File]::WriteAllText($importSourceMarker, $importHash, [Text.UTF8Encoding]::new($false))
     }

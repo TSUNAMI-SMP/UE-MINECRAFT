@@ -1,5 +1,12 @@
 # ダウンロード
 
+## 完了後の終了判定修正0.13.2
+
+保存完了後のUE終了時アクセス違反を、現在の試行の完了記録とログを検証して区別します。
+
+- [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.13.2/downloads/UEBridge-update-0.13.2.zip)
+- [保存済みマップの即時起動・更新手順](../docs/UPGRADE_0.13.2.md)
+
 ## モブ取り込み修正0.13.1
 
 UE 5.8.3でのQuat／Rotator型違いによる停止を修正。0.13.0適用済みならPython 1ファイルの更新で適用できます。

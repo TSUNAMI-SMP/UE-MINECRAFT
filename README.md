@@ -4,6 +4,8 @@ Fabric **Minecraft Java 1.21.11 / Java 21** から地形・素材・スキン・
 書き出し、**Unreal Engine 5.8で直接プレイ** する実験用プロジェクトです。
 書き出し後はMinecraftを終了できます。UE映像をMinecraftへ送る従来の接続モードも残しています。
 
+**取り込み完了後の終了判定修正0.13.2：** 利用者ログで素材・モブ・UI・音・専用マップの取り込み完了を確認しました。UEが終了ログを書いた後にアクセス違反コードを返した場合、今回の完了マーカー・マップ・ログを検証して保存済みマップを起動します。[UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.13.2/downloads/UEBridge-update-0.13.2.zip) / [保存済みマップの即時起動・更新手順](docs/UPGRADE_0.13.2.md)。描画・ゲーム操作と終了時アクセス違反の内部原因は未確認です。
+
 **モブ取り込み修正0.13.1：** UE 5.8.3のログで確認した `Cannot nativize 'Quat' as 'Rotator'` を修正しました。0.13.0適用済みなら `import_minecraft_mobs.py` だけを差し替えて再試行できます。[UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.13.1/downloads/UEBridge-update-0.13.1.zip) / [更新手順・検証](docs/UPGRADE_0.13.1.md)。利用者ログではテクスチャ・アイテム段階を通過しています。修正後のUE実取り込み完了は未確認です。
 
 **追加調査・原作への改善0.13.0：** アイテム／空の取り込み停止、保存失敗時のパレット復元、Python更新の自動再取り込み、オフハンドの交換・表示・保存、ボタン時間、矢の基本ダメージ、段差・到達距離・入力復帰・太陽／月を修正しました。[UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.13.0/downloads/UEBridge-update-0.13.0.zip) / [MOD 0.13.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.13.0/downloads/minecraft-ue-bridge-0.13.0.jar) / [一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.13.0/downloads/UE-Minecraft-MVP-0.13.0.zip) / [更新手順](docs/UPGRADE_0.13.0.md) / [調査・検証記録](docs/AUDIT_0.13.0.md)。旧MOD 0.12.0の書き出しは継続できます。1.21.11の太陽・月画像の不足には新MODでの再書き出しが必要です。

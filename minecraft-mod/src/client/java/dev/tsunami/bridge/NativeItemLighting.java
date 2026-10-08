@@ -9,6 +9,9 @@ final class NativeItemLighting {
     private static Vector3f[] lights(Matrix4f matrix) {
         return new Vector3f[]{matrix.transformDirection(new Vector3f(.2f,1,-.7f).normalize()),matrix.transformDirection(new Vector3f(-.2f,1,.7f).normalize())};
     }
+    // GuiRenderer.prepareItemInitially applies (size,-size,size) outside the
+    // captured item pose. Its Y reflection also changes the shader normal.
+    static float guiModel(float x,float y,float z,boolean sideLit) {return gui(x,-y,z,sideLit);}
     static float gui(float x,float y,float z,boolean sideLit) {
         float length=(float)Math.sqrt(x*x+y*y+z*z);if(length<1e-5f) return 1;
         x/=length;y/=length;z/=length;Vector3f[] lights=sideLit?SIDE:FLAT;

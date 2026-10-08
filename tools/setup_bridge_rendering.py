@@ -69,14 +69,18 @@ def setup_bridge_rendering(asset_root='/Game/Bridge/Minecraft'):
         raise RuntimeError('Outline asset path is occupied by another asset type')
     editing.delete_all_material_expressions(material)
     material.set_editor_property('shading_model', unreal.MaterialShadingModel.MSM_UNLIT)
-    material.set_editor_property('blend_mode', unreal.BlendMode.BLEND_OPAQUE)
-    material.set_editor_property('two_sided', True)
+    material.set_editor_property('blend_mode', unreal.BlendMode.BLEND_TRANSLUCENT)
+    material.set_editor_property('two_sided', False)
     black = editing.create_material_expression(material, unreal.MaterialExpressionConstant3Vector, -200, 0)
     if black is None:
         raise RuntimeError('Cannot create outline colour expression')
     black.set_editor_property('constant', unreal.LinearColor(0, 0, 0, 1))
     if not editing.connect_material_property(black, '', unreal.MaterialProperty.MP_EMISSIVE_COLOR):
         raise RuntimeError('Cannot connect outline emissive')
+    opacity = editing.create_material_expression(material, unreal.MaterialExpressionConstant, -200, 100)
+    opacity.set_editor_property('r', 0.4)
+    if not editing.connect_material_property(opacity, '', unreal.MaterialProperty.MP_OPACITY):
+        raise RuntimeError('Cannot connect outline opacity')
     editing.recompile_material(material)
     if not assets.save_loaded_asset(material, False):
         raise RuntimeError('Cannot save outline material')
@@ -98,4 +102,4 @@ def setup_bridge_rendering(asset_root='/Game/Bridge/Minecraft'):
         raise
     # Every generated material and this level was explicitly saved above. Saving
     # all dirty packages here would also save unrelated user assets.
-    unreal.log('Bridge rendering ready: lighting revision 4, migrated=' + str(migrated) + ', additive native sky, inverse crosshair, black outline. Compare day/night, roof and torch placement.')
+    unreal.log('Bridge rendering ready: lighting revision 5, migrated=' + str(migrated) + ', additive native sky, inverse crosshair, 40% alpha black outline. Compare day/night, roof and torch placement.')

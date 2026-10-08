@@ -1,6 +1,7 @@
 # Minecraft ↔ Unreal Engine bridge MVP
 
-**UE 5.8.3ビルド修正0.15.1：** 0.15.0を導入した後に[修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-build-fix-0.15.1.zip)のSourceを適用してください。MOD交換・再書き出しは不要です。[適用手順](docs/BUILD_FIX_0.15.1.md)。Windows実ビルドは未確認です。
+**描画・入力・戦闘修正0.15.2：** [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.15.2.zip) / [MOD 0.15.2](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.15.2.jar) / [更新手順](docs/UPGRADE_0.15.2.md)。MOD交換・新しいnative export・UE再ビルド・再取り込みが必要です。Windowsの実描画・入力は未確認です。
+
 
 Fabric **Minecraft Java 1.21.11 / Java 21** から地形・素材・スキン・HUD・操作設定・音を
 書き出し、**Unreal Engine 5.8で直接プレイ** する実験用プロジェクトです。

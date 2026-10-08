@@ -289,8 +289,11 @@ class MaterialGraphTest(unittest.TestCase):
         base, emissive = material.outputs['base'][0], material.outputs['emissive'][0]
         self.assertIs(base.inputs['Alpha'][0], emissive.inputs['Alpha'][0])
         mode = base.inputs['Alpha'][0].inputs['A'][0]
-        self.assertEqual('BridgeVanillaMode', mode.properties['parameter_name'])
-        self.assertEqual('CollectionParameter', mode.kind)
+        self.assertEqual('BridgeVanillaMode', mode.inputs['A'][0].properties['parameter_name'])
+        self.assertEqual(1.0, mode.inputs['B'][0].properties['r'])
+        self.assertEqual('BridgeViewLight', mode.inputs['Alpha'][0].properties['parameter_name'])
+        self.assertEqual('LinearInterpolate', mode.kind)
+        self.assertEqual('CollectionParameter', mode.inputs['A'][0].kind)
         # Base colour and emissive each decode once, with native lightmap
         # multiplication between display-space pixel and final emissive decode.
         base_decode=base.inputs['A'][0]
@@ -338,7 +341,10 @@ class MaterialGraphTest(unittest.TestCase):
         self.assertEqual('BridgeLight', blend.inputs['A'][0].inputs['A'][0].properties['parameter_name'])
         actor_shade = blend.inputs['A'][0].inputs['B'][0]
         self.assertEqual('PixelNormalWS', actor_shade.inputs['WorldNormal'][0].kind)
-        self.assertEqual(['WorldNormal','Light1Y'], [entry.get_editor_property('input_name') for entry in actor_shade.properties['inputs']])
+        self.assertEqual(['WorldNormal','Light1Y','ViewForward','ViewRight','ViewUp','UseView'], [entry.get_editor_property('input_name') for entry in actor_shade.properties['inputs']])
+        self.assertEqual(0.0, actor_shade.inputs['UseView'][0].properties['default_value'])
+        for pin in ('ViewForward','ViewRight','ViewUp'):
+            self.assertEqual('Bridge'+pin, actor_shade.inputs[pin][0].properties['parameter_name'])
         self.assertEqual('BridgeDiffuseLight1Y',actor_shade.inputs['Light1Y'][0].properties['parameter_name'])
         self.assertIn('.4+.6',actor_shade.properties['code'])
         self.assertEqual('VertexColor', blend.inputs['B'][0].kind)

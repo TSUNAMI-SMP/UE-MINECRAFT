@@ -2,6 +2,10 @@ package dev.tsunami.bridge;
 import org.junit.Test;
 import static org.junit.Assert.*;
 public final class NativeItemLightingTest {
+    @Test public void guiTopReceivesLightAfterOuterScreenReflection() {
+        assertTrue(NativeItemLighting.guiModel(0,1,0,true)>.8f);
+        assertEquals(.4f,NativeItemLighting.guiModel(0,-1,0,true),1e-6f);
+    }
     @Test public void diffuseFacesHaveDirectionAndRemainBounded() {
         for(boolean side:new boolean[]{false,true}) {
             float min=1,max=0;

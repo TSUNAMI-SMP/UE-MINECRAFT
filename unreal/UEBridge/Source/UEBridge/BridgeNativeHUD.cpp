@@ -81,10 +81,14 @@ float ABridgeNativeHUD::TextWidth(const FString& Value) const {
 void ABridgeNativeHUD::Text(const FString& Value, float X, float Y, FLinearColor Color, bool Shadow) {
     if (Value.IsEmpty()) return;
     if (!Resources || !Resources->FontAtlas || Resources->Glyphs.IsEmpty()) {
-        if (Shadow) DrawText(Value, FLinearColor(0, 0, 0, Color.A), (X + 1) * GuiScale, (Y + 1) * GuiScale, GEngine ? GEngine->GetSmallFont() : nullptr, GuiScale);
+        if (Shadow) DrawText(Value, FLinearColor(.05f, .05f, .05f, Color.A), (X + 1) * GuiScale, (Y + 1) * GuiScale, GEngine ? GEngine->GetSmallFont() : nullptr, GuiScale);
         DrawText(Value, Color, X * GuiScale, Y * GuiScale, GEngine ? GEngine->GetSmallFont() : nullptr, GuiScale); return;
     }
-    if (Shadow) Text(Value, X + 1, Y + 1, FLinearColor(Color.R * .25f, Color.G * .25f, Color.B * .25f, Color.A), false);
+    if (Shadow) {
+        FColor Display=Color.ToFColorSRGB();Display.R/=4;Display.G/=4;Display.B/=4;
+        FLinearColor Shade=FLinearColor::FromSRGBColor(Display);Shade.A=Color.A;
+        Text(Value, X + 1, Y + 1, Shade, false);
+    }
     const float AtlasW = Resources->FontAtlas->GetSizeX(), AtlasH = Resources->FontAtlas->GetSizeY();
     for (int32 C : Codepoints(Value)) {
         const auto* Entry = Glyph(C);
@@ -92,7 +96,7 @@ void ABridgeNativeHUD::Text(const FString& Value, float X, float Y, FLinearColor
         if (Entry && Entry->Width > 0 && Entry->Height > 0) {
             const float W = Entry->DrawWidth > 0 ? Entry->DrawWidth : Entry->Width;
             const float H = Entry->DrawHeight > 0 ? Entry->DrawHeight : Entry->Height;
-            DrawTexture(Resources->FontAtlas, X * GuiScale, (Y + 7 - Entry->Ascent) * GuiScale, W * GuiScale, H * GuiScale, Entry->X / AtlasW, Entry->Y / AtlasH, Entry->Width / AtlasW, Entry->Height / AtlasH, Color, BLEND_Translucent);
+            DrawTexture(Resources->FontAtlas, FMath::RoundToFloat(X * GuiScale), FMath::RoundToFloat((Y + 7 - Entry->Ascent) * GuiScale), W * GuiScale, H * GuiScale, Entry->X / AtlasW, Entry->Y / AtlasH, Entry->Width / AtlasW, Entry->Height / AtlasH, Color, BLEND_Translucent);
         }
         X += Entry ? Entry->Advance : 6;
     }

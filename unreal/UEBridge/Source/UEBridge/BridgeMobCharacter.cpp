@@ -1,3 +1,4 @@
+#include "BridgeMeshingMath.h"
 #include "BridgeMobCharacter.h"
 #include "BridgeMobWorld.h"
 #include "Components/CapsuleComponent.h"
@@ -70,8 +71,8 @@ bool ABridgeMobCharacter::Initialize(const FBridgeMobSnapshot& Snapshot,const FB
         TArray<int32> Triangles;TArray<FVector> Normals;TArray<FLinearColor> Colors;TArray<FProcMeshTangent> Tangents;
         Normals.SetNum(Part.Vertices.Num());Colors.Init(FLinearColor::White,Part.Vertices.Num());
         for(int32 Vertex=0;Vertex<Part.Vertices.Num();Vertex+=4) {
-            // The Minecraft right-handed to Unreal left-handed conversion reverses winding.
-            Triangles.Append({Vertex,Vertex+2,Vertex+1,Vertex,Vertex+3,Vertex+2});
+            // The reflected MC order already matches UE clockwise fronts.
+            for(int32 TriangleIndex:BridgeMeshingMath::UEFrontQuad(Vertex)) Triangles.Add(TriangleIndex);
             FVector Normal=FVector::CrossProduct(Part.Vertices[Vertex+2]-Part.Vertices[Vertex],Part.Vertices[Vertex+1]-Part.Vertices[Vertex]).GetSafeNormal();
             for(int32 Offset=0;Offset<4;Offset++) Normals[Vertex+Offset]=Normal;
         }
@@ -97,7 +98,6 @@ void ABridgeMobCharacter::SetAuthority(bool Active,ACharacter* NewTarget) {
 }
 
 void ABridgeMobCharacter::Tick(float DeltaSeconds) {
-    if(PendingKnockbackAirborne) {GetCharacterMovement()->SetMovementMode(MOVE_Falling);PendingKnockbackAirborne=false;}
     Super::Tick(DeltaSeconds);
     if(!GetWorld()) return;
     const double Now=GetWorld()->GetTimeSeconds();
@@ -105,10 +105,15 @@ void ABridgeMobCharacter::Tick(float DeltaSeconds) {
     for(const auto& Part:Parts) if(auto* Material=Cast<UMaterialInstanceDynamic>(Part->GetMaterial(0))) Material->SetScalarParameterValue(TEXT("BridgeHurt"),HurtRemaining>0 || !Alive() ? 1.f : 0.f);
     if(!Alive()) {
         DeathAge=float(FMath::Max(0.,Now-DeathStarted));
-        // LivingEntityRenderer rotates around the model origin. Vanilla does
-        // not snap the rotated bounds onto the floor or erase lethal velocity.
+        // Retain lethal momentum; settle the rolled visual bounds at the feet
+        // after landing so the imported model pivot cannot leave a floating corpse.
         VisualRoot->SetRelativeLocation(DeathRootPosition);
         VisualRoot->SetRelativeRotation(FRotator(0,0,float(BridgeCombatMath::deathRoll(DeathAge))));
+        if(GetCharacterMovement()->IsMovingOnGround()) {
+            FBox VisualBounds(ForceInit);
+            for(const auto& Part:Parts) {Part->UpdateBounds();VisualBounds+=Part->Bounds.GetBox();}
+            if(VisualBounds.IsValid) VisualRoot->AddWorldOffset(FVector(0,0,GetNativeFeet().Z+2-VisualBounds.Min.Z));
+        }
         if(DeathAge>=1.f) {if(WorldOwner.IsValid() && WorldOwner->NativeDeathPoof) WorldOwner->NativeDeathPoof(this);Destroy();}return;
     }
     if(!Enabled) return;
@@ -116,7 +121,14 @@ void ABridgeMobCharacter::Tick(float DeltaSeconds) {
     while(AiAccumulator>=.05) {AiAccumulator-=.05;TickNativeAI();}
     // UE consumes movement input once per rendered frame; retain the 20 Hz
     // control intent between decisions instead of pulsing it at 20 FPS.
-    if(!MoveIntent.IsNearlyZero()) AddMovementInput(MoveIntent,1.f,true);
+    const auto Locomotion=BridgeMobAIMath::profile(TCHAR_TO_UTF8(*MinecraftType)).locomotion;
+    if(Now>=KnockbackUntil && GetCharacterMovement()->MovementMode!=MOVE_Flying && !MoveIntent.IsNearlyZero()) AddMovementInput(MoveIntent,1.f,true);
+    const FVector Facing=GetVelocity().SizeSquared2D()>25 ? GetVelocity() : MoveIntent;
+    if(!Facing.IsNearlyZero()) {
+        const float MaxTurn=(Locomotion==BridgeMobAIMath::Locomotion::Bat ? 360.f : 180.f)*FMath::Max(0.f,DeltaSeconds);
+        const float Yaw=GetActorRotation().Yaw;
+        SetActorRotation(FRotator(0,Yaw+FMath::Clamp(FMath::FindDeltaAngleDegrees(Yaw,Facing.Rotation().Yaw),-MaxTurn,MaxTurn),0));
+    }
     Animate(FMath::Max(0.f,DeltaSeconds));
 }
 
@@ -183,6 +195,7 @@ bool ABridgeMobCharacter::FindGroundWaypoint(const FVector& Destination,FVector&
 }
 
 void ABridgeMobCharacter::TickNativeAI() {
+    if(GetWorld()->GetTimeSeconds()<KnockbackUntil) {MoveIntent=FVector::ZeroVector;return;}
     ++AiTicks;AttackTicks=FMath::Max(0,AttackTicks-1);JumpTicks=FMath::Max(0,JumpTicks-1);PathTicks=FMath::Max(0,PathTicks-1);PanicTicks=FMath::Max(0,PanicTicks-1);
     StopJumping();
     MoveIntent=FVector::ZeroVector;
@@ -208,7 +221,7 @@ void ABridgeMobCharacter::TickNativeAI() {
         const FVector Offset=HasGoal ? GoalPosition-Feet : FVector::ZeroVector;
         const FVector Old=Movement->Velocity/2000.;
         Movement->Velocity=FVector(BridgeMobAIMath::batComponent(Old.X,Offset.X,false),BridgeMobAIMath::batComponent(Old.Y,Offset.Y,false),BridgeMobAIMath::batComponent(Old.Z,Offset.Z,true)*.6)*2000.;
-        if(!Movement->Velocity.IsNearlyZero()) SetActorRotation(FRotator(0,Movement->Velocity.Rotation().Yaw,0));
+        MoveIntent=Movement->Velocity.GetSafeNormal();
         if(Roof && Random.RandRange(0,99)==0) BatRoosting=true;
         return;
     }
@@ -228,8 +241,7 @@ void ABridgeMobCharacter::TickNativeAI() {
             if(ClearBody(Ahead) && InWater(Ahead+FVector(0,0,GetCapsuleComponent()->GetScaledCapsuleHalfHeight()))) Movement->Velocity=SwimVector;
             else {SwimVector=-SwimVector;Movement->Velocity=FVector::ZeroVector;}
         } else if(ThrustTimer>=PI) Movement->Velocity*=.9;
-        const float Desired=Movement->Velocity.Rotation().Yaw;
-        SetActorRotation(FRotator(0,GetActorRotation().Yaw+FMath::FindDeltaAngleDegrees(GetActorRotation().Yaw,Desired)*.1f,0));return;
+        MoveIntent=Movement->Velocity.GetSafeNormal();return;
     }
     if(Aquatic && InWater(GetActorLocation())) {
         Movement->SetMovementMode(MOVE_Flying);
@@ -252,7 +264,7 @@ void ABridgeMobCharacter::TickNativeAI() {
         Velocity.Z+=Direction.Z*FishSpeed*200;
         if(!InWater(Feet+FVector(0,0,InitialSnapshot.Height*100-.1f))) Velocity.Z-=10;
         Movement->Velocity=Velocity*.9;
-        if(!Direction.IsNearlyZero()) SetActorRotation(FRotator(0,Direction.Rotation().Yaw,0));return;
+        MoveIntent=Direction;return;
     }
     if(Profile.locomotion==BridgeMobAIMath::Locomotion::Flying) {
         // Specialized flying goals are not replaced by ground jumping. Keep
@@ -304,15 +316,24 @@ void ABridgeMobCharacter::TickNativeAI() {
             }
         }
     }
-    if(!HasGoal) {HasWaypoint=false;return;}
+    if(!HasGoal) {HasWaypoint=false;LastWaypointDistance=-1;StalledPathTicks=0;return;}
+    if(HasWaypoint) {
+        const float Distance=float(FVector::Dist2D(Feet,Waypoint));
+        StalledPathTicks=LastWaypointDistance>=0 && Distance>LastWaypointDistance-1 ? StalledPathTicks+1 : 0;
+        LastWaypointDistance=Distance;
+        if(StalledPathTicks>=10) {HasWaypoint=false;StalledPathTicks=0;LastWaypointDistance=-1;}
+    }
     if(PathTicks==0 || !HasWaypoint || FVector::DistSquared2D(Feet,Waypoint)<900) {
-        HasWaypoint=FindGroundWaypoint(GoalPosition,Waypoint);PathTicks=Chasing ? 4+Random.RandRange(0,6) : 10;
+        // Do not re-anchor a valid waypoint grid every few AI ticks: that
+        // oscillates between axis directions before the current step is reached.
+        if(!HasWaypoint || FVector::DistSquared2D(Feet,Waypoint)<900) {HasWaypoint=FindGroundWaypoint(GoalPosition,Waypoint);LastWaypointDistance=-1;}
+        PathTicks=Chasing ? 4+Random.RandRange(0,6) : 10;
         if(!HasWaypoint) {++BlockedTicks;if(!Chasing && BlockedTicks>3) HasGoal=false;return;}
         BlockedTicks=0;
     }
     const FVector Offset=Waypoint-Feet;const FVector Direction=Offset.GetSafeNormal2D();
     Movement->MaxWalkSpeed=GroundSpeed*GoalSpeed;Movement->MaxAcceleration=GroundSpeed*GoalSpeed*12.1f;
-    SetActorRotation(FRotator(0,GetActorRotation().Yaw+FMath::Clamp(FMath::FindDeltaAngleDegrees(GetActorRotation().Yaw,Direction.Rotation().Yaw),-90.f,90.f),0));
+
     MoveIntent=Direction;
     const float Rise=float(Offset.Z/100),Distance=float(Offset.SizeSquared2D()/10000);
     if(BridgeMobAIMath::canJump(Rise,Distance,InitialSnapshot.Width,Movement->IsMovingOnGround(),ClearBody(Feet+FVector(0,0,FMath::Max(0.f,float(Offset.Z)))),false,JumpTicks)) {Jump();JumpTicks=10;}
@@ -337,8 +358,9 @@ void ABridgeMobCharacter::Animate(float DeltaSeconds) {
         if(Part.Name.Contains(TEXT("head"),ESearchCase::IgnoreCase) && Target.IsValid() && FVector::DistSquared(Target->GetActorLocation(),GetActorLocation())<FMath::Square(Hostile ? 800.f : 600.f)) {
             FVector Direction=Target->GetActorLocation()-GetActorLocation();
             FRotator Look=Direction.Rotation();float Yaw=FMath::Clamp(FMath::FindDeltaAngleDegrees(GetActorRotation().Yaw,Look.Yaw),-55.f,55.f);
-            NativeViewPitch=FMath::Clamp(-Look.Pitch,-45.f,45.f);
-            Pose.SetRotation(FRotator(-NativeViewPitch,Yaw,0).Quaternion()*Pose.GetRotation());
+            NativeViewPitch=FMath::FInterpTo(NativeViewPitch,FMath::Clamp(-Look.Pitch,-45.f,45.f),DeltaSeconds,8.f);
+            HeadYaw=FMath::FInterpTo(HeadYaw,Yaw,DeltaSeconds,8.f);
+            Pose.SetRotation(FRotator(-NativeViewPitch,HeadYaw,0).Quaternion()*Pose.GetRotation());
         }
         Parts[Index]->SetRelativeTransform(Pose);
     }
@@ -351,8 +373,11 @@ void ABridgeMobCharacter::ApplyNativeKnockback(float StrengthBlocksPerTick,const
     FVector Away=AwayDirection;
     if(Away.SizeSquared2D()<.1) do {Away.X=Random.FRand()-Random.FRand();Away.Y=Random.FRand()-Random.FRand();} while(Away.SizeSquared2D()<.1);
     const auto Result=BridgeCombatMath::knockbackVelocity({Old.X,Old.Y,Old.Z},StrengthBlocksPerTick,InitialSnapshot.KnockbackResistance,Away.X,Away.Y,Movement->IsMovingOnGround());
-    Movement->Velocity=FVector(Result.x,Result.y,Result.z);
-    if(Result.z>0 && Movement->IsMovingOnGround()) PendingKnockbackAirborne=true;
+    // LaunchCharacter defers the impulse until CharacterMovement consumes it;
+    // writing Velocity on a walking frame can be projected away by floor physics.
+    LaunchCharacter(FVector(Result.x,Result.y,Result.z),true,true);
+    KnockbackUntil=GetWorld()->GetTimeSeconds()+.25;
+    MoveIntent=FVector::ZeroVector;HasWaypoint=false;PathTicks=0;
 }
 
 bool ABridgeMobCharacter::Hit(float Amount,const FVector& Direction) {

@@ -283,7 +283,7 @@ def _model_parent(unreal, assets, tools, editing, root, sample_texture, alpha_mo
     scalar_names = {str(value) for value in editing.get_scalar_parameter_names(parent)}
     texture_names = {str(value) for value in editing.get_texture_parameter_names(parent)}
     use_vertex = not root.endswith('/Items')
-    required_scalars = {'FaceTint', 'BridgeUnlit', 'BridgeSpecular', 'BridgeLightingRevision_v4'}
+    required_scalars = {'FaceTint', 'BridgeUnlit', 'BridgeSpecular', 'BridgeLightingRevision_v5'}
     if use_vertex:
         required_scalars.add('BridgeUseVertexLight')
     if required_scalars.issubset(scalar_names) and 'FaceTexture' in texture_names:

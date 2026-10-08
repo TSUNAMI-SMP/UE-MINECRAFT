@@ -231,7 +231,7 @@ void ABridgeNativePlayerController::SetMenuInput() {
         FInputModeGameOnly Mode;Mode.SetConsumeCaptureMouseDown(false);SetInputMode(Mode);
     }
     if(PlayerInput) PlayerInput->FlushPressedKeys();
-    WheelRemainder=0;
+    WheelRemainder=0;RawMouseX=RawMouseY=0;
     LookXSmoother.Clear();LookYSmoother.Clear();
     PreviousJumpTap=PreviousForwardTap=-1;bDoubleSprint=false;
     float UnusedX=0,UnusedY=0;GetInputMouseDelta(UnusedX,UnusedY);
@@ -277,6 +277,13 @@ void ABridgeNativePlayerController::RouteMenuInput() {
     if(Steps) Hud->HandleScroll(Steps);
 }
 bool ABridgeNativePlayerController::InputKey(const FInputKeyEventArgs& Params) {
+    // Relative OS counts, before PlayerInput smoothing/dead zones/axis scaling.
+    if(Params.Key==EKeys::MouseX || Params.Key==EKeys::MouseY) {
+        if(FMath::IsFinite(Params.AmountDepressed)) {
+            if(Params.Key==EKeys::MouseX) RawMouseX+=Params.AmountDepressed;
+            else RawMouseY+=Params.AmountDepressed;
+        }
+    }
     const bool Result=Super::InputKey(Params);
     if(IsValid(NativeReceiver) && NativeReceiver->NativePlayActive && (bInventoryOpen || bPauseOpen)
         && Params.Event==IE_Released && (Params.Key==EKeys::LeftMouseButton || Params.Key==EKeys::RightMouseButton || Params.Key==EKeys::MiddleMouseButton)) {
@@ -307,6 +314,24 @@ bool ABridgeNativePlayerController::InputKey(const FInputKeyEventArgs& Params) {
     }
     return Result;
 }
+void ABridgeNativePlayerController::UpdateRotation(float DeltaSeconds) {
+    if(!IsValid(NativeReceiver) || !NativeReceiver->NativePlayActive) {
+        RawMouseX=RawMouseY=0;Super::UpdateRotation(DeltaSeconds);return;
+    }
+    if(bInventoryOpen || bPauseOpen || !bLastFocused || !Focused() || !NativeReceiver->IsNativeReady()) {
+        RawMouseX=RawMouseY=0;LookXSmoother.Clear();LookYSmoother.Clear();return;
+    }
+    const double MouseX=RawMouseX,MouseY=RawMouseY;RawMouseX=RawMouseY=0;
+    const bool Spyglass=SelectedItem==TEXT("minecraft:spyglass") && Down(TEXT("key.use")) && NativePerspective==0;
+    const float YawDelta=float(BridgeNativeLookMath::Degrees(MouseX,MouseSensitivity,DeltaSeconds,SmoothCamera,Spyglass,LookXSmoother));
+    const float PitchDelta=float(BridgeNativeLookMath::Degrees(MouseY,MouseSensitivity,DeltaSeconds,SmoothCamera,Spyglass,LookYSmoother));
+    const FRotator PreviousRotation=GetControlRotation();
+    // UE MouseY is positive upwards; Minecraft exposes independent axis inversions.
+    const FRotator Rotation(float(BridgeNativeInputMath::ClampPitch(PreviousRotation.Pitch+PitchDelta*(InvertMouse ? -1.f : 1.f))),
+        FRotator::NormalizeAxis(PreviousRotation.Yaw+YawDelta*(InvertMouseX ? -1.f : 1.f)),0);
+    SetControlRotation(Rotation);
+    if(auto* BridgePawn=Cast<ABridgeCharacter>(GetPawn())) BridgePawn->FaceRotation(Rotation,DeltaSeconds);
+}
 void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
     Super::Tick(DeltaSeconds);
     FindReceiver();
@@ -333,7 +358,7 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
     if(bInventoryOpen || bPauseOpen) {RouteMenuInput();StopNativeInput();UpdateSelectedItem();return;}
     const bool HasFocus=Focused();
     if(!HasFocus) {
-        StopNativeInput();bLastFocused=false;
+        StopNativeInput();bLastFocused=false;RawMouseX=RawMouseY=0;
         LookXSmoother.Clear();LookYSmoother.Clear();
         PreviousJumpTap=PreviousForwardTap=-1;bDoubleSprint=false;WheelRemainder=0;
         return;
@@ -341,7 +366,7 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
     if(!bLastFocused) {
         if(PlayerInput) PlayerInput->FlushPressedKeys();
         float DiscardX=0,DiscardY=0;GetInputMouseDelta(DiscardX,DiscardY);
-        bLastFocused=true;StopNativeInput();return;
+        bLastFocused=true;RawMouseX=RawMouseY=0;StopNativeInput();return;
     }
     if(!NativeReceiver->IsNativeReady()) {NativeInputStatus=NativeReceiver->NativeStatus;StopNativeInput();return;}
     NativeInputStatus=TEXT("Direct UE input");
@@ -364,15 +389,7 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
     if(ToggleCrouchOption && Pressed(TEXT("key.sneak"))) bToggleSneak=!bToggleSneak;
     if(ToggleSprintOption && Pressed(TEXT("key.sprint"))) bToggleSprint=!bToggleSprint;
     if(Pressed(TEXT("key.toggleGui"))) NativeHudVisible=!NativeHudVisible;
-    float MouseX=0,MouseY=0;GetInputMouseDelta(MouseX,MouseY);
-    const bool Spyglass=SelectedItem==TEXT("minecraft:spyglass") && Down(TEXT("key.use")) && NativePerspective==0;
-    const float YawDelta=float(BridgeNativeLookMath::Degrees(MouseX,MouseSensitivity,DeltaSeconds,SmoothCamera,Spyglass,LookXSmoother));
-    const float PitchDelta=float(BridgeNativeLookMath::Degrees(MouseY,MouseSensitivity,DeltaSeconds,SmoothCamera,Spyglass,LookYSmoother));
-    const FRotator PreviousRotation=GetControlRotation();
-    // UE MouseY is positive upwards; Minecraft exposes independent axis inversions.
-    const FRotator Rotation(float(BridgeNativeInputMath::ClampPitch(PreviousRotation.Pitch+PitchDelta*(InvertMouse ? -1.f : 1.f))),
-        FRotator::NormalizeAxis(PreviousRotation.Yaw+YawDelta*(InvertMouseX ? -1.f : 1.f)),0);
-    SetControlRotation(Rotation);
+    const FRotator Rotation=GetControlRotation();
     const float Forward=(Down(TEXT("key.forward")) ? 1.f : 0.f)-(Down(TEXT("key.back")) ? 1.f : 0.f);
     const float Right=(Down(TEXT("key.right")) ? 1.f : 0.f)-(Down(TEXT("key.left")) ? 1.f : 0.f);
     const bool Sneak=ToggleCrouchOption ? bToggleSneak : Down(TEXT("key.sneak"));

@@ -1,3 +1,4 @@
+#include "BridgeMeshingMath.h"
 #include "BridgeDroppedItem.h"
 #include "BridgeBlockPalette.h"
 #include "Components/SphereComponent.h"
@@ -58,12 +59,12 @@ bool ABridgeDroppedItem::BuildMesh() {
             const FVector MC=Face.Vertices[V];const FVector Point=FVector(MC.Z,-MC.X,MC.Y)*100.f+Offset;
             Section.Positions.Add(Point);Bounds+=Point;Section.UV.Add(Face.UV[V]);Section.Colors.Add(FLinearColor::White);
         }
-        // The Minecraft -> UE axis conversion changes handedness; reverse winding.
+        // Keep transformed MC order for UE clockwise fronts; normals remain outward.
         const FVector Normal=Face.HasNativeNormal ? FVector(Face.NativeNormal.Z,-Face.NativeNormal.X,Face.NativeNormal.Y)
             : FVector::CrossProduct(Section.Positions[First+2]-Section.Positions[First],Section.Positions[First+1]-Section.Positions[First]).GetSafeNormal();
         const FVector Tangent=(Section.Positions[First+1]-Section.Positions[First]).GetSafeNormal();
         for(int32 V=0;V<4;++V) {Section.Normals.Add(Normal);Section.Tangents.Add(FProcMeshTangent(Tangent,false));}
-        Section.Indices.Append({First,First+2,First+1,First,First+3,First+2});
+        for(int32 TriangleIndex:BridgeMeshingMath::UEFrontQuad(First)) Section.Indices.Add(TriangleIndex);
     }
     Mesh->ClearAllMeshSections();VisualOffset=-Bounds.Min.Z-Radius+7.f;
     for(int32 Index=0;Index<Sections.Num();++Index) {

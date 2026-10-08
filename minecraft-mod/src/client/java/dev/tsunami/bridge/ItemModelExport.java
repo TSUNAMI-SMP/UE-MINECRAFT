@@ -96,7 +96,7 @@ public final class ItemModelExport {
         if(capture.faces.isEmpty()) throw new IOException("Native GUI renderer emitted no geometry");
         for(var value:capture.faces) {
             var face=value.getAsJsonObject();var normal=face.getAsJsonArray("normal");
-            if(normal!=null) face.addProperty("guiShade",NativeItemLighting.gui(normal.get(0).getAsFloat(),normal.get(1).getAsFloat(),normal.get(2).getAsFloat(),state.isSideLit()));
+            if(normal!=null) face.addProperty("guiShade",NativeItemLighting.guiModel(normal.get(0).getAsFloat(),normal.get(1).getAsFloat(),normal.get(2).getAsFloat(),state.isSideLit()));
         }
         return capture.faces;
     }

@@ -108,8 +108,8 @@ void ABridgeBlockPreview::Replace(const TArray<FBridgeBlock>& Source, const FVec
                     Section.Lighting.Add({Block.SourceBlock,Face.Vertices[I],MCNormal,Light.A});
                     Section.Tangents.Add(FProcMeshTangent((Vertices[3]-Vertices[0]).GetSafeNormal(),false));
                 }
-                // This permutation reflects handedness: keep Minecraft outward normals and reverse winding.
-                Section.Indices.Append({Base,Base+2,Base+1,Base,Base+3,Base+2});++RenderedFaces;
+                // This permutation reflects handedness: UE fronts are clockwise: transformed MC order already faces outward.
+                for(int32 TriangleIndex:BridgeMeshingMath::UEFrontQuad(Base)) Section.Indices.Add(TriangleIndex);++RenderedFaces;
             }
             continue;
         }

@@ -22,14 +22,16 @@ int main() {
     assert(CullNativeFace({1,0,0},true,true));assert(!CullNativeFace({1,0,0},false,true));
     assert(!CullNativeFace({0,0,0},true,true));assert(!CullNativeFace({1,0,1},true,true));assert(!CullNativeFace({1,0,0},true,false));
     // Native cube quads use the same outward vertex order as the model baker. The
-    // reflected UE transform needs reverse triangles, with unchanged outward normal.
+    // reflected UE transform keeps MC order for clockwise fronts, with outward normals.
     const std::array<std::array<Point,4>,6> quads={{{{{0,0,1},{0,0,0},{1,0,0},{1,0,1}}},{{{0,1,0},{0,1,1},{1,1,1},{1,1,0}}},
         {{{1,1,0},{1,0,0},{0,0,0},{0,1,0}}},{{{0,1,1},{0,0,1},{1,0,1},{1,1,1}}},
         {{{0,1,0},{0,0,0},{0,0,1},{0,1,1}}},{{{1,1,1},{1,0,1},{1,0,0},{1,1,0}}}}};
     const std::array<Point,6> normals={{{0,-1,0},{0,1,0},{0,0,-1},{0,0,1},{-1,0,0},{1,0,0}}};
     for(int face=0;face<6;++face) {const auto& q=quads[face];assert(NativeNormal(q)==normals[face]);
-        const Point ueNormal=MCToUE(NativeNormal(q));const Point a=MCToUE(q[0]),b=MCToUE(q[2]),c=MCToUE(q[1]);
-        assert(Cross(Subtract(b,a),Subtract(c,a))==ueNormal);
+        const Point ueNormal=MCToUE(NativeNormal(q));const auto indices=UEFrontQuad();
+        const Point a=MCToUE(q[indices[0]]),b=MCToUE(q[indices[1]]),c=MCToUE(q[indices[2]]);
+        const auto winding=Cross(Subtract(b,a),Subtract(c,a));
+        for(int axis=0;axis<3;++axis) assert(winding[axis]==-ueNormal[axis]);
         // Grass overlay has identical corners and orientation, even after a
         // cyclic reordering. Crossed foliage's reverse face must remain unbiased.
         auto cyclic=q;for(int i=0;i<4;++i) cyclic[i]=q[(i+1)%4];assert(CoincidentForwardQuads(q,cyclic));

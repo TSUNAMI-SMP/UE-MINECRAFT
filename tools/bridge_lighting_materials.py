@@ -5,7 +5,7 @@ material is deleted. Parameter collection values are per UE world at runtime.
 """
 
 COLLECTION_PATH = '/Game/Bridge/Minecraft/MPC_BridgeLighting_v1'
-LIGHTING_REVISION_PARAMETER = 'BridgeLightingRevision_v4'
+LIGHTING_REVISION_PARAMETER = 'BridgeLightingRevision_v5'
 SCALARS = {'BridgeVanillaMode': 0.0, 'BridgeSkyFactor': 1.0, 'BridgeBlockFactor': 1.5,
            'BridgeAmbient': 0.0, 'BridgeGamma': 0.5, 'BridgeNightVision': 0.0,
            'BridgeDarkness': 0.0, 'BridgeDarkenWorld': 0.0, 'BridgeDiffuseLight1Y': 1.0}
@@ -132,12 +132,16 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
     wire(display_pixel, hurt_pixel, 'A'); wire(hurt_color, hurt_pixel, 'B'); wire(hurt_alpha, hurt_pixel, 'Alpha')
     display_pixel = hurt_pixel
     pixel_rgb = _color_transfer(unreal, editing, material, display_pixel, DISPLAY_TO_LINEAR)
-    mode = global_parameter('BridgeVanillaMode')
+    world_mode = global_parameter('BridgeVanillaMode')
+    view_mode = parameter('BridgeViewLight', 0.0)
+    one = node(unreal.MaterialExpressionConstant); one.set_editor_property('r', 1.0)
+    mode = node(unreal.MaterialExpressionLinearInterpolate)
+    wire(world_mode, mode, 'A'); wire(one, mode, 'B'); wire(view_mode, mode, 'Alpha')
     # Keep the old public scalar in the generated graph without allowing it to
     # override the shared mode and leave a previous OFF setting stuck on return.
     legacy = parameter('BridgeUnlit', 0.0)
     ignored = node(unreal.MaterialExpressionMultiply); ignored.set_editor_property('const_b', 0.0); wire(legacy, ignored, 'A')
-    revision = parameter(LIGHTING_REVISION_PARAMETER, 4.0)
+    revision = parameter(LIGHTING_REVISION_PARAMETER, 5.0)
     revision_ignored = node(unreal.MaterialExpressionMultiply); revision_ignored.set_editor_property('const_b', 0.0); wire(revision, revision_ignored, 'A')
     zero_compat = node(unreal.MaterialExpressionAdd); wire(ignored, zero_compat, 'A'); wire(revision_ignored, zero_compat, 'B')
     mode_sum = node(unreal.MaterialExpressionAdd); wire(mode, mode_sum, 'A'); wire(zero_compat, mode_sum, 'B')
@@ -149,13 +153,24 @@ def wire_vanilla_lighting(unreal, editing, material, pixel_rgb, vertex_node=None
     normal = node(unreal.MaterialExpressionPixelNormalWS)
     actor_shade = node(unreal.MaterialExpressionCustom)
     actor_shade.set_editor_property('output_type', unreal.CustomMaterialOutputType.CMOT_FLOAT3)
-    actor_shade.set_editor_property('inputs', [custom_input('WorldNormal'),custom_input('Light1Y')])
+    def view_axis(name, default):
+        value=node(unreal.MaterialExpressionVectorParameter)
+        value.set_editor_property('parameter_name',name);value.set_editor_property('default_value',unreal.LinearColor(*default))
+        return value
+    axes=[('ViewForward',view_axis('BridgeViewForward',(1,0,0,0))),
+          ('ViewRight',view_axis('BridgeViewRight',(0,1,0,0))),
+          ('ViewUp',view_axis('BridgeViewUp',(0,0,1,0))),
+          ('UseView',view_mode)]
+    actor_shade.set_editor_property('inputs', [custom_input('WorldNormal'),custom_input('Light1Y')]+[custom_input(name) for name,_ in axes])
     actor_shade.set_editor_property('code',
-        'float3 n=normalize(float3(-WorldNormal.y,WorldNormal.z,WorldNormal.x)); '
+        'float3 viewN=float3(dot(WorldNormal,ViewForward.rgb),dot(WorldNormal,ViewRight.rgb),dot(WorldNormal,ViewUp.rgb)); '
+        'float3 normal=lerp(WorldNormal,viewN,saturate(UseView)); '
+        'float3 n=normalize(float3(-normal.y,normal.z,normal.x)); '
         'float3 l0=normalize(float3(.2,1,-.7)),l1=normalize(float3(-.2,Light1Y,.7)); '
         'float shade=min(1.0,.4+.6*(max(dot(l0,n),0)+max(dot(l1,n),0))); '
         'return float3(1,1,shade);')
     wire(normal, actor_shade, 'WorldNormal')
+    for name,axis in axes: wire(axis,actor_shade,name)
     wire(global_parameter('BridgeDiffuseLight1Y'),actor_shade,'Light1Y')
     shaded_actor = node(unreal.MaterialExpressionMultiply); wire(actor, shaded_actor, 'A'); wire(actor_shade, shaded_actor, 'B')
     # VertexColor exposes RGB/R/G/B/A, not RGBA. An empty output name selects

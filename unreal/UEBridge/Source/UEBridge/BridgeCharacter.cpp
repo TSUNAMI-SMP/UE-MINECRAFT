@@ -1,3 +1,4 @@
+#include "BridgeMeshingMath.h"
 #include "BridgeCharacter.h"
 #include "BridgeCharacterMovement.h"
 #include "BridgeCharacterMath.h"
@@ -49,7 +50,7 @@ void SkinCuboid(UProceduralMeshComponent* Part,float PixelWidth,float PixelHeigh
         const int32 First=Vertices.Num();Vertices.Append({A+Center,B+Center,C+Center,E+Center});
         UV.Append({FVector2D(U/64.f,V/64.f),FVector2D((U+UW)/64.f,V/64.f),FVector2D((U+UW)/64.f,(V+VH)/64.f),FVector2D(U/64.f,(V+VH)/64.f)});
         for(int32 I=0;I<4;++I) {Normals.Add(Normal);Colors.Add(FLinearColor::White);Tangents.Add(FProcMeshTangent((B-A).GetSafeNormal(),false));}
-        if(FVector::DotProduct(FVector::CrossProduct(B-A,C-A),Normal)>0) Indices.Append({First,First+1,First+2,First,First+2,First+3});
+        if(FVector::DotProduct(FVector::CrossProduct(B-A,C-A),Normal)<0) Indices.Append({First,First+1,First+2,First,First+2,First+3});
         else Indices.Append({First,First+2,First+1,First,First+3,First+2});
     };
     // UE +X is the player's front, +Y their right, +Z up.
@@ -492,6 +493,14 @@ void ABridgeCharacter::CacheHandGeometry(UProceduralMeshComponent* Part) {
 void ABridgeCharacter::PoseHandGeometry(UProceduralMeshComponent* Part,const FTransform& Pose,bool FixedHandFov) {
     const auto* Sources=HandSources.Find(Part);if(!Sources) return;
     Part->SetRelativeTransform(FTransform::Identity);
+    // First-person diffuse lighting is anchored to the view, like Minecraft's
+    // hand pass; rotating the camera must not rotate the lights over the item.
+    for(int32 Index=0;Index<Part->GetNumSections();++Index) if(auto* Material=Cast<UMaterialInstanceDynamic>(Part->GetMaterial(Index))) {
+        Material->SetScalarParameterValue(TEXT("BridgeViewLight"),FixedHandFov ? 1.f : 0.f);
+        const FVector Axes[]={BridgeCamera->GetForwardVector(),BridgeCamera->GetRightVector(),BridgeCamera->GetUpVector()};
+        const FName Names[]={TEXT("BridgeViewForward"),TEXT("BridgeViewRight"),TEXT("BridgeViewUp")};
+        for(int32 Axis=0;Axis<3;++Axis) Material->SetVectorParameterValue(Names[Axis],FLinearColor(Axes[Axis].X,Axes[Axis].Y,Axes[Axis].Z,0));
+    }
     const double Transverse=FixedHandFov ? BridgeCharacterMath::FirstPersonTransverseScale(BridgeVerticalFov) : 1.0;
     const FVector Stretch(1,Transverse,Transverse),Scale=Pose.GetScale3D();
     for(int32 Index=0;Index<Sources->Num();++Index) {
@@ -568,7 +577,7 @@ void ABridgeCharacter::BuildHandGeometry(UProceduralMeshComponent* Model,const F
             : FVector::CrossProduct(Section.Vertices[First+2]-Section.Vertices[First],Section.Vertices[First+1]-Section.Vertices[First]).GetSafeNormal();
         const FVector Tangent=(Section.Vertices[First+1]-Section.Vertices[First]).GetSafeNormal();
         for(int32 I=0;I<4;++I) {Section.Normals.Add(Normal);Section.Tangents.Add(FProcMeshTangent(Tangent,false));}
-        Section.Triangles.Append({First,First+2,First+1,First,First+3,First+2});
+        for(int32 TriangleIndex:BridgeMeshingMath::UEFrontQuad(First)) Section.Triangles.Add(TriangleIndex);
     }
     for(int32 Index=0;Index<Sections.Num();++Index) {
         const auto& Section=Sections[Index];

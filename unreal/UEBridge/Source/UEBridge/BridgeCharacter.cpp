@@ -1,5 +1,5 @@
-#include "BridgeMeshingMath.h"
 #include "BridgeCharacter.h"
+#include "BridgeMeshingMath.h"
 #include "BridgeCharacterMovement.h"
 #include "BridgeCharacterMath.h"
 #include "BridgeOutlineMath.h"
@@ -305,12 +305,12 @@ void ABridgeCharacter::Tick(float DeltaSeconds) {
         const double PixelScale=2*FMath::Tan(FMath::DegreesToRadians(BridgeCamera->FieldOfView*.5))/FMath::Max(1,ViewWidth);
         for(int32 I=0;I+1<AimLineEndpoints.Num();I+=2) {
             const FVector A=AimLineEndpoints[I],B=AimLineEndpoints[I+1],Mid=(A+B)*.5;
-            const FVector Normal=(LocalEye-Mid).GetSafeNormal(),D=(B-A).GetSafeNormal();
-            const FVector U=FVector::CrossProduct(D,Normal).GetSafeNormal()*FMath::Max(.02,PixelScale*(LocalEye-Mid).Size());
+            const FVector RibbonNormal=(LocalEye-Mid).GetSafeNormal(),D=(B-A).GetSafeNormal();
+            const FVector U=FVector::CrossProduct(D,RibbonNormal).GetSafeNormal()*FMath::Max(.02,PixelScale*(LocalEye-Mid).Size());
             if(U.IsNearlyZero()) continue;
             const int32 Base=Vertices.Num();Vertices.Append({A-U,B-U,B+U,A+U});
-            std::array<BridgeMeshingMath::Point,4> Q;for(int32 J=0;J<4;++J) {const auto& V=Vertices[Base+J];Q[J]={V.X,V.Y,V.Z};Normals.Add(Normal);UV.Add(FVector2D::ZeroVector);Colors.Add(FLinearColor(0,0,0,.4));}
-            for(int32 T:BridgeMeshingMath::UEFacingQuad(Q,{Normal.X,Normal.Y,Normal.Z},Base)) Indices.Add(T);
+            std::array<BridgeMeshingMath::Point,4> Q;for(int32 J=0;J<4;++J) {const auto& V=Vertices[Base+J];Q[J]={V.X,V.Y,V.Z};Normals.Add(RibbonNormal);UV.Add(FVector2D::ZeroVector);Colors.Add(FLinearColor(0,0,0,.4f));}
+            for(int32 T:BridgeMeshingMath::UEFacingQuad(Q,{RibbonNormal.X,RibbonNormal.Y,RibbonNormal.Z},Base)) Indices.Add(T);
         }
         const auto* Existing=AimOutline->GetProcMeshSection(0);
         if(Existing && Existing->ProcVertexBuffer.Num()==Vertices.Num() && Existing->ProcIndexBuffer.Num()==Indices.Num())

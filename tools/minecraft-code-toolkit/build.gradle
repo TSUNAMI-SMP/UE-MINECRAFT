@@ -1,0 +1,35 @@
+plugins {
+    id 'net.fabricmc.fabric-loom-remap' version '1.14.10'
+}
+version = '1.0.0'
+loom { splitEnvironmentSourceSets() }
+repositories { mavenCentral() }
+dependencies {
+    minecraft 'com.mojang:minecraft:1.21.11'
+    mappings 'net.fabricmc:yarn:1.21.11+build.6:v2'
+    modImplementation 'net.fabricmc:fabric-loader:0.19.5'
+}
+java { sourceCompatibility = JavaVersion.VERSION_21; targetCompatibility = JavaVersion.VERSION_21 }
+
+// Pin the input selection to this Minecraft version and mapping revision.
+// Never search an unrelated Minecraft instance or change its game files.
+tasks.register('stageReferenceInputs') {
+    dependsOn 'genSources'
+    doLast {
+        def cache = new File(gradle.gradleUserHomeDir, 'caches/fabric-loom')
+        def sources = fileTree(new File(cache, 'minecraftMaven/net/minecraft')).matching {
+            include '**/minecraft-common-*-sources.jar'
+            include '**/minecraft-clientonly-*-sources.jar'
+        }.files.findAll { it.path.contains('1.21.11+build.6-v2') && it.name.startsWith('minecraft-') }
+        if (sources.size() != 2) throw new GradleException("Expected common and client source JARs; found ${sources.size()}")
+        def inputs = layout.buildDirectory.dir('reference-inputs').get().asFile
+        inputs.mkdirs()
+        copy { from sources; into inputs }
+        copy {
+            from new File(cache, '1.21.11/minecraft-client.jar')
+            from new File(cache, '1.21.11/mojang_minecraft_info.json')
+            from new File(cache, '1.21.11/net.fabricmc.yarn.1_21_11.1.21.11+build.6-v2/mappings.tiny')
+            into inputs
+        }
+    }
+}

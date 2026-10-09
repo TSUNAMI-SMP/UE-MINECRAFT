@@ -19,7 +19,7 @@ void ABridgeWorld::Clear(uint64 Barrier) {
     for (auto& Pair:Cells) if (IsValid(Pair.Value)) { Pair.Value->Clear(); Pair.Value->Destroy(); }
     for(auto& Box:Boundary) if(Box) Box->DestroyComponent(); Boundary.Empty();
     for(auto& Fall:NativeFalls) if(Fall.Visual.IsValid()) Fall.Visual->Destroy();NativeFalls.Empty();RuleQueue.Empty();RuleDelayed.Empty();GrassSections.Empty();ComparatorPower.Empty();NativeRules=false;NativeRuleTick=0;NativeRuleClock=0;
-    Sealed=false;InitialRelightQueued=false;ImportId.Empty();Stored.Empty();VisualRows.Empty();SortedGrassSections.Empty();ButtonRelease.Empty();ButtonTimerOwners.Empty();LastModelError.Empty();SurfaceReason=TEXT("not_sampled");
+    Sealed=false;InitialRelightQueued=false;ImportId.Empty();Stored.Empty();VisualRows.Empty();SortedGrassSections.Empty();ButtonRelease.Empty();ButtonTimerOwners.Empty();LastModelError.Empty();NativeFallingRestoreError.Empty();SurfaceReason=TEXT("not_sampled");
     Cells.Empty(); Counts.Empty(); Revisions.Empty(); Stages.Empty(); Shapes=0; Scoped=false; ScopeSequence=0; ClearBarrier=Barrier;
     OpaqueCells.Empty();RebuildQueue.Empty();LightQueue.Empty();EditedBlocks.Empty();EditedCellOwners.Empty();RemovedBlocks.Empty();SkyTops.Empty();WaterCells.Empty();BiomeTintCells.Empty();PhysicsCells.Empty();AdditionalCollisionPositions.Empty();HasCollisionCenter=false;
     if(Lighting) Lighting->Clear();Lighting.Reset();PendingLighting.Reset();LightSeedCells.Empty();LightSeedCursor=0;PendingLightInitialized=false;LightingRadius=LightingHeight=0;

@@ -61,6 +61,7 @@ public:
     bool SetNativeBlockState(const FIntVector& Block,const FString& Id,const FString& State,int32 Tint=0xffffff);
     TArray<TSharedPtr<class FJsonValue>> ExportNativeFalling() const;
     bool ImportNativeFalling(const TArray<TSharedPtr<class FJsonValue>>& Values);
+    FString GetNativeFallingRestoreError() const {return NativeFallingRestoreError;}
     TFunction<bool(const FString&,const FVector&)> NativeRuleDrop;
     /** Preflight container drops before deleting its block; failed spawning retains the block and all contents. */
     TFunction<bool(const FIntVector&)> NativeBlockRemoving;
@@ -166,6 +167,7 @@ private:
     FRandomStream RuleRandom{173931};
     struct FNativeFall {FIntVector Source;FString Id,State;int32 Tint=0xffffff;FVector Position,Previous,Velocity=FVector::ZeroVector;TWeakObjectPtr<class ABridgeBlockPreview> Visual;int32 Age=0;int64 RetryDropTick=0;};
     TArray<FNativeFall> NativeFalls;
+    FString NativeFallingRestoreError;
     void TickNativeRules(float DeltaSeconds);
     void QueueNativeRule(const FIntVector& Block);
     void EnqueueNativeRule(const FIntVector& Block);

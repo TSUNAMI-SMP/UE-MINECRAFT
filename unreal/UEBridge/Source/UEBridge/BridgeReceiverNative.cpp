@@ -122,7 +122,7 @@ void ABridgeReceiver::BeginNativePlay() {
     Video->SetNativeSkyEnvironment(LatestInput.VanillaLight,NativeStore->GetMetadata().Dimension);
     NativeSetLighting(NativeLighting);
     NativeStatus=TEXT("Validating offline world...");
-    UE_LOG(LogTemp,Display,TEXT("Bridge UE 0.19.1 / MOD 0.18.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
+    UE_LOG(LogTemp,Display,TEXT("Bridge UE 0.19.2 / MOD 0.18.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
 }
 
 void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
@@ -215,7 +215,6 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
                 }
             }
         }
-        if(!IsNativeReplay()) SyncedWorld->EnableNativeFluids(Metadata.Dimension==TEXT("minecraft:the_nether"));
         SyncedWorld->NativeRuleDrop=[this](const FString& Id,const FVector& Position) {return SpawnNativeDrop(Id,1,Position,FVector::ZeroVector,.5f);};
         SyncedWorld->NativeBlockRemoving=[this](const FIntVector& Block) {return DropNativeContainer(Block);};
         SyncedWorld->NativePrimeTnt=[this](const FIntVector& Block) {IgniteNativeTnt(Block);};
@@ -261,8 +260,7 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
         };
         int32 RandomTicks=3;TSharedPtr<FJsonObject> Gameplay;
         if(NativeUiPalette && !NativeUiPalette->GameplayData.IsEmpty() && FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(NativeUiPalette->GameplayData),Gameplay) && Gameplay.IsValid()) {double N=3;if(Gameplay->TryGetNumberField(TEXT("randomTickSpeed"),N)) RandomTicks=FMath::Clamp(int32(N),0,4096);}
-        if(!IsNativeReplay()) SyncedWorld->EnableNativeRules(RandomTicks);
-        if(Metadata.RuntimeState.IsValid()) {const TArray<TSharedPtr<FJsonValue>>* Falling=nullptr;if(Metadata.RuntimeState->TryGetArrayField(TEXT("falling"),Falling) && !SyncedWorld->ImportNativeFalling(*Falling)) {NativeRestoreFailed=true;NativeStatus=TEXT("Saved falling blocks invalid; save preserved");return;}}
+        if(Metadata.RuntimeState.IsValid()) {const TArray<TSharedPtr<FJsonValue>>* Falling=nullptr;if(Metadata.RuntimeState->TryGetArrayField(TEXT("falling"),Falling) && !SyncedWorld->ImportNativeFalling(*Falling)) {NativeRestoreFailed=true;NativeStatus=TEXT("Saved falling blocks invalid; save preserved: ")+SyncedWorld->GetNativeFallingRestoreError();return;}}
 
         RealisticWorld=GetWorld()->SpawnActor<ABridgeRealisticWorld>();
         if(!RealisticWorld) {NativeRestoreFailed=true;NativeStatus=TEXT("Realistic physics world unavailable; saved world retained");return;}
@@ -277,6 +275,8 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
         RealisticWorld->AddTickPrerequisiteActor(this);
         CinematicCapture->Initialize(this,RealisticWorld,SyncedWorld,NativeStore->GetMetadata().SaveFile,Session);
         Video->SetNativeRealisticMode(RealisticWorld->VisualsEnabled());
+        // Do not mutate restored terrain while any saved subsystem is rejected.
+        if(!IsNativeReplay()) {SyncedWorld->EnableNativeFluids(Metadata.Dimension==TEXT("minecraft:the_nether"));SyncedWorld->EnableNativeRules(RandomTicks);}
         NativeInitialized=true;NativeLastAutosave=Now;
         UE_LOG(LogTemp,Display,TEXT("Bridge native terrain loaded: package=%s cells=%d spawn=%s save=%s"),
             *Metadata.PackageId,Metadata.Cells,*Metadata.Spawn.ToString(),*Metadata.SaveFile);

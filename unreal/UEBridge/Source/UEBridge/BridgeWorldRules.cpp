@@ -1,4 +1,5 @@
 #include "BridgeWorld.h"
+#include "BridgeFallingStateMath.h"
 #include "BridgeBlockPalette.h"
 #include "BridgeBlockPreview.h"
 #include "BridgeLightingService.h"
@@ -283,7 +284,7 @@ void ABridgeWorld::TickNativeRules(float DeltaSeconds) {
         const double GrassSpent=FPlatformTime::Seconds()-GrassStart;GrassBudget.ChargeTime(GrassSpent);RuleGrassMillis+=GrassSpent;
         if(!Sections.IsEmpty()) GrassSectionCursor=(GrassSectionCursor+Visited)%Sections.Num();
         const double FallingStart=FPlatformTime::Seconds();
-        for(int32 I=NativeFalls.Num()-1;I>=0;--I) {auto& Fall=NativeFalls[I];++Fall.Age;Fall.Previous=Fall.Position;Fall.Velocity.Z-=80;
+        for(int32 I=NativeFalls.Num()-1;I>=0;--I) {auto& Fall=NativeFalls[I];Fall.Age=BridgeFallingState::AdvanceAge(Fall.Age);Fall.Previous=Fall.Position;Fall.Velocity.Z-=80;
             EnsureCollisionForPosition(Fall.Position);FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(NativeFalling),false,this);
             const FVector Delta=Fall.Velocity*.05f;
             const bool Collided=GetWorld()->SweepSingleByChannel(Hit,Fall.Position,Fall.Position+Delta,FQuat::Identity,ECC_WorldStatic,FCollisionShape::MakeBox(FVector(49)),Query);
@@ -291,7 +292,10 @@ void ABridgeWorld::TickNativeRules(float DeltaSeconds) {
             const FIntVector Target=SourceVoxelAt(Fall.Position-FVector(0,0,45));FString Id,State;GetBlockState(Target,Id,State);
             bool Harden=Fall.Id.EndsWith(TEXT("_concrete_powder")) && (Id==TEXT("minecraft:water") || IsWaterAtUEPosition(Fall.Position));
             if((Collided && Hit.Normal.Z>.6f) || Harden || Fall.Age>600 || !ContainsUEPosition(Fall.Position)) {
-                if(NativeRuleTick<Fall.RetryDropTick || !FallingTransitions.Available()) {Fall.Velocity=FVector::ZeroVector;continue;}
+                if(NativeRuleTick<Fall.RetryDropTick || !FallingTransitions.Available()) {
+                    if(!ContainsUEPosition(Fall.Position)) Fall.Position=Fall.Previous;
+                    Fall.Velocity=FVector::ZeroVector;continue;
+                }
                 const double TransitionStart=FPlatformTime::Seconds();
                 if(Harden) {Fall.Id.LeftChopInline(7);Fall.State=SavedPalette ? SavedPalette->DefaultState(Fall.Id) : FString();}
                 const FIntVector Land=Collided ? SourceVoxelAt(Hit.ImpactPoint+FVector(0,0,1)) : Target;FString Existing,ExistingState;GetBlockState(Land,Existing,ExistingState);
@@ -300,7 +304,7 @@ void ABridgeWorld::TickNativeRules(float DeltaSeconds) {
                 if(!Placed && (!NativeRuleDrop || !NativeRuleDrop(Fall.Id,Fall.Position))) {
                     // Retry with its inventory quantity still owned by this entity.
                     if(!ContainsUEPosition(Fall.Position)) Fall.Position=Fall.Previous;
-                    Fall.Velocity=FVector::ZeroVector;Fall.Age=FMath::Min(Fall.Age,600);Fall.RetryDropTick=NativeRuleTick+20;
+                    Fall.Velocity=FVector::ZeroVector;Fall.RetryDropTick=NativeRuleTick+20;
                     FallingTransitions.Charge(FPlatformTime::Seconds()-TransitionStart);continue;
                 }
                 FallingTransitions.Charge(FPlatformTime::Seconds()-TransitionStart);
@@ -318,21 +322,49 @@ TArray<TSharedPtr<FJsonValue>> ABridgeWorld::ExportNativeFalling() const {
         Row->SetArrayField(TEXT("velocity"),{MakeShared<FJsonValueNumber>(Fall.Velocity.X),MakeShared<FJsonValueNumber>(Fall.Velocity.Y),MakeShared<FJsonValueNumber>(Fall.Velocity.Z)});Out.Add(MakeShared<FJsonValueObject>(Row));}return Out;
 }
 bool ABridgeWorld::ImportNativeFalling(const TArray<TSharedPtr<FJsonValue>>& Values) {
-    if(Values.Num()>128 || !NativeFalls.IsEmpty()) return false;
-    TArray<FNativeFall> Draft;
+    NativeFallingRestoreError.Empty();
+    auto Reject=[this](int32 Index,const TCHAR* Reason) {
+        NativeFallingRestoreError=FString::Printf(TEXT("row=%d %s"),Index,Reason);
+        UE_LOG(LogTemp,Error,TEXT("Bridge falling restore rejected: %s; save preserved"),*NativeFallingRestoreError);return false;
+    };
+    if(Values.Num()>128 || !NativeFalls.IsEmpty()) return Reject(-1,TEXT("count exceeds 128 or falling state already initialized"));
+    TArray<FNativeFall> Draft;int32 Index=-1;
     for(const auto& Value:Values) {const TSharedPtr<FJsonObject>* Row=nullptr;double Tint=0,Age=0;FNativeFall Fall;
-        if(!Value->TryGetObject(Row) || !(*Row)->TryGetStringField(TEXT("id"),Fall.Id) || !Falling(Fall.Id) || !(*Row)->TryGetStringField(TEXT("state"),Fall.State) || !(*Row)->TryGetNumberField(TEXT("tint"),Tint) || !(*Row)->TryGetNumberField(TEXT("age"),Age)
-            || !FMath::IsFinite(Tint) || Tint<0 || Tint>0xffffff || !FMath::IsFinite(Age) || Age<0 || Age>600) return false;
-        auto Read=[&](const TCHAR* Name,FVector& Vector) {const TArray<TSharedPtr<FJsonValue>>* Coordinates=nullptr;if(!(*Row)->TryGetArrayField(Name,Coordinates) || Coordinates->Num()!=3) return false;double Components[3];for(int32 I=0;I<3;++I) if(!(*Coordinates)[I]->TryGetNumber(Components[I]) || !FMath::IsFinite(Components[I]) || FMath::Abs(Components[I])>30000000) return false;Vector=FVector(Components[0],Components[1],Components[2]);return true;};
-        if(!Read(TEXT("position"),Fall.Position) || !Read(TEXT("velocity"),Fall.Velocity)) return false;
-        Fall.Position=BridgeProtocol::ToUnreal(Fall.Position-ImportOrigin,ImportAnchor);if(!ContainsUEPosition(Fall.Position)) return false;
-        Fall.Previous=Fall.Position;Fall.Tint=int32(Tint);Fall.Age=int32(Age);Draft.Add(Fall);
+        ++Index;
+        if(!Value.IsValid() || !Value->TryGetObject(Row) || !Row || !Row->IsValid()) return Reject(Index,TEXT("missing object"));
+        if(!(*Row)->TryGetStringField(TEXT("id"),Fall.Id) || !(Falling(Fall.Id) || (Fall.Id.StartsWith(TEXT("minecraft:")) && Fall.Id.EndsWith(TEXT("_concrete"))))
+            || !(*Row)->TryGetStringField(TEXT("state"),Fall.State)) return Reject(Index,TEXT("invalid block id/state"));
+        if(!(*Row)->TryGetNumberField(TEXT("tint"),Tint) || !FMath::IsFinite(Tint) || Tint<0 || Tint>0xffffff || Tint!=FMath::FloorToDouble(Tint)) return Reject(Index,TEXT("invalid tint"));
+        if(!(*Row)->TryGetNumberField(TEXT("age"),Age) || !BridgeFallingState::RestoreAge(Age,Fall.Age)) return Reject(Index,TEXT("invalid age"));
+        auto Read=[&](const TCHAR* Name,FVector& Vector) {const TArray<TSharedPtr<FJsonValue>>* Coordinates=nullptr;if(!(*Row)->TryGetArrayField(Name,Coordinates) || Coordinates->Num()!=3) return false;double Components[3];for(int32 I=0;I<3;++I) if(!(*Coordinates)[I].IsValid() || !(*Coordinates)[I]->TryGetNumber(Components[I]) || !FMath::IsFinite(Components[I]) || FMath::Abs(Components[I])>30000000) return false;Vector=FVector(Components[0],Components[1],Components[2]);return true;};
+        if(!Read(TEXT("position"),Fall.Position) || !Read(TEXT("velocity"),Fall.Velocity)) return Reject(Index,TEXT("invalid position/velocity"));
+        FVector SourcePosition=Fall.Position;
+        Fall.Position=BridgeProtocol::ToUnreal(SourcePosition-ImportOrigin,ImportAnchor);
+        if(!ContainsUEPosition(Fall.Position)) {
+            const double Bottom=double(Center.Y-HalfHeight)*8;
+            if(!BridgeFallingState::RecoverBelowBoundary(SourcePosition.Y,Bottom,Fall.Age,Fall.Velocity.IsNearlyZero())) return Reject(Index,TEXT("position outside loaded world"));
+            const int32 X=FMath::FloorToInt(SourcePosition.X),Z=FMath::FloorToInt(SourcePosition.Z);
+            bool Recovered=false;
+            for(int32 Y=int32(Bottom);Y<(Center.Y+HalfHeight+1)*8;++Y) {
+                SourcePosition.Y=Y+.5;
+                const FVector Candidate=BridgeProtocol::ToUnreal(SourcePosition-ImportOrigin,ImportAnchor);
+                if(!ContainsUEPosition(Candidate)) continue;
+                FString Id,State;
+                if(GetBlockState(FIntVector(X,Y,Z),Id,State) && !Id.IsEmpty() && Id!=TEXT("minecraft:air")) continue;
+                Fall.Position=Candidate;Recovered=true;break;
+            }
+            if(!Recovered) return Reject(Index,TEXT("no empty recovery position in loaded column"));
+            Fall.Age=BridgeFallingState::ExpiredAge;Fall.Velocity=FVector::ZeroVector;
+            UE_LOG(LogTemp,Warning,TEXT("Bridge falling restore: row=%d recovered below-boundary entity into loaded column for item-drop retry"),Index);
+        }
+        Fall.Previous=Fall.Position;Fall.Tint=int32(Tint);Draft.Add(Fall);
     }
     for(auto& Fall:Draft) {
-        FActorSpawnParameters Spawn;Spawn.Owner=this;auto* Visual=GetWorld()->SpawnActor<ABridgeBlockPreview>(Fall.Position,FRotator::ZeroRotator,Spawn);
-        if(!Visual) {for(auto& Other:Draft) if(Other.Visual.IsValid()) Other.Visual->Destroy();return false;}
+        FActorSpawnParameters Spawn;Spawn.Owner=this;Spawn.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+        auto* Visual=GetWorld()->SpawnActor<ABridgeBlockPreview>(Fall.Position,FRotator::ZeroRotator,Spawn);
+        if(!Visual) {for(auto& Other:Draft) if(Other.Visual.IsValid()) Other.Visual->Destroy();return Reject(-1,TEXT("cannot spawn falling visual"));}
         FBridgeBlock Row;Row.BlockId=Fall.Id;Row.StateKey=Fall.State;Row.Color=Fall.Tint;Row.Role=1;Visual->Replace({Row},Fall.Position,SavedMaterial,SavedPalette,false);Fall.Visual=Visual;
-        if(!Visual->HasContent()) {for(auto& Other:Draft) if(Other.Visual.IsValid()) Other.Visual->Destroy();return false;}
+        if(!Visual->HasContent()) {for(auto& Other:Draft) if(Other.Visual.IsValid()) Other.Visual->Destroy();return Reject(-1,TEXT("falling block model unavailable"));}
     }
     NativeFalls=MoveTemp(Draft);return true;
 }

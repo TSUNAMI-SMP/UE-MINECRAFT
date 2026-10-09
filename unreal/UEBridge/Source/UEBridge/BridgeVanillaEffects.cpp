@@ -52,7 +52,7 @@ void ABridgeVanillaEffects::ConfigurePoof(UBridgeNativeUiPalette* Resources,UMat
     SpriteStreams.Empty();TSharedPtr<FJsonObject> FrameData;
     if(Resources && FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(Resources->ParticleFramesData),FrameData) && FrameData.IsValid())
         for(const auto& Pair:FrameData->Values) {const TArray<TSharedPtr<FJsonValue>>* Frames=nullptr;if(!Pair.Value->TryGetArray(Frames) || Frames->Num()>256) continue;
-            TArray<FString> Keys;for(const auto& Frame:*Frames) {FString Key;if(Frame->TryGetString(Key) && Resources->FindSprite(Key)) Keys.Add(Key);}SpriteStreams.Add(Pair.Key,MoveTemp(Keys));}
+            TArray<FString> Keys;for(const auto& Frame:*Frames) {FString Key;if(Frame->TryGetString(Key) && Resources->FindSprite(Key)) Keys.Add(Key);}SpriteStreams.Add(FString(*Pair.Key),MoveTemp(Keys));}
     UTexture* DefaultTexture=nullptr;
     if(!IsValid(PoofMaterial)) PoofSetupReason=TEXT("missing_material");
     else if(!PoofMaterial->GetTextureParameterValue(FMaterialParameterInfo(TEXT("PoofTexture")),DefaultTexture) || !IsValid(DefaultTexture)) PoofSetupReason=TEXT("material_parameters");

@@ -21,8 +21,8 @@ void UBridgeNativeInventory::LoadGameplay() {
         if(Valid) Recipes.push_back(MoveTemp(Recipe));
     }
     const TSharedPtr<FJsonObject>* Table=nullptr;
-    if(Data->TryGetObjectField(TEXT("fuels"),Table)) for(const auto& Pair:(*Table)->Values) {double Ticks=0;if(Pair.Value->TryGetNumber(Ticks) && Ticks>0 && Ticks<=1000000) Fuels.Add(Pair.Key,int32(Ticks));}
-    if(Data->TryGetObjectField(TEXT("remainders"),Table)) for(const auto& Pair:(*Table)->Values) {FString Id;if(Pair.Value->TryGetString(Id)) Remainders.Add(Pair.Key,Id);}
+    if(Data->TryGetObjectField(TEXT("fuels"),Table)) for(const auto& Pair:(*Table)->Values) {double Ticks=0;if(Pair.Value->TryGetNumber(Ticks) && Ticks>0 && Ticks<=1000000) Fuels.Add(FString(*Pair.Key),int32(Ticks));}
+    if(Data->TryGetObjectField(TEXT("remainders"),Table)) for(const auto& Pair:(*Table)->Values) {FString Id;if(Pair.Value->TryGetString(Id)) Remainders.Add(FString(*Pair.Key),Id);}
     const TArray<TSharedPtr<FJsonValue>>* Containers=nullptr;
     if(Data->TryGetArrayField(TEXT("containers"),Containers) && Containers->Num()<=4096) for(const auto& Value:*Containers) {
         const TSharedPtr<FJsonObject>* Row=nullptr;FString Key,Kind;const TArray<TSharedPtr<FJsonValue>>* Items=nullptr;

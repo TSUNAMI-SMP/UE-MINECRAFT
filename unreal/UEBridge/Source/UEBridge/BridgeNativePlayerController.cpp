@@ -31,10 +31,6 @@ void ABridgeNativePlayerController::BeginPlay() {
     NativeInventory=NewObject<UBridgeNativeInventory>(this);
     FindReceiver();
     InitializeNativeInventory();
-    if(NativeInventory && bInventoryInitialized && !bSavedInventoryRejected) {
-        if(!GetWorld()->IsPaused()) NativeInventory->TickStations(DeltaSeconds);
-        NativeInventory->TickAutosave(FPlatformTime::Seconds());
-    }
 }
 void ABridgeNativePlayerController::EndPlay(const EEndPlayReason::Type Reason) {
     if(NativeInventory && bInventoryInitialized) NativeInventory->SaveProfile();
@@ -369,6 +365,10 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
         }
     }
     InitializeNativeInventory();
+    if(NativeInventory && bInventoryInitialized && !bSavedInventoryRejected) {
+        if(!GetWorld()->IsPaused()) NativeInventory->TickStations(DeltaSeconds);
+        NativeInventory->TickAutosave(FPlatformTime::Seconds());
+    }
     if(WasInputKeyJustPressed(EKeys::Escape)) {if(bChatOpen) SetNativeChatOpen(false);else TogglePause();return;}
     if(bChatOpen) {StopNativeInput();return;}
     if(!bInventoryOpen && !bPauseOpen && Focused() && NativeReceiver->IsNativeReady() && (Pressed(TEXT("key.chat")) || Pressed(TEXT("key.command")))) {

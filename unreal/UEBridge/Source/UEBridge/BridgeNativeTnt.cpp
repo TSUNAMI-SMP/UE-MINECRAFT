@@ -1,4 +1,5 @@
 #include "BridgeReceiver.h"
+#include "BridgeCharacter.h"
 #include "BridgeBlockPreview.h"
 #include "BridgeBlockPalette.h"
 #include "BridgeWorld.h"

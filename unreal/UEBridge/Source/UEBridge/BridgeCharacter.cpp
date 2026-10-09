@@ -553,14 +553,14 @@ void ABridgeCharacter::UpdateNativeEquipment() {
     for(int32 Slot=0;Slot<4;++Slot) {
         const auto* Item=Resources->FindItem(Inventory->GetStack(UBridgeNativeInventory::ArmorBegin+Slot).ItemId);auto* Texture=Item ? Resources->FindSprite(Item->ArmorSprite) : nullptr;
         for(int32 Part=0;Part<6;++Part) {
-            auto* Mesh=ArmorParts[Slot*6+Part];const bool Visible=Texture && (Slot==0 ? Part==0 : Slot==1 ? Part>=1 && Part<=3 : Slot==2 ? Part==1 || Part>=4 : Part>=4);
-            Mesh->ClearAllMeshSections();Mesh->SetVisibility(Visible);if(!Visible) continue;
+            UProceduralMeshComponent* ArmorMesh=ArmorParts[Slot*6+Part].Get();const bool Visible=Texture && (Slot==0 ? Part==0 : Slot==1 ? Part>=1 && Part<=3 : Slot==2 ? Part==1 || Part>=4 : Part>=4);
+            ArmorMesh->ClearAllMeshSections();ArmorMesh->SetVisibility(Visible);if(!Visible) continue;
             const bool Arm=Part==2 || Part==3;const float Width=Part<=1 ? 8.f : 4.f,Height=Part==0 ? 8.f : 12.f,Depth=Part==0 ? 8.f : 4.f;
             const FVector2D UV=Part==0 ? FVector2D(0,0) : Part==1 ? FVector2D(16,16) : Arm ? FVector2D(40,16) : FVector2D(0,16);
-            SkinCuboid(Mesh,Width,Height,Depth,UV.X,UV.Y,Slot==2 ? 3.125f : 6.25f,Part==0,Arm ? 12.5f : 0,Arm ? (Part==2 ? 6.25f : -6.25f) : 0,32);
+            SkinCuboid(ArmorMesh,Width,Height,Depth,UV.X,UV.Y,Slot==2 ? 3.125f : 6.25f,Part==0,Arm ? 12.5f : 0,Arm ? (Part==2 ? 6.25f : -6.25f) : 0,32);
             auto* Material=CreateVisualInstance(PlayerAppearance->SkinMaterial,this);if(Material) {
                 Material->SetTextureParameterValue(TEXT("SkinTexture"),Texture);Material->SetScalarParameterValue(TEXT("BridgeGlint"),Item->Glint ? 1.f : 0.f);
-                if(auto* Glint=Resources->FindSprite(TEXT("misc/enchanted_glint_item"))) Material->SetTextureParameterValue(TEXT("BridgeGlintTexture"),Glint);Mesh->SetMaterial(0,Material);
+                if(auto* Glint=Resources->FindSprite(TEXT("misc/enchanted_glint_item"))) Material->SetTextureParameterValue(TEXT("BridgeGlintTexture"),Glint);ArmorMesh->SetMaterial(0,Material);
             }
         }
     }

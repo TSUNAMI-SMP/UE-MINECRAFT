@@ -130,7 +130,7 @@ void ABridgeWorld::UpdateNativeRule(const FIntVector& Block,bool Delayed) {
         if(IsOpaqueVoxel(Back)) Input=FMath::Max(Input,NativePowerAt(Back,true,&Block));
         const FIntVector Side(-Direction.Z,0,Direction.X);int32 SidePower=FMath::Max(NativeSignal(Block+Side,Block,true),NativeSignal(Block-Side,Block,true));
         if(Id==TEXT("minecraft:repeater")) {
-            bool Locked=false;for(const auto& S:{Side,-Side}) {FString SideId,SideState;if(GetBlockState(Block+S,SideId,SideState) && (SideId==TEXT("minecraft:repeater") || SideId==TEXT("minecraft:comparator")) && NativeSignal(Block+S,Block,true)>0) Locked=true;}
+            bool Locked=false;for(const auto& S:{Side,FIntVector(-Side.X,-Side.Y,-Side.Z)}) {FString SideId,SideState;if(GetBlockState(Block+S,SideId,SideState) && (SideId==TEXT("minecraft:repeater") || SideId==TEXT("minecraft:comparator")) && NativeSignal(Block+S,Block,true)>0) Locked=true;}
             P.Add(TEXT("locked"),Locked ? TEXT("true") : TEXT("false"));Apply();if(Locked) return;
         } else {if(NativeContainerPower) Input=FMath::Max(Input,NativeContainerPower(Back));Input=P.FindRef(TEXT("mode"))==TEXT("subtract") ? FMath::Max(0,Input-SidePower) : (Input>=SidePower ? Input : 0);}
         const bool Powered=Input>0;

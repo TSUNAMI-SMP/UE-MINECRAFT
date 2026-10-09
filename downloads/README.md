@@ -1,3 +1,7 @@
+# UE 0.18.1 compile hotfix
+
+[UEBridge-update-0.18.1.zip](UEBridge-update-0.18.1.zip) / [導入手順](../docs/UPGRADE_0.18.1.md)。MODは0.18.0を継続使用してください。Windows UE実ビルドは未検証です。
+
 # ダウンロード
 
 **物理アイテム・60fps動画0.18.0：** [MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.18.0.jar) / [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.18.0.zip) / [一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UE-Minecraft-MVP-0.18.0.zip) / [導入と操作](../docs/UPGRADE_0.18.0.md)。0.17.0未導入から直接更新できます。砂・TNT・水／溶岩バケツ、表示切替、保存、種類／範囲別削除と取り消し、60fps無音AVIを追加。液体は有限格子、火・煙はメッシュ表現です。Windows UE実ビルド・GPU描画は未検証です。

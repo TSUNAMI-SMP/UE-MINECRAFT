@@ -19,7 +19,10 @@ UCLASS()
 class UEBRIDGE_API UBridgeNativeInventory : public UObject {
     GENERATED_BODY()
 public:
-    static constexpr int32 CraftBegin=100, CraftOutput=109, ContainerBegin=200, ContainerOutput=227;
+    static constexpr int32 CraftBegin=100;
+    static constexpr int32 CraftOutput=109;
+    static constexpr int32 ContainerBegin=200;
+    static constexpr int32 ContainerOutput=227;
     bool OpenStation(const FString& Kind,const FString& Key);
     void CloseStation();
     FString GetStation() const {return Station;}

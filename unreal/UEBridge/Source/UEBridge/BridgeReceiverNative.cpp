@@ -122,7 +122,7 @@ void ABridgeReceiver::BeginNativePlay() {
     Video->SetNativeSkyEnvironment(LatestInput.VanillaLight,NativeStore->GetMetadata().Dimension);
     NativeSetLighting(NativeLighting);
     NativeStatus=TEXT("Validating offline world...");
-    UE_LOG(LogTemp,Display,TEXT("Bridge UE 0.19.0 / MOD 0.18.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
+    UE_LOG(LogTemp,Display,TEXT("Bridge UE 0.19.1 / MOD 0.18.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
 }
 
 void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {

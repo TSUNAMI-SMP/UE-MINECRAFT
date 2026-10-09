@@ -374,7 +374,9 @@ bool ABridgeRealisticWorld::AddWaterSource(const FVector& P,FString& Error) {
 }
 void ABridgeRealisticWorld::TickWaterSources() {
     FVector Player=FVector::ZeroVector;bool HasPlayer=false;
-    if(auto* PC=GetWorld()->GetFirstPlayerController()) if(auto* Pawn=PC->GetPawn()) {Player=Pawn->GetActorLocation();HasPlayer=true;}
+    // UE 5.8 returns TObjectPtr<APawn>; auto* cannot deduce through its conversion.
+    // Plain auto also supports the raw APawn* returned by earlier engine versions.
+    if(auto* PC=GetWorld()->GetFirstPlayerController()) if(auto Pawn=PC->GetPawn()) {Player=Pawn->GetActorLocation();HasPlayer=true;}
     for(auto& Source:WaterSources) {
         const bool Near=HasPlayer && BridgeWaterSource::Near({Player.X,Player.Y,Player.Z},
             {Source.Position.X,Source.Position.Y,Source.Position.Z},BridgeWaterSource::Range);

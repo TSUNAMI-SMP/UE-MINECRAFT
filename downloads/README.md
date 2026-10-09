@@ -1,3 +1,7 @@
+# 水の一括比較キット
+
+[UEBridge-WaterCheck.zip](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-WaterCheck.zip) / [SHA256](UEBridge-WaterCheck.zip.sha256)。ZIP 内の `WaterCheck` フォルダを `UEBridge.uproject` と同じ場所に置き、UE を終了して `WaterCheck/Water-Check.cmd` を実行します。別マップで現在の水とインストール済み標準 FLIP hose を比較し、終了後に専用ログ・レポートの ZIP を作成します。元の水アセット・設定・セーブはスクリプトでは書き換えません。診断用で、修正済み水アセットではありません。Windows UE 5.8 / GPU での実機動作と見た目は未検証です。詳しい手順と検証範囲は ZIP 内にあります。
+
 # UE 0.18.5 FPS regression update
 
 [UEBridge-update-0.18.5.zip](UEBridge-update-0.18.5.zip) / [導入](../docs/UPGRADE_0.18.5.md) / [検証](../docs/AUDIT_0.18.5.md)。手持ちの毎フレームSceneCaptureと不要なブロック規則の処理を削減。MODは0.18.0のまま、0.18.4からは `-Rebuild` のみ必要。Windows UEでの実FPSは未検証です。

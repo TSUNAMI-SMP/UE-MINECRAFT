@@ -20,6 +20,19 @@ class OriginalMaterialGraph(unittest.TestCase):
             value = Material(); assets[root + '/' + name] = value; return value
         def expression(material, kind, *_):
             value = kind(); value.material = material; nodes.append(value); return value
+        def wire(source, output, target, pin):
+            kind = target.kind
+            if kind == 'TextureSampleParameter2D':
+                return pin == 'UVs'
+            if kind == 'Custom':
+                return pin in {value.properties['input_name'] for value in target.properties['inputs']}
+            if kind == 'Multiply':
+                return pin in ('A', 'B')
+            if kind == 'ComponentMask':
+                return pin == ''
+            return False
+        def clear(material):
+            nodes[:] = [node for node in nodes if node.material is not material]
         def connect(source, _, prop):
             connections[(id(source.material), prop)] = source; return True
         properties = types.SimpleNamespace(**{key: key for key in ('MP_BASE_COLOR', 'MP_EMISSIVE_COLOR', 'MP_ROUGHNESS', 'MP_SPECULAR', 'MP_OPACITY', 'MP_NORMAL', 'MP_REFRACTION')})
@@ -27,7 +40,7 @@ class OriginalMaterialGraph(unittest.TestCase):
             EditorAssetLibrary=types.SimpleNamespace(make_directory=lambda *_: None, save_loaded_asset=lambda *_: True),
             AssetToolsHelpers=types.SimpleNamespace(get_asset_tools=lambda: types.SimpleNamespace(create_asset=create)),
             Material=Material, MaterialFactoryNew=Node, CustomInput=Node,
-            MaterialEditingLibrary=types.SimpleNamespace(create_material_expression=expression, connect_material_expressions=lambda *_: True, connect_material_property=connect, get_material_property_input_node=lambda material, prop: connections.get((id(material), prop)), recompile_material=compiled.append),
+            MaterialEditingLibrary=types.SimpleNamespace(create_material_expression=expression, connect_material_expressions=wire, delete_all_material_expressions=clear, connect_material_property=connect, get_material_property_input_node=lambda material, prop: connections.get((id(material), prop)), recompile_material=compiled.append),
             MaterialShadingModel=types.SimpleNamespace(MSM_DEFAULT_LIT='lit', MSM_UNLIT='unlit'),
             BlendMode=types.SimpleNamespace(BLEND_TRANSLUCENT='translucent'), MaterialProperty=properties,
             TranslucencyLightingMode=types.SimpleNamespace(TLM_SURFACE_PER_PIXEL_LIGHTING='surface'),
@@ -35,12 +48,16 @@ class OriginalMaterialGraph(unittest.TestCase):
             LinearColor=lambda *args: args, load_asset=load,
         )
         for name in ('ScalarParameter', 'VectorParameter', 'TextureSampleParameter2D', 'TextureCoordinate', 'Custom', 'Multiply', 'WorldPosition', 'VertexColor', 'ComponentMask'):
-            setattr(unreal, 'MaterialExpression' + name, Node)
+            setattr(unreal, 'MaterialExpression' + name, type(name, (Node,), {'kind': name}))
         texture = types.SimpleNamespace(blueprint_get_size_x=lambda: 16, blueprint_get_size_y=lambda: 512)
         sprites = {key: texture for key in ('block/sand', 'block/tnt_side', 'block/obsidian', 'block/water_still', 'block/lava_still')}
         first = realistic.setup_realistic_materials(unreal, sprites)
         self.assertEqual(len(first), 14)
         self.assertEqual(len(compiled), 14)
+        sample = next(node for node in nodes if node.kind == 'TextureSampleParameter2D')
+        uv = next(node for node in nodes if node.kind == 'TextureCoordinate')
+        self.assertFalse(wire(uv, '', sample, 'Coordinates'))
+        self.assertTrue(wire(uv, '', sample, 'UVs'))
         self.assertTrue(all(m.properties['used_with_instanced_static_meshes'] for m in first))
         for kind in ('Sand', 'Tnt', 'Rock', 'Water', 'Lava', 'Fire', 'Smoke'):
             for style, shading in (('Simple', 'unlit'), ('Lit', 'lit')):

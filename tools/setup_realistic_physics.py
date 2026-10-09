@@ -28,6 +28,8 @@ def setup_realistic_materials(unreal, sprites):
             if not isinstance(material, unreal.Material):
                 raise RuntimeError("Cannot create realistic material " + name)
             if not editing.get_material_property_input_node(material, unreal.MaterialProperty.MP_EMISSIVE_COLOR):
+                # A previous failed import can leave an incomplete generated graph.
+                editing.delete_all_material_expressions(material)
                 material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_DEFAULT_LIT if lit else unreal.MaterialShadingModel.MSM_UNLIT)
                 material.set_editor_property("two_sided", kind in ("Water", "Lava", "Fire", "Smoke"))
                 material.set_editor_property("tangent_space_normal", False)
@@ -71,9 +73,9 @@ def setup_realistic_materials(unreal, sprites):
                         inputs = []
                         for key in ("UV", "Clock"):
                             value = unreal.CustomInput(); value.set_editor_property("input_name", key); inputs.append(value)
-                        anim.set_editor_property("inputs", inputs); wire(uv, anim, "UV"); wire(clock, anim, "Clock"); wire(anim, sample, "Coordinates")
+                        anim.set_editor_property("inputs", inputs); wire(uv, anim, "UV"); wire(clock, anim, "Clock"); wire(anim, sample, "UVs")
                     else:
-                        wire(uv, sample, "Coordinates")
+                        wire(uv, sample, "UVs")
                     color = sample
                 prop(color if lit else zero, unreal.MaterialProperty.MP_BASE_COLOR)
                 emission = color

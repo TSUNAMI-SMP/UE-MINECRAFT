@@ -217,9 +217,26 @@ def load_ui_manifest(filename):
     return manifest
 
 
+def _ui_material_helpers(unreal):
+    """Resolve sibling helpers even when UE executes this file via runpy."""
+    import runpy
+    source = globals().get('__file__')
+    directory = pathlib.Path(source).resolve().parent if source else pathlib.Path(
+        unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir()))
+    loaded = {}
+    for name in ('bridge_lighting_materials.py', 'setup_realistic_physics.py'):
+        script = directory / name
+        if not script.is_file():
+            raise RuntimeError('Missing UI material helper: ' + name + '. Extract the complete UE update beside UEBridge.uproject.')
+        loaded[name] = runpy.run_path(str(script))
+    return (loaded['bridge_lighting_materials.py']['ensure_native_icon_glint_material'],
+            loaded['setup_realistic_physics.py']['setup_realistic_materials'])
+
+
 def import_minecraft_ui(filename):
     manifest = load_ui_manifest(filename)
     import unreal
+    ensure_glint, setup_realistic_materials = _ui_material_helpers(unreal)
     palette_class = getattr(unreal, "BridgeNativeUiPalette", None)
     item_class = getattr(unreal, "BridgeNativeUiItem", None)
     glyph_class = getattr(unreal, "BridgeNativeGlyph", None)
@@ -309,10 +326,8 @@ def import_minecraft_ui(filename):
         palette = tools.create_asset(name, root, palette_class, factory)
     if not isinstance(palette, palette_class):
         raise RuntimeError("Cannot create Minecraft native UI palette")
-    from import_minecraft_textures import _lighting_functions
-    from setup_realistic_physics import setup_realistic_materials
     setup_realistic_materials(unreal, sprites)
-    glint_material=_lighting_functions(unreal)["ensure_native_icon_glint_material"](unreal,assets,unreal.MaterialEditingLibrary)
+    glint_material=ensure_glint(unreal,assets,unreal.MaterialEditingLibrary)
     for field, value in dict(icon_glint_material=glint_material, particle_frames_data=json.dumps(manifest["particleFrames"], separators=(",", ":")), gameplay_data=json.dumps(manifest["gameplay"], ensure_ascii=False, separators=(",", ":")), sprites=sprites, items=items, groups=groups, death_poof_frames=[sprites[key] for key in manifest["deathPoofFrames"]], font_atlas=font_texture, glyphs=glyphs, language=manifest.get("language", ""), export_id=manifest.get("exportId", digest[:20])).items():
         palette.set_editor_property(field, value)
     if not assets.save_loaded_asset(palette, False):

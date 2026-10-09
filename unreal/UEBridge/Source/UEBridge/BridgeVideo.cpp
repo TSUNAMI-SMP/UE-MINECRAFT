@@ -10,6 +10,7 @@
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
+#include "EngineGlobals.h"
 #include "Sockets.h"
 #include "SocketSubsystem.h"
 #include "IPAddress.h"
@@ -138,7 +139,10 @@ void UBridgeVideo::SetRenderMode(bool Lighting,bool VanillaSky) {
 void UBridgeVideo::SetNativeRenderMode(bool Lighting) {
     UWorld* World=GetWorld();auto* Viewport=World?World->GetGameViewport():nullptr;
     if(!Viewport) {UE_LOG(LogTemp,Warning,TEXT("Bridge native lighting: game viewport unavailable"));return;}
-    if(!SavedNativeFlags) {SavedNativeFlags=MakeUnique<FEngineShowFlags>(Viewport->EngineShowFlags);NativeViewport=Viewport;}
+    if(!SavedNativeFlags) {SavedNativeFlags=MakeUnique<FEngineShowFlags>(Viewport->EngineShowFlags);NativeViewport=Viewport;SavedNearClipPlane=GNearClippingPlane;}
+    // Native hands use the main view at near-camera scale, avoiding a second
+    // full scene traversal/render per frame. Restore the global clip on exit.
+    GNearClippingPlane=.1f;
     UpdateStandaloneViewport(false);
     LightingEnabled=Lighting;
     Viewport->EngineShowFlags=*SavedNativeFlags;
@@ -215,9 +219,7 @@ void UBridgeVideo::SetNativeShadows(bool Enabled) {
     }
 }
 void UBridgeVideo::RestoreNativeRenderMode() {
-    for(const auto& Entry:NativeHandParts) if(auto* Part=Entry.Get()) Part->SetVisibleInSceneCaptureOnly(false);
-    NativeHandParts.Reset();
-    if(NativeHandCapture) NativeHandCapture->DestroyComponent();NativeHandCapture=nullptr;NativeHandTarget=nullptr;
+    if(SavedNativeFlags) GNearClippingPlane=SavedNearClipPlane;
     if(auto* Camera=NativeInverseHudCamera.Get()) {
         Camera->PostProcessSettings.WeightedBlendables.Array.RemoveAll([this](const FWeightedBlendable& Entry){return Entry.Object==NativeInverseHudMaterial;});
     }
@@ -243,6 +245,7 @@ bool UBridgeVideo::SetNativeInverseSprite(int32 Slot,UTexture2D* Texture,const F
         if(!Master) return false;
         NativeInverseHudMaterial=UMaterialInstanceDynamic::Create(Master,this);
         if(!NativeInverseHudMaterial) return false;
+        NativeInverseHudMaterial->SetScalarParameterValue(TEXT("NativeHandsEnabled"),0);
     }
     if(NativeInverseHudCamera.Get()!=Camera) {
         if(auto* Previous=NativeInverseHudCamera.Get()) Previous->PostProcessSettings.WeightedBlendables.Array.RemoveAll([this](const FWeightedBlendable& Entry){return Entry.Object==NativeInverseHudMaterial;});
@@ -441,47 +444,10 @@ void UBridgeVideo::SetSource(UCameraComponent* Camera,const FString& Session,uin
 void UBridgeVideo::TickComponent(float DeltaTime,ELevelTick TickType,FActorComponentTickFunction* ThisTickFunction) {
     Super::TickComponent(DeltaTime,TickType,ThisTickFunction);
     UpdateNativeSky();
-    TickNativeHands();
     TickStream(SourceCamera.Get(),SourceSession,SourceInput);
 }
 
-void UBridgeVideo::TickNativeHands() {
-    if(!IsNativeRenderModeActive() || !GetWorld()) return;
-    auto* PC=GetWorld()->GetFirstPlayerController();auto* Character=PC ? Cast<ABridgeCharacter>(PC->GetPawn()) : nullptr;
-    TArray<UPrimitiveComponent*> Parts;if(Character) Character->GetNativeHandComponents(Parts);
-    for(const auto& Entry:NativeHandParts) if(auto* Part=Entry.Get()) if(!Parts.Contains(Part)) Part->SetVisibleInSceneCaptureOnly(false);
-    NativeHandParts.Reset();
-    if(Parts.IsEmpty()) {if(NativeInverseHudMaterial) NativeInverseHudMaterial->SetScalarParameterValue(TEXT("NativeHandsEnabled"),0);return;}
-    auto* Camera=Character->BridgeCamera.Get();if(!Camera) return;
-    if(!NativeInverseHudMaterial && !SetNativeInverseSprite(0,nullptr,FVector4(0,0,0,0),FVector4(0,0,1,1),false)) return;
-    int32 RenderWidth=0,RenderHeight=0;PC->GetViewportSize(RenderWidth,RenderHeight);if(RenderWidth<=0 || RenderHeight<=0) return;
-    if(!NativeHandCapture) {
-        NativeHandTarget=NewObject<UTextureRenderTarget2D>(this);
-        NativeHandTarget->bForceLinearGamma=true;
-        NativeHandTarget->RenderTargetFormat=RTF_RGBA16f;NativeHandTarget->ClearColor=FLinearColor(0,0,0,1);
-        NativeHandTarget->InitAutoFormat(RenderWidth,RenderHeight);
-        NativeHandCapture=NewObject<USceneCaptureComponent2D>(GetOwner());GetOwner()->AddInstanceComponent(NativeHandCapture);
-        NativeHandCapture->bCaptureEveryFrame=false;NativeHandCapture->bCaptureOnMovement=false;
-        NativeHandCapture->bAlwaysPersistRenderingState=true;
-        NativeHandCapture->CaptureSource=ESceneCaptureSource::SCS_SceneColorHDR;
-        NativeHandCapture->PrimitiveRenderMode=ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
-        NativeHandCapture->TextureTarget=NativeHandTarget;NativeHandCapture->RegisterComponent();
-    } else if(NativeHandTarget->SizeX!=RenderWidth || NativeHandTarget->SizeY!=RenderHeight) NativeHandTarget->ResizeTarget(RenderWidth,RenderHeight);
-    NativeHandCapture->ShowFlags=NativeViewport->EngineShowFlags;
-    NativeHandCapture->ShowFlags.SetDynamicShadows(false);NativeHandCapture->ShowFlags.SetAmbientOcclusion(false);
-    NativeHandCapture->ShowFlags.SetGlobalIllumination(false);NativeHandCapture->ShowFlags.SetScreenSpaceReflections(false);
-    NativeHandCapture->ShowFlags.SetReflectionEnvironment(false);
-    NativeHandCapture->ShowFlags.SetPostProcessing(false);NativeHandCapture->ShowFlags.SetMotionBlur(false);
-    NativeHandCapture->ShowFlags.SetTemporalAA(false);NativeHandCapture->ShowFlags.SetAntiAliasing(false);
-    NativeHandCapture->ShowFlags.SetAtmosphere(false);NativeHandCapture->ShowFlags.SetFog(false);NativeHandCapture->ShowFlags.SetCloud(false);
-    NativeHandCapture->ShowOnlyComponents.Reset();
-    for(auto* Part:Parts) {Part->SetVisibleInSceneCaptureOnly(true);NativeHandParts.Add(Part);NativeHandCapture->ShowOnlyComponent(Part);}
-    NativeHandCapture->SetWorldTransform(Camera->GetComponentTransform());NativeHandCapture->FOVAngle=Camera->FieldOfView;
-    NativeHandCapture->CaptureScene();
-    NativeInverseHudMaterial->SetTextureParameterValue(TEXT("NativeHandsTexture"),NativeHandTarget);
-    NativeInverseHudMaterial->SetScalarParameterValue(TEXT("NativeHandsEnabled"),1);
-}
-void UBridgeVideo::RefreshNativeReplayView() {UpdateNativeSky();TickNativeHands();}
+void UBridgeVideo::RefreshNativeReplayView() {UpdateNativeSky();}
 void UBridgeVideo::Start(int32 Port) {
     if (Listener || Port<1024 || Port>65535) return;
     ISocketSubsystem* S=ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM); if (!S) return;
@@ -585,7 +551,7 @@ void UBridgeVideo::Flush() {
     if (Client && !Output.IsEmpty() && FPlatformTime::Seconds()-LastProgress>2) DropClient();
 }
 void UBridgeVideo::TickStream(UCameraComponent* Camera,const FString& Session,uint64 InputSequence) {
-    if(IsNativeRenderModeActive()) return; // Terrain uses the viewport; only hands use a local GPU capture. No stream encode/copy.
+    if(IsNativeRenderModeActive()) return; // Terrain and native hands use one viewport. No capture, stream encode or copy.
     if (!Listener) return;
     ISocketSubsystem* S=ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM); const double Now=FPlatformTime::Seconds();
     if (Client && (Session.IsEmpty() || (!ClientSession.IsEmpty() && ClientSession!=Session))) DropClient();

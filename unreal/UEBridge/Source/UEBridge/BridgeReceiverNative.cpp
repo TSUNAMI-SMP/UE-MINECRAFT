@@ -700,8 +700,9 @@ void ABridgeReceiver::LogDiagnostics(double Now,bool bForceLog) {
         *GetNameSafe(MobPalette),MobPalette?MobPalette->Appearances.Num():0,MobPalette?MobPalette->Templates.Num():0,MobWorld?MobWorld->AliveCount():0,
         VanillaEffects?VanillaEffects->ParticleCount():0,UEControl?TEXT("ready"):TEXT("waiting"),*NativeStatus,*LastAction,*Sample,*Video->GetDiagnosticSummary());
     if(NativePlayActive) {
-        UE_LOG(LogTemp,Display,TEXT("Bridge native performance: worldTickMs=%.2f shadows=%s realistic=%s %s; use stat unit for Game/Draw/GPU times"),
-            SyncedWorld?SyncedWorld->NativeTickMillis():0,NativeShadows?TEXT("on"):TEXT("off"),NativeRealisticVisuals()?TEXT("on"):TEXT("off"),RealisticWorld?*RealisticWorld->Statistics():TEXT("no physics world"));
+        UE_LOG(LogTemp,Display,TEXT("Bridge native performance: worldTickMs=%.2f rulesMs=%.2f rulesPeakMs=%.2f fluidsMs=%.2f pendingRules=%d hands=main_view shadows=%s realistic=%s %s; use stat unit for Game/Draw/GPU times"),
+            SyncedWorld?SyncedWorld->NativeTickMillis():0,SyncedWorld?SyncedWorld->NativeRuleMillis():0,SyncedWorld?SyncedWorld->NativeRulePeakMillis():0,SyncedWorld?SyncedWorld->NativeFluidMillis():0,SyncedWorld?SyncedWorld->PendingNativeRules():0,NativeShadows?TEXT("on"):TEXT("off"),NativeRealisticVisuals()?TEXT("on"):TEXT("off"),RealisticWorld?*RealisticWorld->Statistics():TEXT("no physics world"));
+        if(SyncedWorld) SyncedWorld->ResetNativePerformancePeaks();
         PerformanceSeconds=0;PerformanceFrames=0;
     }
 }

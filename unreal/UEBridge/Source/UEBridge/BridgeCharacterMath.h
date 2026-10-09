@@ -64,6 +64,9 @@ struct Vector {
 // transverse coordinates, after the complete model pose, to cancel world FOV.
 // A nonuniform parent component scale cannot do this for rotated children
 // because FTransform cannot retain the required shear.
+// Uniform scaling about the camera leaves perspective unchanged, while placing
+// the native first-person mesh inside the player collision envelope.
+constexpr double NativeHandDepthScale=.02;
 inline double FirstPersonTransverseScale(double WorldVerticalFov) {
     const double Fov=std::isfinite(WorldVerticalFov) ? Clamp(WorldVerticalFov,30.0,160.0) : 80.0;
     return std::tan(Fov*Pi/360.0)/std::tan(FirstPersonVerticalFov*Pi/360.0);

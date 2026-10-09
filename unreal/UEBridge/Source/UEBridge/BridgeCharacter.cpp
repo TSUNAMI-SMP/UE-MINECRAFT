@@ -533,7 +533,7 @@ void ABridgeCharacter::PoseHandGeometry(UProceduralMeshComponent* Part,const FTr
         TArray<FVector> Positions,Normals;TArray<FProcMeshTangent> Tangents;
         Positions.Reserve(Source.Positions.Num());Normals.Reserve(Source.Positions.Num());Tangents.Reserve(Source.Positions.Num());
         for(int32 V=0;V<Source.Positions.Num();++V) {
-            Positions.Add(Pose.TransformPosition(Source.Positions[V])*Stretch);
+            Positions.Add(Pose.TransformPosition(Source.Positions[V])*Stretch*(NativePresentation && FixedHandFov ? BridgeCharacterMath::NativeHandDepthScale : 1.0));
             // Inverse transpose, including the display scale of narrow items.
             const FVector N=Pose.GetRotation().RotateVector(Source.Normals[V]/Scale)/Stretch;
             const FVector Normal=N.GetSafeNormal();Normals.Add(Normal);

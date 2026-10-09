@@ -66,6 +66,17 @@ bool FBridgeWorldSealTest::RunTest(const FString& Parameters) {
     TestTrue(TEXT("Blast removes the nearby indexed block"),Bridge->RemoveBlocksInSphere(Bridge->BlockCenter(Second),20)>0);
     TestFalse(TEXT("Bulk removal cannot resolve a stale visual"),Bridge->GetBlockState(Second,IndexedId,IndexedState));
     TestTrue(TEXT("Bulk removal preserves the distant negative voxel"),Bridge->GetBlockState(Negative,IndexedId,IndexedState));
+    // Ordinary changed terrain must not enter the redstone/support backlog.
+    Bridge->EnableNativeRules(0);
+    TestEqual(TEXT("Normal terrain has no native rule backlog"),Bridge->PendingNativeRules(),0);
+    TestEqual(TEXT("Stone edit remains available with rules enabled"),Bridge->PlaceBlock(FIntVector(3,2,2),TEXT("minecraft:stone"),0x777777),FString(TEXT("placed")));
+    TestEqual(TEXT("Ordinary neighbor edits do not queue redstone evaluations"),Bridge->PendingNativeRules(),0);
+    TestEqual(TEXT("Supported sand placement"),Bridge->PlaceBlock(FIntVector(3,3,2),TEXT("minecraft:sand"),0xffffff),FString(TEXT("placed")));
+    TestEqual(TEXT("Support-sensitive block queues once"),Bridge->PendingNativeRules(),1);
+    Bridge->Tick(.05f);
+    TestEqual(TEXT("Stable support update drains"),Bridge->PendingNativeRules(),0);
+    TestTrue(TEXT("Supported sand remains in terrain"),Bridge->GetBlockState(FIntVector(3,3,2),IndexedId,IndexedState));
+    TestEqual(TEXT("Supported sand identity retained"),IndexedId,FString(TEXT("minecraft:sand")));
     Begin.Sequence=100;Bridge->BeginImport(Begin,FVector::ZeroVector);
     TestTrue(TEXT("Same import retry keeps sealed data"),Bridge->IsSealed());
     FBridgePacket Clear;Clear.Kind=EBridgeKind::WorldClear;Clear.Sequence=101;

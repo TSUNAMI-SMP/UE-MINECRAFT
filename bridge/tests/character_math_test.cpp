@@ -139,6 +139,21 @@ int main() {
     Check(Near(SizeMultiplier(-1),.25)&&Near(SizeMultiplier(99),2)&&Near(DensityMultiplier(99),1),"particle tuning clamps extreme input");
     Check(Near(SizeMultiplier(std::numeric_limits<double>::infinity()),.75)
         &&Near(DensityMultiplier(std::numeric_limits<double>::quiet_NaN()),1),"particle tuning rejects nonfinite input safely");
+    // The native near-camera path must preserve the perspective footprint for
+    // both hands, arbitrary item vertices, swing poses, FOV and aspect ratios.
+    bool ProjectionInvariant=true,InsideCapsule=true;
+    for(double Fov:{30.,70.,110.,160.}) for(double Aspect:{1.,16./9.,32./9.})
+    for(bool LeftHanded:{false,true}) for(double Swing:{0.,.1,.5,.9,1.}) {
+        const auto Pose=FirstPersonBlock(Swing,1,LeftHanded);
+        for(Vector Vertex: {Vector{0,0,0},Vector{20,20,20},Vector{-20,-20,-20}}) {
+            const auto P=ProjectFirstPersonPoint(Pose.Position+Pose.Rotation.Rotate(Vertex),Fov);
+            const auto NearPoint=P*NativeHandDepthScale;
+            ProjectionInvariant=ProjectionInvariant&&Near(P.Y/(P.X*Aspect),NearPoint.Y/(NearPoint.X*Aspect))&&Near(P.Z/P.X,NearPoint.Z/NearPoint.X);
+            if(P.X>=10) InsideCapsule=InsideCapsule&&NearPoint.X>.1&&std::sqrt(NearPoint.X*NearPoint.X+NearPoint.Y*NearPoint.Y)<30;
+        }
+    }
+    Check(ProjectionInvariant,"near-camera hands preserve projection across FOV, aspect, side and swing");
+    Check(InsideCapsule,"standard held block vertices clear native near plane and remain inside player envelope");
     std::cout<<"Character production math: "<<Passed<<" passed, "<<Failed<<" failed\n";
     return Failed ? 1 : 0;
 }

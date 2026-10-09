@@ -12,6 +12,9 @@ FString Key(const TMap<FString,FString>& Properties) {TArray<FString> Names;Prop
 FIntVector Facing(const FString& Name) {return Name==TEXT("east") ? Directions[0] : Name==TEXT("west") ? Directions[1] : Name==TEXT("up") ? Directions[2] : Name==TEXT("down") ? Directions[3] : Name==TEXT("south") ? Directions[4] : Directions[5];}
 bool Plant(const FString& Id) {return Id.EndsWith(TEXT("_sapling")) || Id.EndsWith(TEXT("_tulip")) || Id.EndsWith(TEXT("_orchid")) || Id.EndsWith(TEXT("_bush")) || Id.EndsWith(TEXT("_fungus")) || Id==TEXT("minecraft:dandelion") || Id==TEXT("minecraft:poppy") || Id==TEXT("minecraft:allium") || Id==TEXT("minecraft:azure_bluet") || Id==TEXT("minecraft:oxeye_daisy") || Id==TEXT("minecraft:cornflower") || Id==TEXT("minecraft:lily_of_the_valley") || Id==TEXT("minecraft:short_grass") || Id==TEXT("minecraft:fern") || Id==TEXT("minecraft:torchflower") || Id==TEXT("minecraft:wither_rose");}
 bool Falling(const FString& Id) {return Id==TEXT("minecraft:sand") || Id==TEXT("minecraft:red_sand") || Id==TEXT("minecraft:gravel") || Id.EndsWith(TEXT("_concrete_powder")) || Id.EndsWith(TEXT("anvil"));}
+bool HasRule(const FString& Id,const FString& State) {
+    return Falling(Id) || Plant(Id) || Id.Contains(TEXT("redstone")) || Id==TEXT("minecraft:lever") || Id==TEXT("minecraft:repeater") || Id==TEXT("minecraft:comparator") || Id==TEXT("minecraft:observer") || Id==TEXT("minecraft:hopper") || Id==TEXT("minecraft:dropper") || Id==TEXT("minecraft:tnt") || Id.Contains(TEXT("piston")) || Id.EndsWith(TEXT("_pressure_plate")) || State.Contains(TEXT("powered="));
+}
 bool Soil(const FString& Id) {return Id==TEXT("minecraft:grass_block") || Id==TEXT("minecraft:dirt") || Id==TEXT("minecraft:coarse_dirt") || Id==TEXT("minecraft:podzol") || Id==TEXT("minecraft:rooted_dirt") || Id==TEXT("minecraft:farmland") || Id==TEXT("minecraft:moss_block") || Id==TEXT("minecraft:mycelium") || Id.EndsWith(TEXT("_nylium")) || Id==TEXT("minecraft:mud");}
 }
 bool ABridgeWorld::SetNativeBlockState(const FIntVector& Block,const FString& Id,const FString& State,int32 Tint) {
@@ -55,14 +58,17 @@ void ABridgeWorld::EnableNativeRules(int32 RandomTicks) {
         const FIntVector V=OwnerOf(Row);
         if(Row.BlockId==TEXT("minecraft:grass_block")) GrassSections.Add(FIntVector(FMath::FloorToInt(V.X/16.),FMath::FloorToInt(V.Y/16.),FMath::FloorToInt(V.Z/16.)));
         if(Row.BlockId==TEXT("minecraft:observer") && Row.StateKey.Contains(TEXT("powered=true"))) RuleDelayed.Add(V,NativeRuleTick+2);
-        if(Falling(Row.BlockId) || Plant(Row.BlockId) || Row.BlockId.Contains(TEXT("redstone")) || Row.BlockId==TEXT("minecraft:lever") || Row.BlockId==TEXT("minecraft:repeater") || Row.BlockId==TEXT("minecraft:comparator") || Row.BlockId==TEXT("minecraft:observer") || Row.BlockId==TEXT("minecraft:hopper") || Row.BlockId==TEXT("minecraft:dropper") || Row.BlockId.Contains(TEXT("piston")) || Row.StateKey.Contains(TEXT("powered="))) RuleQueue.Add(V);
+        if(HasRule(Row.BlockId,Row.StateKey)) RuleQueue.Add(V);
     }
+}
+void ABridgeWorld::EnqueueNativeRule(const FIntVector& Block) {
+    FString Id,State;if(GetBlockState(Block,Id,State) && HasRule(Id,State)) RuleQueue.Add(Block);
 }
 void ABridgeWorld::QueueNativeRule(const FIntVector& Block) {
     for(const auto& D:Directions) {const FIntVector Neighbor=Block+D;FString Id,State;
         if(GetBlockState(Neighbor,Id,State) && Id==TEXT("minecraft:observer") && Neighbor+Facing(Props(State).FindRef(TEXT("facing")))==Block && !RuleDelayed.Contains(Neighbor)) RuleDelayed.Add(Neighbor,NativeRuleTick+2);
     }
-    RuleQueue.Add(Block);for(const auto& D:Directions) {RuleQueue.Add(Block+D);for(int32 DY:{-1,1}) if(D.Y==0) RuleQueue.Add(Block+D+FIntVector(0,DY,0));}
+    EnqueueNativeRule(Block);for(const auto& D:Directions) {EnqueueNativeRule(Block+D);for(int32 DY:{-1,1}) if(D.Y==0) EnqueueNativeRule(Block+D+FIntVector(0,DY,0));}
     FString Id,State;if(GetBlockState(Block,Id,State) && Id==TEXT("minecraft:grass_block")) GrassSections.Add(FIntVector(FMath::FloorToInt(Block.X/16.),FMath::FloorToInt(Block.Y/16.),FMath::FloorToInt(Block.Z/16.)));
 }
 int32 ABridgeWorld::NativeSignal(const FIntVector& Source,const FIntVector& Target,bool Wire) const {
@@ -90,7 +96,7 @@ int32 ABridgeWorld::NativePowerAt(const FIntVector& Block,bool Wire,const FIntVe
     }return Power;
 }
 void ABridgeWorld::UpdateNativeRule(const FIntVector& Block,bool Delayed) {
-    FString Id,State;if(!GetBlockState(Block,Id,State)) return;auto P=Props(State);FColor Tint=FColor::White;FString Ignored;GetBlockInfo(Block,Ignored,Tint);
+    FString Id,State;if(!GetBlockState(Block,Id,State) || !HasRule(Id,State)) return;auto P=Props(State);FColor Tint=FColor::White;FString Ignored;GetBlockInfo(Block,Ignored,Tint);
     auto Apply=[&](){SetNativeBlockState(Block,Id,Key(P),Tint.ToPackedARGB()&0xffffffu);};
     const FIntVector Below=Block-FIntVector(0,1,0);FString Support,SupportState;const bool KnownBelow=Revisions.Contains(CellOf(Below));GetBlockState(Below,Support,SupportState);
     if(Falling(Id) && KnownBelow && (Support.IsEmpty() || Support==TEXT("minecraft:water") || Support==TEXT("minecraft:lava") || Plant(Support))) {StartNativeFall(Block,Id,State,Tint.ToPackedARGB()&0xffffffu);return;}
@@ -99,6 +105,8 @@ void ABridgeWorld::UpdateNativeRule(const FIntVector& Block,bool Delayed) {
         if(NativeRuleDrop && NativeRuleDrop(Id,BlockCenter(Block))) BreakBlock(Block);
         else RuleDelayed.Add(Block,NativeRuleTick+20);return;
     }
+    // Supported sand and plants have no power-consumer behavior.
+    if(Falling(Id) || Plant(Id)) return;
     if(Id==TEXT("minecraft:hopper") && NativeHopperTransfer) {
         const bool Enabled=NativePowerAt(Block,true)==0;P.Add(TEXT("enabled"),Enabled ? TEXT("true") : TEXT("false"));Apply();
         if(!Delayed && RuleDelayed.Contains(Block)) return;
@@ -145,6 +153,9 @@ void ABridgeWorld::UpdateNativeRule(const FIntVector& Block,bool Delayed) {
     if(Id==TEXT("minecraft:observer")) {
         if(Delayed) {const bool Was=P.FindRef(TEXT("powered"))==TEXT("true");P.Add(TEXT("powered"),Was ? TEXT("false") : TEXT("true"));Apply();if(!Was) RuleDelayed.Add(Block,NativeRuleTick+2);}return;
     }
+    const bool Piston=Id==TEXT("minecraft:piston") || Id==TEXT("minecraft:sticky_piston");
+    const bool Door=Id.EndsWith(TEXT("_door")) || Id.EndsWith(TEXT("_trapdoor")) || Id.EndsWith(TEXT("_fence_gate"));
+    if(!Piston && Id!=TEXT("minecraft:tnt") && Id!=TEXT("minecraft:redstone_lamp") && !Door) return;
     const FIntVector OutputFace=Facing(P.FindRef(TEXT("facing")));
     const FIntVector IgnoredFront=Block+OutputFace;
     bool Powered=NativePowerAt(Block,true,(Id==TEXT("minecraft:piston") || Id==TEXT("minecraft:sticky_piston")) ? &IgnoredFront : nullptr)>0;
@@ -203,13 +214,22 @@ bool ABridgeWorld::StartNativeFall(const FIntVector& Block,const FString& Id,con
 }
 void ABridgeWorld::TickNativeRules(float DeltaSeconds) {
     NativeRuleClock+=FMath::Max(0.f,DeltaSeconds);int32 Steps=0;
+    // Share the propagation budget across all catch-up ticks. Pending blocks
+    // survive the budget; delayed events and falling physics retain 20 Hz.
+    double PropagationSeconds=0;
+    int32 PropagationWork=0;
     while(NativeRuleClock>=.05f && ++Steps<=20) {
         NativeRuleClock-=.05f;++NativeRuleTick;
         TArray<FIntVector> Due;for(auto It=RuleDelayed.CreateIterator();It;++It) if(It.Value()<=NativeRuleTick) {Due.Add(It.Key());It.RemoveCurrent();}
         Due.Sort([](const FIntVector& A,const FIntVector& B){return A.X!=B.X ? A.X<B.X : A.Y!=B.Y ? A.Y<B.Y : A.Z<B.Z;});
         for(const auto& Block:Due) UpdateNativeRule(Block,true);
         // Bounded propagation preserves pending work across ticks.
-        for(int32 Work=0;Work<4096 && !RuleQueue.IsEmpty();++Work) {const FIntVector Block=*RuleQueue.CreateConstIterator();RuleQueue.Remove(Block);UpdateNativeRule(Block);}
+        const double PropagationStart=FPlatformTime::Seconds();
+        const double PropagationDeadline=PropagationStart+FMath::Max(0.,.002-PropagationSeconds);
+        while(PropagationWork<256 && !RuleQueue.IsEmpty() && FPlatformTime::Seconds()<PropagationDeadline) {
+            const FIntVector Block=RuleQueue.Pop();++PropagationWork;UpdateNativeRule(Block);
+        }
+        PropagationSeconds+=FPlatformTime::Seconds()-PropagationStart;
         if(SortedGrassSections.Num()!=GrassSections.Num()) {
             SortedGrassSections=GrassSections.Array();
             SortedGrassSections.Sort([](const FIntVector& A,const FIntVector& B){return A.X!=B.X ? A.X<B.X : A.Y!=B.Y ? A.Y<B.Y : A.Z<B.Z;});

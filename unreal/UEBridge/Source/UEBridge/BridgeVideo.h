@@ -69,6 +69,7 @@ private:
     uint64 CapturedFrames=0,TransmittedFrames=0,ReplacedFrames=0,StaleFrames=0,BackpressureTicks=0,Connections=0;
     double LastDiagnosticLog=-1;
     TUniquePtr<FEngineShowFlags> SavedNativeFlags;
+    float SavedNearClipPlane=10.f;
     TWeakObjectPtr<class UGameViewportClient> NativeViewport;
     UPROPERTY() TObjectPtr<class AActor> NativeSky;
     UPROPERTY() TObjectPtr<class UStaticMeshComponent> NativeSkySphere;
@@ -83,10 +84,6 @@ private:
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> NativeSunriseMaterial;
     UPROPERTY() TObjectPtr<class UBridgeNativeUiPalette> NativeSkyPalette;
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> NativeInverseHudMaterial;
-    UPROPERTY() TObjectPtr<class USceneCaptureComponent2D> NativeHandCapture;
-    UPROPERTY() TObjectPtr<class UTextureRenderTarget2D> NativeHandTarget;
-    TArray<TWeakObjectPtr<class UPrimitiveComponent>> NativeHandParts;
-    void TickNativeHands();
     TWeakObjectPtr<class UCameraComponent> NativeInverseHudCamera;
     TMap<TWeakObjectPtr<class UPrimitiveComponent>,bool> NativeHiddenSky;
     TMap<TWeakObjectPtr<class ULightComponent>,bool> NativeHiddenLights;

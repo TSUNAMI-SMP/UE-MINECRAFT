@@ -27,7 +27,12 @@ void ABridgeWorld::Clear(uint64 Barrier) {
 void ABridgeWorld::EndPlay(const EEndPlayReason::Type Reason) { Clear(); Super::EndPlay(Reason); }
 void ABridgeWorld::Tick(float DeltaSeconds) {
     const double TickStart=FPlatformTime::Seconds();
-    Super::Tick(DeltaSeconds);if(NativeRules && Sealed && GetWorld() && !GetWorld()->IsPaused()) TickNativeRules(DeltaSeconds);if(NativeFluidsEnabled && Sealed && GetWorld() && !GetWorld()->IsPaused()) TickFluids(DeltaSeconds); const double Now=FPlatformTime::Seconds();
+    Super::Tick(DeltaSeconds);
+    const double RuleStart=FPlatformTime::Seconds();
+    if(NativeRules && Sealed && GetWorld() && !GetWorld()->IsPaused()) TickNativeRules(DeltaSeconds);
+    const double FluidStart=FPlatformTime::Seconds();RuleMillis=(FluidStart-RuleStart)*1000;RulePeakMillis=FMath::Max(RulePeakMillis,RuleMillis);
+    if(NativeFluidsEnabled && Sealed && GetWorld() && !GetWorld()->IsPaused()) TickFluids(DeltaSeconds);
+    const double Now=FPlatformTime::Seconds();FluidMillis=(Now-FluidStart)*1000;
     for (auto It=Stages.CreateIterator();It;++It) if (Now>It.Value().Deadline) It.RemoveCurrent();
     if(GetWorld()) TickButtonTimers(GetWorld()->GetTimeSeconds());
     if(Lighting && Sealed) {Lighting->Tick(100000);LightQueue.Append(Lighting->ConsumeChangedCells());}
@@ -249,6 +254,10 @@ FVector ABridgeWorld::BlockCenter(const FIntVector& Block) const {
 }
 bool ABridgeWorld::GetBlockInfo(const FIntVector& SourceVoxel,FString& BlockId,FColor& Tint) const {
     if(!Sealed) return false;
+    if(const auto* Shape=FindVisual(SourceVoxel)) {
+        BlockId=Shape->BlockId;Tint=FColor((Shape->Color>>16)&255,(Shape->Color>>8)&255,Shape->Color&255);return !BlockId.IsEmpty();
+    }
+    // Legacy collision-only rows remain readable.
     const auto* Data=Stored.Find(CellOf(SourceVoxel)); if(!Data) return false;
     for(const auto& Shape:*Data) if(OwnerOf(Shape)==SourceVoxel) {
         BlockId=Shape.BlockId;

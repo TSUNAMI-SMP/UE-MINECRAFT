@@ -1,5 +1,7 @@
 # Minecraft ↔ Unreal Engine bridge MVP
 
+**FPS優先更新0.18.5：** [更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.18.5.zip) / [導入](docs/UPGRADE_0.18.5.md) / [検証](docs/AUDIT_0.18.5.md)。0.16.2以降に追加された手持ちの毎フレームSceneCapture、不要な規則照会と更新キューを修正。MODは0.18.0のまま、0.18.4からは再書き出し・再取り込み不要、`-Rebuild` が必要です。実FPSはWindows UEでの確認が必要です。
+
 **物理表示・マス設置・音のUE更新0.18.4：** [更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.18.4.zip) / [導入・操作](docs/UPGRADE_0.18.4.md) / [検証](docs/AUDIT_0.18.4.md)。MODは0.18.0のまま、再書き出し不要。マスへの配置・音・影切替・専用の手続き型素材・CPU更新削減を追加。UE再ビルド・再取り込みが必要です。Niagaraは対応テンプレートの導入時に使用。Windows UE描画と実FPSは未検証、撮影用の完全な流体物理は未実装です。
 
 **物理アイテム・60fps動画書き出し0.18.0：** [MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.18.0.jar) / [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.18.0.zip) / [一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UE-Minecraft-MVP-0.18.0.zip) / [導入・操作・削除・動画の手順](docs/UPGRADE_0.18.0.md) / [検証](docs/AUDIT_0.18.0.md)。**0.17.0を導入せず直接更新できます。** UE専用の砂・TNT・水／溶岩バケツ、表示ON/OFFと品質、物理の保存・種類／範囲別削除・取り消しを追加。短いシーンの記録を別プロセスで60fpsの無音AVIへ描画します。液体は有限量の格子計算、爆発はメッシュの火・煙で、Blender品質や実プレイ60fpsの保証ではありません。新しいMODでの書き出し、UE再ビルド・再取り込みが必要です。Windows UE 5.8.3実ビルド・GPU描画は未検証です。

@@ -3,6 +3,7 @@
 #include "GameFramework/Actor.h"
 #include "BridgeProtocol.h"
 #include "BridgeVoxelIndex.h"
+#include "BridgeWorkQueue.h"
 #include "BridgeWorld.generated.h"
 
 struct FBridgeWorldStage {
@@ -41,6 +42,11 @@ public:
     bool GetBlockInfo(const FIntVector& SourceVoxel,FString& BlockId,FColor& Tint) const;
     FIntVector SourceVoxelAt(const FVector& Position) const;
     double NativeTickMillis() const {return TickMillis;}
+    double NativeRuleMillis() const {return RuleMillis;}
+    double NativeFluidMillis() const {return FluidMillis;}
+    double NativeRulePeakMillis() const {return RulePeakMillis;}
+    void ResetNativePerformancePeaks() {RulePeakMillis=0;}
+    int32 PendingNativeRules() const {return int32(RuleQueue.Num());}
     bool GetBlockState(const FIntVector& SourceVoxel,FString& BlockId,FString& StateKey) const;
     FString GetModelError() const { return LastModelError; }
     TFunction<void(const FString& Type,const FString& Block,const FVector& Position)> InteractionSound;
@@ -116,7 +122,7 @@ private:
     friend class FBridgeButtonTimerTest;
     FString LastModelError;
     uint64 MutationSerial=0;
-    double TickMillis=0;
+    double TickMillis=0,RuleMillis=0,FluidMillis=0,RulePeakMillis=0;
     mutable FString SurfaceReason=TEXT("not_sampled");
     TSharedPtr<class FBridgeLightingService> Lighting;
     TSharedPtr<class FBridgeLightingService> PendingLighting;
@@ -147,7 +153,9 @@ private:
     int32 GrassSectionCursor=0;
     float NativeRuleClock=0;
     int64 NativeRuleTick=0;
-    TSet<FIntVector> RuleQueue,GrassSections;
+    struct FRuleVoxelHash {std::size_t operator()(const FIntVector& V) const {return GetTypeHash(V);}};
+    BridgeWorkQueue::UniqueQueue<FIntVector,FRuleVoxelHash> RuleQueue;
+    TSet<FIntVector> GrassSections;
     TArray<FIntVector> SortedGrassSections;
     TMap<FIntVector,int64> RuleDelayed;
     TMap<FIntVector,int32> ComparatorPower;
@@ -156,6 +164,7 @@ private:
     TArray<FNativeFall> NativeFalls;
     void TickNativeRules(float DeltaSeconds);
     void QueueNativeRule(const FIntVector& Block);
+    void EnqueueNativeRule(const FIntVector& Block);
     void UpdateNativeRule(const FIntVector& Block,bool Delayed=false);
     int32 NativeSignal(const FIntVector& Source,const FIntVector& Target,bool Wire=true) const;
     int32 NativePowerAt(const FIntVector& Block,bool Wire=true,const FIntVector* Ignore=nullptr) const;

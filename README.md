@@ -1,5 +1,7 @@
 # Minecraft ↔ Unreal Engine bridge MVP
 
+**Niagara水接続修正0.19.3：** [修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.19.3.zip) / [適用手順](docs/UPGRADE_0.19.3.md)。水アセットのWorld Grid Extents／Num Cells Max Axisに対応。保存したアセットを保持して `-Rebuild`。水の実設置・描画と変更後のUEビルドは未確認です。砂・溶岩・TNT・爆発の見た目は変更していません。
+
 **落下ブロック復元修正0.19.2：** [修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.19.2.zip) / [適用手順](docs/UPGRADE_0.19.2.md)。保存側が出力したage=604〜619を読み込み側が拒否する食い違いと、遷移待ちで範囲外へ残った落下物の復元を修正。種類・数量を保持して再開する経路を追加。Savedの削除は不要、MODは0.18.0のまま、`-Rebuild` 必須。修正後のWindows実再開は未確認です。
 
 **UE 5.8ビルド修正0.19.1：** [修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.19.1.zip) / [適用手順](docs/UPGRADE_0.19.1.md)。0.19.0の水源処理でGetPawnが返すTObjectPtrをauto*で受けたためのC3535／C2440を修正。MODは0.18.0のまま、前回取り込み前に停止した場合は `-Rebuild -Reimport` を再実行してください。修正後のWindows UEビルドは未確認です。

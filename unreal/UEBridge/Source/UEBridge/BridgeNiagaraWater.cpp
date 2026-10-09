@@ -13,10 +13,18 @@ FName Parameter(UNiagaraSystem* System,const FNiagaraTypeDefinition& Type,std::i
     return NAME_None;
 }
 bool DomainParameters(UNiagaraSystem* System,FName& Size,FName& Resolution,FString& Error) {
-    Size=Parameter(System,FNiagaraTypeDefinition::GetVec3Def(),{TEXT("User.WorldSpaceSize")});
-    Resolution=Parameter(System,FNiagaraTypeDefinition::GetIntDef(),{TEXT("User.NumCellsMaxAxis"),TEXT("User.ResolutionMaxAxis")});
+    // Preserve typed lookup while accepting Niagara Fluids hose control names.
+    Size=Parameter(System,FNiagaraTypeDefinition::GetVec3Def(),{TEXT("User.WorldSpaceSize"),TEXT("User.World Grid Extents"),TEXT("User.WorldGridExtents")});
+    Resolution=Parameter(System,FNiagaraTypeDefinition::GetIntDef(),{TEXT("User.NumCellsMaxAxis"),TEXT("User.Num Cells Max Axis"),TEXT("User.ResolutionMaxAxis")});
     if(Size.IsNone() || Resolution.IsNone()) {
-        Error=TEXT("Liquid template lacks WorldSpaceSize / NumCellsMaxAxis (int) controls; bucket retained. See NIAGARA_WATER.md");return false;
+        Error=FString::Printf(TEXT("Water controls missing: %s%s; bucket retained. See Niagara parameter log"),
+            Size.IsNone()?TEXT("World Grid Extents / WorldSpaceSize (Vector3) "):TEXT(""),
+            Resolution.IsNone()?TEXT("Num Cells Max Axis (Integer)"):TEXT(""));
+        for(const auto& Variable:System->GetExposedParameters().ReadParameterVariables())
+            UE_LOG(LogTemp,Warning,TEXT("Bridge Niagara water parameter: %s vec3=%s int=%s"),*Variable.GetName().ToString(),
+                Variable.GetType()==FNiagaraTypeDefinition::GetVec3Def()?TEXT("true"):TEXT("false"),
+                Variable.GetType()==FNiagaraTypeDefinition::GetIntDef()?TEXT("true"):TEXT("false"));
+        return false;
     }
     return true;
 }
@@ -53,8 +61,8 @@ bool ABridgeNiagaraWater::Initialize(UNiagaraSystem* System,const FVector& Nozzl
     if(!Velocity.IsNone()) Liquid->SetVariableVec3(Velocity,FVector(0,0,-450));
     const FName Rate=Parameter(System,FNiagaraTypeDefinition::GetFloatDef(),{TEXT("User.SpawnRate"),TEXT("User.SourceSpawnRate")});
     if(!Rate.IsNone()) Liquid->SetVariableFloat(Rate,12000.f);
-    UE_LOG(LogTemp,Display,TEXT("Bridge Niagara water: asset=%s nozzle=%s size=1000x1000x800 resolution=128 sourcePosition=%s sourceVelocity=%s spawnRate=%s (unset controls use asset defaults)"),
-        *System->GetPathName(),*Nozzle.ToString(),Position.IsNone()?*VectorPosition.ToString():*Position.ToString(),*Velocity.ToString(),*Rate.ToString());
+    UE_LOG(LogTemp,Display,TEXT("Bridge Niagara water: asset=%s nozzle=%s size=1000x1000x800 resolution=128 sizeParameter=%s resolutionParameter=%s sourcePosition=%s sourceVelocity=%s spawnRate=%s (unset controls use asset defaults)"),
+        *System->GetPathName(),*Nozzle.ToString(),*Size.ToString(),*Resolution.ToString(),Position.IsNone()?*VectorPosition.ToString():*Position.ToString(),*Velocity.ToString(),*Rate.ToString());
     return true;
 }
 void ABridgeNiagaraWater::SetRunning(bool Enabled) {

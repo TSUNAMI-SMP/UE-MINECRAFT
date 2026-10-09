@@ -17,8 +17,8 @@
 
 | 制御 | 対応する名前と型 | 設定値 |
 | --- | --- | --- |
-| 必須：領域のサイズ | `User.WorldSpaceSize`：Vector3 | 1000×1000×800 cm |
-| 必須：最大軸のセル数 | `User.NumCellsMaxAxis` または `User.ResolutionMaxAxis`：Integer | 128 |
+| 必須：領域のサイズ | `User.World Grid Extents`、`User.WorldGridExtents` または `User.WorldSpaceSize`：Vector3 | 1000×1000×800 cm |
+| 必須：最大軸のセル数 | `User.Num Cells Max Axis`、`User.NumCellsMaxAxis` または `User.ResolutionMaxAxis`：Integer | 128 |
 | 任意：放出位置 | `User.SourcePosition` または `User.SourceLocation`：PositionまたはVector3 | 水源のワールド座標 |
 | 任意：初速度 | `User.SourceVelocity`：Vector3 | (0, 0, -450) cm/s |
 | 任意：発生率 | `User.SpawnRate` または `User.SourceSpawnRate`：Float | 12000 |
@@ -48,3 +48,7 @@ Niagaraの地形衝突用データインターフェースが `collider` タグ�
 5. RTX 5060で `stat unit` と `stat gpu` を比較し、放出率・粒子上限・寿命とVFX負荷を調整します。2水源時の100fpsは未保証です。
 
 白波・泡の量、流速、透明度、屈折、画面外の反射の不足はこの評価後に詰める項目です。SSRは画面外の情報を反射できないため、現在の反射経路だけであらゆる角度の写実性を満たすとは限りません。
+
+## コンパイルエラー（メッシュディスタンスフィールド）
+
+`Get Closest Point Mesh Distance Field No Normal` が生成無効のエラーになる場合は、プロジェクト設定で Generate Mesh Distance Fields を有効化し、エディター再起動と生成処理の完了後に水アセットを再コンパイルして保存します。利用者のUE 5.8.3で、この設定により10件のエラーが解消し、警告付きのコンパイル成功を確認しました。水の実設置・地形衝突・100fps維持は別途確認が必要です。0.19.3はアセットのパラメータ名への対応で、エンジンアセットやプロジェクト設定を上書きしません。

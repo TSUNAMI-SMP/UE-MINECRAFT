@@ -13,6 +13,7 @@ public:
 private:
     float Age=0;
     int32 Count=24;
+    UPROPERTY() TObjectPtr<class UNiagaraComponent> Niagara;
     UPROPERTY() TObjectPtr<class UInstancedStaticMeshComponent> Fire;
     UPROPERTY() TObjectPtr<class UInstancedStaticMeshComponent> Smoke;
     UPROPERTY() TObjectPtr<class UMaterialInstanceDynamic> FireMaterial;

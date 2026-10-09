@@ -381,9 +381,11 @@ void ABridgeNativeHUD::DrawPauseMenu() {
         Receiver&&Receiver->NativeRealisticVisuals()?TEXT("リアル表示: ON"):TEXT("リアル表示: OFF"),
         FString::Printf(TEXT("品質: %s"),Receiver&&Receiver->NativeRealisticQuality()==0?TEXT("低"):Receiver&&Receiver->NativeRealisticQuality()==2?TEXT("高"):TEXT("中")),
         Receiver&&Receiver->NativeRecording()?TEXT("動画の記録を停止"):TEXT("動画の記録を開始"),TEXT("動画の保存先を確認"),
-        TEXT("近距離の物理を削除"),TEXT("直前の削除を戻す")};
+        TEXT("近距離の物理を削除"),TEXT("直前の削除を戻す"),
+        Glyph(0x5f71)?(Receiver&&Receiver->NativeShadows?TEXT("影: ON"):TEXT("影: OFF")):(Receiver&&Receiver->NativeShadows?TEXT("Shadows: ON"):TEXT("Shadows: OFF")),
+        Glyph(0x6027)&&Glyph(0x80fd)?TEXT("性能を確認"):TEXT("Performance")};
     for (int32 I = 0; I < UE_ARRAY_COUNT(Labels); ++I) {
-        const float Width=FMath::Min(200.f,(GuiWidth-24)/2),X=GuiWidth/2-Width-5+(I/7)*(Width+10),Y=GuiHeight/2-88+(I%7)*23;
+        const float Width=FMath::Min(200.f,(GuiWidth-24)/2),X=GuiWidth/2-Width-5+(I/8)*(Width+10),Y=GuiHeight/2-88+(I%8)*23;
         FBox2D Bounds(FVector2D(X, Y) * GuiScale, FVector2D(X + Width, Y + 20) * GuiScale); PauseButtons.Add(Bounds);
         const bool Hovered = Within(Bounds, Pointer); Solid(X, Y, Width, 20, Hovered ? FLinearColor(.5f, .5f, .65f) : FLinearColor(.3f, .3f, .3f));
         Sprite(Hovered ? TEXT("widget/button_highlighted") : TEXT("widget/button"), X, Y, Width, 20);
@@ -446,6 +448,8 @@ bool ABridgeNativeHUD::HandlePointer(FKey Button, FVector2D Position) {
                 if(I==11) Command=TEXT("/record status");
                 if(I==12) Command=TEXT("/physics clear all 16");
                 if(I==13) Command=TEXT("/physics undo");
+                if(I==14) Command=Receiver->NativeShadows?TEXT("/shadows off"):TEXT("/shadows on");
+                if(I==15) Command=TEXT("/diagnostics");
                 const FString Result=Receiver->NativeCommand(Command);ChatMessages.Add(Result);LastChatAt=GetWorld()->GetTimeSeconds();
                 if(I==11) Control->TogglePause();
             }

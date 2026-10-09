@@ -16,8 +16,10 @@ bool FBridgeRealisticPersistenceTest::RunTest(const FString&) {
     Source->Physics.liquids.emplace(Key{1,0,0},Liquid{Lava,500});
     Source->Physics.rocks.emplace(Key{2,0,0},700);Source->Physics.reacted=700;
     Source->Physics.bombs.push_back({{500,0,100},{0,0,5},2.5,1});Source->Physics.nextId=2;
+    Source->Physics.gridOrigin={.3,17.25,12.4};
     Source->Physics.drops.push_back({{200,0,100},{2,0,-3},Water,100});Source->Physics.tick=42;
     if(!TestTrue(TEXT("Complete physical state restores"),Target->ImportState(Source->ExportState()))) {World->DestroyWorld(false);return false;}
+    TestEqual(TEXT("Fractional grid origin restores"),Target->Physics.gridOrigin.y,17.25);
     TestEqual(TEXT("Water including droplets conserved"),Target->Physics.volume(Water),std::int64_t(1100));
     TestEqual(TEXT("Lava conserved"),Target->Physics.volume(Lava),std::int64_t(500));
     TestEqual(TEXT("Fuse and velocity restored"),Target->Physics.bombs[0].fuse,2.5);
@@ -27,6 +29,11 @@ bool FBridgeRealisticPersistenceTest::RunTest(const FString&) {
     TestFalse(TEXT("Invalid final row rejects entire snapshot"),Target->ImportState(Bad));
     TestEqual(TEXT("Failed restore keeps volume"),Target->Physics.volume(Water),std::int64_t(1100));
     TestEqual(TEXT("Failed restore keeps fuse"),Target->Physics.bombs[0].fuse,2.5);
+    auto Legacy=Source->ExportState();Legacy->RemoveField(TEXT("gridOrigin"));
+    TestTrue(TEXT("Legacy zero-origin state rebases"),Target->ImportState(Legacy));
+    TestEqual(TEXT("Legacy migration retains water including drops"),Target->Physics.volume(Water),std::int64_t(1100));
+    TestEqual(TEXT("Legacy migration uses terrain grid"),Target->Physics.gridOrigin.y,17.25);
+    TestTrue(TEXT("Legacy water cell has nearest terrain key"),Target->Physics.liquids.count(Key{0,-1,0})==1);
     Target->Command({TEXT("physics"),TEXT("clear"),TEXT("water"),TEXT("all")},FVector::ZeroVector);
     TestEqual(TEXT("Cleanup removes matching cells and droplets"),Target->Physics.volume(Water),std::int64_t(0));
     TestEqual(TEXT("Scoped type cleanup retains lava"),Target->Physics.volume(Lava),std::int64_t(500));

@@ -21,6 +21,19 @@ Simulation world() {
 }
 int main() {
     assert(cell({-.1,-25.1,25}).x==-1&&cell({-.1,-25.1,25}).y==-2);
+    // Exact voxel fill with fractional world origin and all negative coordinates.
+    for(Vec offset: {Vec{.3,17.25,12.4},Vec{0,0,0}}) {
+        auto aligned=world();aligned.inside=[](Vec p){return p.finite();};aligned.blocked=[](Vec,double){return false;};aligned.gridOrigin=offset;
+        Vec cube=offset+Vec{-150,-250,50};assert(aligned.pourBlock(cube,Water));
+        assert(aligned.liquids.size()==64);
+        for(const auto& entry:aligned.liquids) {Vec p=aligned.center(entry.first);assert(std::abs(p.x-cube.x)<=37.500001&&std::abs(p.y-cube.y)<=37.500001&&std::abs(p.z-cube.z)<=37.500001);}
+        std::map<Key,int> migrated;
+        for(int x=-3;x<=3;++x)for(int y=-3;y<=3;++y)for(int z=-3;z<=3;++z) {
+            Key old{x,y,z},key=aligned.legacyCell(old);assert(migrated.emplace(key,1).second);
+            Vec delta=aligned.center(key)-center(old);assert(std::abs(delta.x)<=12.500001&&std::abs(delta.y)<=12.500001&&std::abs(delta.z)<=12.500001);
+        }
+    }
+    auto stationary=world();assert(stationary.addTnt({0,0,100}));for(int i=0;i<300;++i)stationary.step();assert(stationary.bombs[0].p.z==100);
     auto water=world();assert(water.pour({0,0,25},Water));
     for(int i=0;i<900;++i) {water.step();assert(water.volume(Water)==BucketVolume);for(const auto& c:water.liquids) assert(c.second.amount>0&&c.second.amount<=CellCapacity);}
     auto first=water.liquids.begin()->first;assert(water.collect(center(first),Water));assert(water.volume(Water)==0);
@@ -34,7 +47,8 @@ int main() {
     for(int i=0;i<60;++i) {reaction.step();}assert(reaction.volume(Water)+reaction.volume(Lava)+reaction.reacted==900);assert(!reaction.rocks.empty());
     auto a=world();assert(a.addSand({0,0,100}));auto b=a;
     for(int i=0;i<300;++i) {a.step();b.step();}
-    assert(a.grains.size()==512);for(std::size_t i=0;i<a.grains.size();++i) {assert((a.grains[i].p-b.grains[i].p).length()==0);assert(a.grains[i].p.z>=5.49);assert(a.grains[i].p.finite());}
+    assert(a.grains.size()==512);
+    double minX=1e9,maxX=-1e9;for(const auto& grain:a.grains){minX=std::min(minX,grain.p.x);maxX=std::max(maxX,grain.p.x);}assert(maxX-minX>100);for(std::size_t i=0;i<a.grains.size();++i) {assert((a.grains[i].p-b.grains[i].p).length()==0);assert(a.grains[i].p.z>=5.49);assert(a.grains[i].p.finite());}
     // Removing support reawakens a settled pile, at most 30 simulation ticks later.
     a.sweep=[](Vec,Vec,double){return Hit{};};a.inside=[](Vec p){return p.finite();};double z=a.grains[0].p.z;for(int i=0;i<120;++i) a.step();assert(a.grains[0].p.z<z);
     auto t=world();assert(t.addTnt({0,0,100}));int explosions=0;t.exploded=[&](const Blast&){++explosions;};assert(t.ignite({-200,0,100},{1,0,0},500));
@@ -43,6 +57,10 @@ int main() {
     auto budget=world();budget.grains.resize(MaxGrains);assert(!budget.addSand({0,0,100}));budget.bombs.resize(MaxTnt);assert(!budget.addTnt({0,0,100}));
     auto cells=world();for(std::size_t i=0;i<MaxCells;++i) cells.rocks.emplace(Key{int(i),100,0},CellCapacity);assert(!cells.pour({0,0,100},Water));
     auto overlap=world();assert(overlap.addTnt({0,0,100}));assert(!overlap.addTnt({0,0,100}));assert(overlap.bombs.size()==1);
+    assert(overlap.placementOccupied({0,0,100}));assert(!overlap.placementOccupied({100,0,100}));assert(overlap.placementOccupied({99,0,100}));
+    auto occupied=world();assert(occupied.pourBlock({0,0,50},Water));assert(occupied.placementOccupied({0,0,50}));assert(!occupied.placementOccupied({100,0,50}));
+    occupied.clear(-1,{},-1);assert(occupied.addSand({0,0,50}));assert(occupied.placementOccupied({0,0,50}));assert(!occupied.placementOccupied({100,0,50}));
+    occupied.clear(-1,{},-1);occupied.rocks.emplace(Key{0,0,0},CellCapacity);assert(occupied.placementOccupied({0,0,50}));assert(!occupied.placementOccupied({100,0,50}));
     auto clear=world();assert(clear.pour({0,0,25},Water));assert(clear.addTnt({500,0,100}));assert(clear.addSand({1000,0,100}));auto backup=clear;
     int removed=clear.clear(Water,{0,0,100},200);assert(removed==64&&clear.volume(Water)==0&&clear.bombs.size()==1&&clear.grains.size()==512);
     clear=backup;assert(clear.volume(Water)==BucketVolume);clear.clear(-1,{},-1);assert(clear.volume(Water)==0&&clear.grains.empty()&&clear.bombs.empty());

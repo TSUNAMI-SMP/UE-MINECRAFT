@@ -26,17 +26,23 @@ public:
     void RenderNow(double Clock=-1);
     BridgeRealistic::Simulation Physics;
     bool ReplayActive=false;
+    FVector LastUsePosition=FVector::ZeroVector;
     TFunction<void(const FVector&,float)> OnBlast;
+    TFunction<void(const FString&,const FVector&,float,float)> OnSound;
 private:
     bool Realistic=true;
-    bool VisualWasEmpty=true;
+    bool HadMovingPhysics=true;
     int32 QualityLevel=1;
     double Accumulator=0,VisualClock=0;
+    double SolverMillis=0,RenderMillis=0;
+    double NextFluidSound=0,NextSandSound=0;
+    uint64 FluidSignatures[2]={0,0};
     TSharedPtr<FJsonObject> UndoClear;
     FCollisionQueryParams TerrainQuery;
     UPROPERTY() TObjectPtr<class ABridgeWorld> Terrain;
     UPROPERTY() TObjectPtr<class UBridgeNativeUiPalette> Resources;
     UPROPERTY() TObjectPtr<class UInstancedStaticMeshComponent> SandMesh;
+    UPROPERTY() TObjectPtr<class UInstancedStaticMeshComponent> SandSupportMesh;
     UPROPERTY() TObjectPtr<class UInstancedStaticMeshComponent> TntMesh;
     UPROPERTY() TObjectPtr<class UInstancedStaticMeshComponent> RockMesh;
     UPROPERTY() TObjectPtr<class UInstancedStaticMeshComponent> SplashMesh;

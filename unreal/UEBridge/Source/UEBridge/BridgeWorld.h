@@ -2,6 +2,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "BridgeProtocol.h"
+#include "BridgeVoxelIndex.h"
 #include "BridgeWorld.generated.h"
 
 struct FBridgeWorldStage {
@@ -39,6 +40,7 @@ public:
     /** Resolve source metadata without relying on the frozen Minecraft player. */
     bool GetBlockInfo(const FIntVector& SourceVoxel,FString& BlockId,FColor& Tint) const;
     FIntVector SourceVoxelAt(const FVector& Position) const;
+    double NativeTickMillis() const {return TickMillis;}
     bool GetBlockState(const FIntVector& SourceVoxel,FString& BlockId,FString& StateKey) const;
     FString GetModelError() const { return LastModelError; }
     TFunction<void(const FString& Type,const FString& Block,const FVector& Position)> InteractionSound;
@@ -114,6 +116,7 @@ private:
     friend class FBridgeButtonTimerTest;
     FString LastModelError;
     uint64 MutationSerial=0;
+    double TickMillis=0;
     mutable FString SurfaceReason=TEXT("not_sampled");
     TSharedPtr<class FBridgeLightingService> Lighting;
     TSharedPtr<class FBridgeLightingService> PendingLighting;
@@ -124,6 +127,9 @@ private:
     int32 LightingRadius=0,LightingHeight=0,PendingLightingRadius=0,PendingLightingHeight=0;
     struct FOpaqueCell {uint64 Words[8]={};};
     TMap<FIntVector,FOpaqueCell> OpaqueCells;
+    // Row offsets, not pointers: replacing a cell cannot leave dangling visuals.
+    TMap<FIntVector,BridgeVoxelIndex::Cell> VisualRows;
+    void IndexVisualCell(const FIntVector& Cell);
     TSet<FIntVector> RebuildQueue,LightQueue;
     FIntVector CollisionCenter=FIntVector::ZeroValue;
     bool HasCollisionCenter=false;
@@ -142,6 +148,7 @@ private:
     float NativeRuleClock=0;
     int64 NativeRuleTick=0;
     TSet<FIntVector> RuleQueue,GrassSections;
+    TArray<FIntVector> SortedGrassSections;
     TMap<FIntVector,int64> RuleDelayed;
     TMap<FIntVector,int32> ComparatorPower;
     FRandomStream RuleRandom{173931};
@@ -169,7 +176,7 @@ private:
     void RebuildCell(const FIntVector& Cell);
     void QueueNeighbors(const FIntVector& Cell);
     void RefreshLogicalCell(const FIntVector& Cell);
-    void MarkEdited(const FIntVector& Block);
+    void MarkEdited(const FIntVector& Block,bool Reindex=true);
     bool NearCollision(const FIntVector& Cell) const;
     void ClearOpaqueVoxel(const FIntVector& Voxel);
     void SeedLightingCell(const FIntVector& Cell,class FBridgeLightingService* Service) const;

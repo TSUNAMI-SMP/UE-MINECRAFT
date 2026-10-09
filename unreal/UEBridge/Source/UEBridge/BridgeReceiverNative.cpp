@@ -105,6 +105,7 @@ void ABridgeReceiver::BeginNativePlay() {
         double LightingPreference=0;
         if(Runtime->TryGetNumberField(TEXT("lightingPreferenceVersion"),LightingPreference) && LightingPreference>=2)
             Runtime->TryGetBoolField(TEXT("lighting"),NativeLighting);
+        Runtime->TryGetBoolField(TEXT("shadows"),NativeShadows);
         FVector Respawn;if(JsonVector(Runtime,TEXT("respawn"),Respawn)) NativeRespawnPosition=Respawn;
         if(EnsureMobWorld()) {double Health;if(Runtime->TryGetNumberField(TEXT("health"),Health)) MobWorld->PlayerHealth=FMath::Clamp(float(Health),0.f,20.f);}
     }
@@ -126,13 +127,13 @@ void ABridgeReceiver::BeginNativePlay() {
     Video->SetNativeSkyEnvironment(LatestInput.VanillaLight,NativeStore->GetMetadata().Dimension);
     NativeSetLighting(NativeLighting);
     NativeStatus=TEXT("Validating offline world...");
-    UE_LOG(LogTemp,Display,TEXT("Bridge 0.18.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
+    UE_LOG(LogTemp,Display,TEXT("Bridge UE 0.18.4 / MOD 0.18.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
 }
 
 void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
     const double Now=FPlatformTime::Seconds();
     if(!NativeStore.IsValid()) return;
-    if(!Video->IsNativeRenderModeActive()) Video->SetNativeRenderMode(NativeLighting);
+    if(!Video->IsNativeRenderModeActive()) {Video->SetNativeRenderMode(NativeLighting);Video->SetNativeShadows(NativeShadows);}
     if(auto* PC=Controller(this)) if(!PC->IsSavedInventoryValid()) {NativeRestoreFailed=true;NativeStatus=PC->GetInventoryRestoreError();}
     if(NativeRestoreFailed) {if(auto* Pawn=Cast<ABridgeCharacter>(TargetCharacter)) Pawn->SetAuthorityEnabled(false);LogDiagnostics(Now);return;}
     NativeStore->Tick(NativeStore->IsSaving() ? 1 : 4);
@@ -272,6 +273,7 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
         if(!RealisticWorld) {NativeRestoreFailed=true;NativeStatus=TEXT("Realistic physics world unavailable; saved world retained");return;}
         RealisticWorld->Initialize(SyncedWorld,NativeUiPalette);
         if(MobWorld) MobWorld->WaterAt=[this](const FVector& Point){return IsValid(SyncedWorld) && (SyncedWorld->IsWaterAtUEPosition(Point) || (RealisticWorld && RealisticWorld->FluidAt(Point)==1));};
+        RealisticWorld->OnSound=[this](const FString& Id,const FVector& Position,float Volume,float Pitch){PlayNativeSound(Id,Position,Volume,Pitch,TEXT("block"));};
         RealisticWorld->OnBlast=[this](const FVector& Position,float Radius){NativeRealisticBlast(Position,Radius);};
         const TSharedPtr<FJsonObject>* PhysicalState=nullptr;
         if(Metadata.RuntimeState.IsValid()&&Metadata.RuntimeState->TryGetObjectField(TEXT("realisticPhysics"),PhysicalState)&&!RealisticWorld->ImportState(*PhysicalState)) {
@@ -425,6 +427,12 @@ void ABridgeReceiver::NativeAction(const FString& Action) {
                         else if(!Inventory->AddStack(ReturnItem,1)) {Inventory->ImportRuntimeState(BeforeInventory);RealisticWorld->ImportState(BeforePhysics);LastAction=TEXT("No space for bucket; original liquid and items retained");return;}
                     }
                 }
+                const FString Sound=Collect ? (Result.Contains(TEXT("lava"))?TEXT("minecraft:item.bucket.fill_lava"):TEXT("minecraft:item.bucket.fill"))
+                    : Ignite ? TEXT("minecraft:entity.tnt.primed")
+                    : Item.EndsWith(TEXT("water_bucket")) ? TEXT("minecraft:item.bucket.empty")
+                    : Item.EndsWith(TEXT("lava_bucket")) ? TEXT("minecraft:item.bucket.empty_lava")
+                    : Item.EndsWith(TEXT("sand")) ? TEXT("minecraft:block.sand.place") : TEXT("minecraft:block.grass.place");
+                PlayNativeSound(Sound,RealisticWorld->LastUsePosition,1,1,TEXT("block"));
                 NativeSelect(Inventory->GetSelectedItemId());Character->SwingHand();LastAction=Result;return;
             }
             if(PhysicalItem) {LastAction=Result;return;}
@@ -594,7 +602,7 @@ bool ABridgeReceiver::NativeDrop(const FString& ItemId,int32 Count) {
 }
 void ABridgeReceiver::NativeSetLighting(bool Enabled) {
     if(!NativePlayActive) return;NativeLighting=Enabled;
-    Video->SetNativeRenderMode(Enabled);
+    Video->SetNativeRenderMode(Enabled);Video->SetNativeShadows(NativeShadows);
     if(RealisticWorld) Video->SetNativeRealisticMode(RealisticWorld->VisualsEnabled());
     FString Failure;if(!FBridgeLightingService::SetEnvironment(GetWorld(),LatestInput.VanillaLight,!Enabled,&Failure))
         UE_LOG(LogTemp,Error,TEXT("Bridge native lighting not ready: %s; rerun native import"),*Failure);
@@ -611,7 +619,7 @@ bool ABridgeReceiver::NativeSave() {
         UE_LOG(LogTemp,Error,TEXT("Bridge native save refused: %s"),*NativeStatus);return false;
     }
     auto Runtime=MakeShared<FJsonObject>();Runtime->SetNumberField(TEXT("health"),GetNativeHealth());Runtime->SetBoolField(TEXT("lighting"),NativeLighting);
-    Runtime->SetNumberField(TEXT("lightingPreferenceVersion"),2);
+    Runtime->SetNumberField(TEXT("lightingPreferenceVersion"),2);Runtime->SetBoolField(TEXT("shadows"),NativeShadows);
     Runtime->SetArrayField(TEXT("respawn"),JsonVector(NativeRespawnPosition));Runtime->SetBoolField(TEXT("flying"),LatestInput.Flying);Runtime->SetNumberField(TEXT("perspective"),LatestInput.Perspective);
     Runtime->SetObjectField(TEXT("inventory"),Inventory);
     Runtime->SetNumberField(TEXT("timeOfDay"),NativeTimeOfDay);Runtime->SetNumberField(TEXT("worldTime"),NativeWorldTime);Runtime->SetBoolField(TEXT("daylightCycle"),NativeDaylightCycle);Runtime->SetBoolField(TEXT("creative"),NativeCreative);
@@ -691,7 +699,11 @@ void ABridgeReceiver::LogDiagnostics(double Now,bool bForceLog) {
         SyncedWorld?SyncedWorld->RebuildPending():0,SyncedWorld && SyncedWorld->GetLighting()?SyncedWorld->GetLighting()->Pending():0,
         *GetNameSafe(MobPalette),MobPalette?MobPalette->Appearances.Num():0,MobPalette?MobPalette->Templates.Num():0,MobWorld?MobWorld->AliveCount():0,
         VanillaEffects?VanillaEffects->ParticleCount():0,UEControl?TEXT("ready"):TEXT("waiting"),*NativeStatus,*LastAction,*Sample,*Video->GetDiagnosticSummary());
-    if(NativePlayActive) {PerformanceSeconds=0;PerformanceFrames=0;}
+    if(NativePlayActive) {
+        UE_LOG(LogTemp,Display,TEXT("Bridge native performance: worldTickMs=%.2f shadows=%s realistic=%s %s; use stat unit for Game/Draw/GPU times"),
+            SyncedWorld?SyncedWorld->NativeTickMillis():0,NativeShadows?TEXT("on"):TEXT("off"),NativeRealisticVisuals()?TEXT("on"):TEXT("off"),RealisticWorld?*RealisticWorld->Statistics():TEXT("no physics world"));
+        PerformanceSeconds=0;PerformanceFrames=0;
+    }
 }
 
 void ABridgeReceiver::TickNativeTime(float DeltaSeconds) {
@@ -726,6 +738,15 @@ FString ABridgeReceiver::NativeCommand(const FString& Command) {
     TArray<FString> Args;Line.ParseIntoArrayWS(Args);
     if(Args.IsEmpty()) return FString();
     if(IsNativeReplay()) return TEXT("Offline rendering: gameplay/save commands are disabled");
+    if(Args[0]==TEXT("diagnostics")) {
+        LogDiagnostics(FPlatformTime::Seconds(),true);
+        return FString::Printf(TEXT("worldTickMs=%.2f %s (full report in UEBridge.log)"),SyncedWorld?SyncedWorld->NativeTickMillis():0,RealisticWorld?*RealisticWorld->Statistics():TEXT("no physics"));
+    }
+    if(Args[0]==TEXT("shadows")) {
+        if(Args.Num()!=2||(Args[1]!=TEXT("on")&&Args[1]!=TEXT("off"))) return TEXT("/shadows on|off");
+        NativeShadows=Args[1]==TEXT("on");Video->SetNativeShadows(NativeShadows);
+        return NativeShadows?TEXT("Dynamic shadows ON"):TEXT("Dynamic shadows OFF; native lightmap retained");
+    }
     if(Args[0]==TEXT("physics")&&RealisticWorld) return RealisticWorld->Command(Args,TargetCharacter->GetActorLocation());
     if(Args[0]==TEXT("realistic")&&RealisticWorld) {
         if(Args.Num()==2&&Args[1]==TEXT("items")) {
@@ -749,7 +770,7 @@ FString ABridgeReceiver::NativeCommand(const FString& Command) {
         return CinematicCapture->Command(Args);
     }
     auto Number=[](const FString& Value,double& Out) {return FDefaultValueHelper::ParseDouble(Value,Out) && FMath::IsFinite(Out) && Out>=0 && Out<=9007199254740991. && Out==FMath::FloorToDouble(Out);};
-    if(Args[0]==TEXT("help")) return TEXT("/time /gamerule /weather /gamemode /give /save /physics clear|undo|status /realistic on|off|quality /record start|stop|status");
+    if(Args[0]==TEXT("help")) return TEXT("/time /gamerule /weather /gamemode /give /save /shadows on|off /physics clear|undo|status /realistic on|off|quality /record start|stop|status");
     if(Args[0]==TEXT("time") && Args.Num()==3) {
         if(Args[1]==TEXT("query")) {
             if(Args[2]==TEXT("daytime")) return FString::Printf(TEXT("時刻: %.0f"),BridgeSkyMath::PositiveRemainder(NativeTimeOfDay,24000));

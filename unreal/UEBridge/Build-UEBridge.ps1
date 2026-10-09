@@ -2,10 +2,11 @@ param([string]$EngineRoot = "")
 $ErrorActionPreference = "Stop"
 
 function Enable-UEBridgeRequiredPlugins {
-    param([Parameter(Mandatory=$true)]$Descriptor)
+    param([Parameter(Mandatory=$true)]$Descriptor, [bool]$NiagaraFluidsAvailable=$false)
     # Only required plugin Enabled flags are merged. Engine association, project
     # modules, custom settings and existing plugin metadata remain intact.
     $requiredPlugins = @('Niagara', 'GeometryCollectionPlugin', 'PythonScriptPlugin', 'EditorScriptingUtilities', 'ProceduralMeshComponent')
+    if ($NiagaraFluidsAvailable) { $requiredPlugins += 'NiagaraFluids' }
     $plugins = @($Descriptor.Plugins | Where-Object { $null -ne $_ })
     $changed = $false
     $enabled = @()
@@ -57,7 +58,9 @@ try {
     if (!$EngineRoot) { $EngineRoot = (Read-Host "Enter the Unreal Engine installation folder (example C:\Program Files\Epic Games\UE_5.8)").Trim('"') }
     $buildCommand = Join-Path $EngineRoot "Engine\Build\BatchFiles\Build.bat"
     if (!(Test-Path $buildCommand)) { throw "Build.bat was not found in this Unreal Engine installation." }
-    $merged = Enable-UEBridgeRequiredPlugins -Descriptor $descriptor
+    $niagaraFluids = (Test-Path -LiteralPath (Join-Path $EngineRoot 'Engine\Plugins\FX\NiagaraFluids\NiagaraFluids.uplugin')) -or (Test-Path -LiteralPath (Join-Path $EngineRoot 'Engine\Plugins\Experimental\NiagaraFluids\NiagaraFluids.uplugin'))
+    $merged = Enable-UEBridgeRequiredPlugins -Descriptor $descriptor -NiagaraFluidsAvailable $niagaraFluids
+    if (!$niagaraFluids) { Write-Host 'Niagara Fluids templates are not installed. The procedural explosion fallback will be available.' }
     if ($merged.Changed) {
         $identity = [Guid]::NewGuid().ToString('N')
         $backup = "$project.before-native-0.12.0-$identity"

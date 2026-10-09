@@ -143,6 +143,8 @@ void UBridgeVideo::SetNativeRenderMode(bool Lighting) {
     LightingEnabled=Lighting;
     Viewport->EngineShowFlags=*SavedNativeFlags;
     LightingFlags(Viewport->EngineShowFlags,Lighting,false);
+    Viewport->EngineShowFlags.SetDynamicShadows(NativeShadowEnabled);
+    Viewport->EngineShowFlags.SetAmbientOcclusion(false);
     // Native lighting is calibrated against the same exported environment as
     // the lightmap. Automatic exposure and a fixed UE atmosphere destroy that parity.
     Viewport->EngineShowFlags.SetTemporalAA(false);
@@ -196,13 +198,21 @@ void UBridgeVideo::SetNativeRealisticMode(bool Enabled) {
     // Keep terrain's exported lightmap and hands intact, but allow PBR on the
     // extension's lit materials. No expensive Lumen/ray tracing is forced on.
     Viewport->EngineShowFlags.SetLighting(Enabled||LightingEnabled);
-    Viewport->EngineShowFlags.SetDynamicShadows(Enabled||LightingEnabled);
+    Viewport->EngineShowFlags.SetDynamicShadows(NativeShadowEnabled);
+    Viewport->EngineShowFlags.SetAmbientOcclusion(false);
     Viewport->EngineShowFlags.SetSpecular(Enabled);
     Viewport->EngineShowFlags.SetReflectionEnvironment(Enabled);
     Viewport->EngineShowFlags.SetScreenSpaceReflections(Enabled);
     Viewport->EngineShowFlags.SetBloom(Enabled);
     Viewport->EngineShowFlags.SetMotionBlur(false);
     UpdateNativeSky();
+}
+void UBridgeVideo::SetNativeShadows(bool Enabled) {
+    NativeShadowEnabled=Enabled;
+    if(auto* Viewport=GetWorld()?GetWorld()->GetGameViewport():nullptr) Viewport->EngineShowFlags.SetDynamicShadows(Enabled);
+    for(auto* Light:{NativeSunLight.Get(),NativeMoonLight.Get()}) if(Light) {
+        Light->SetCastShadows(Enabled);Light->LightSourceAngle=3.f;Light->LightSourceSoftAngle=4.f;Light->MarkRenderStateDirty();
+    }
 }
 void UBridgeVideo::RestoreNativeRenderMode() {
     for(const auto& Entry:NativeHandParts) if(auto* Part=Entry.Get()) Part->SetVisibleInSceneCaptureOnly(false);
@@ -356,6 +366,8 @@ void UBridgeVideo::UpdateNativeSky() {
         // Vanilla's colour comes from SKY_LIGHT_COLOR_VISUAL/lightmap, not a
         // second hard-coded warm sun or blue moon colour multiplier.
         Component->SetLightColor(FLinearColor::White);
+        Component->SetCastShadows(NativeShadowEnabled);
+        Component->LightSourceAngle=3.f;Component->LightSourceSoftAngle=4.f;
     };
     Light(NativeSunLight,Sun,false);Light(NativeMoonLight,Moon,true);
     bool PhaseSheet=false;
@@ -456,6 +468,9 @@ void UBridgeVideo::TickNativeHands() {
         NativeHandCapture->TextureTarget=NativeHandTarget;NativeHandCapture->RegisterComponent();
     } else if(NativeHandTarget->SizeX!=RenderWidth || NativeHandTarget->SizeY!=RenderHeight) NativeHandTarget->ResizeTarget(RenderWidth,RenderHeight);
     NativeHandCapture->ShowFlags=NativeViewport->EngineShowFlags;
+    NativeHandCapture->ShowFlags.SetDynamicShadows(false);NativeHandCapture->ShowFlags.SetAmbientOcclusion(false);
+    NativeHandCapture->ShowFlags.SetGlobalIllumination(false);NativeHandCapture->ShowFlags.SetScreenSpaceReflections(false);
+    NativeHandCapture->ShowFlags.SetReflectionEnvironment(false);
     NativeHandCapture->ShowFlags.SetPostProcessing(false);NativeHandCapture->ShowFlags.SetMotionBlur(false);
     NativeHandCapture->ShowFlags.SetTemporalAA(false);NativeHandCapture->ShowFlags.SetAntiAliasing(false);
     NativeHandCapture->ShowFlags.SetAtmosphere(false);NativeHandCapture->ShowFlags.SetFog(false);NativeHandCapture->ShowFlags.SetCloud(false);

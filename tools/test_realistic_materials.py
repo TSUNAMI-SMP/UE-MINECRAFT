@@ -37,37 +37,44 @@ class OriginalMaterialGraph(unittest.TestCase):
             connections[(id(source.material), prop)] = source; return True
         properties = types.SimpleNamespace(**{key: key for key in ('MP_BASE_COLOR', 'MP_EMISSIVE_COLOR', 'MP_ROUGHNESS', 'MP_SPECULAR', 'MP_OPACITY', 'MP_NORMAL', 'MP_REFRACTION')})
         unreal = types.SimpleNamespace(
-            EditorAssetLibrary=types.SimpleNamespace(make_directory=lambda *_: None, save_loaded_asset=lambda *_: True),
+            EditorAssetLibrary=types.SimpleNamespace(does_asset_exist=lambda path: path in assets, make_directory=lambda *_: None, save_loaded_asset=lambda *_: True),
             AssetToolsHelpers=types.SimpleNamespace(get_asset_tools=lambda: types.SimpleNamespace(create_asset=create)),
-            Material=Material, MaterialFactoryNew=Node, CustomInput=Node,
+            Material=Material, MaterialFactoryNew=Node, CustomInput=Node, NiagaraSystem=type("NiagaraSystem",(Node,),{}),
+            AssetRegistryHelpers=types.SimpleNamespace(get_asset_registry=lambda:types.SimpleNamespace(get_assets_by_path=lambda *args,**kwargs:[])),
+            log_warning=lambda message:None, log=lambda message:None,
             MaterialEditingLibrary=types.SimpleNamespace(create_material_expression=expression, connect_material_expressions=wire, delete_all_material_expressions=clear, connect_material_property=connect, get_material_property_input_node=lambda material, prop: connections.get((id(material), prop)), recompile_material=compiled.append),
             MaterialShadingModel=types.SimpleNamespace(MSM_DEFAULT_LIT='lit', MSM_UNLIT='unlit'),
-            BlendMode=types.SimpleNamespace(BLEND_TRANSLUCENT='translucent'), MaterialProperty=properties,
+            BlendMode=types.SimpleNamespace(BLEND_TRANSLUCENT='translucent', BLEND_OPAQUE='opaque'), MaterialProperty=properties,
             TranslucencyLightingMode=types.SimpleNamespace(TLM_SURFACE_PER_PIXEL_LIGHTING='surface'),
-            CustomMaterialOutputType=types.SimpleNamespace(CMOT_FLOAT2='float2', CMOT_FLOAT3='float3'),
+            CustomMaterialOutputType=types.SimpleNamespace(CMOT_FLOAT2='float2', CMOT_FLOAT3='float3', CMOT_FLOAT4='float4'),
             LinearColor=lambda *args: args, load_asset=load,
         )
-        for name in ('ScalarParameter', 'VectorParameter', 'TextureSampleParameter2D', 'TextureCoordinate', 'Custom', 'Multiply', 'WorldPosition', 'VertexColor', 'ComponentMask'):
+        for name in ('ScalarParameter', 'VectorParameter', 'TextureSampleParameter2D', 'TextureCoordinate', 'Custom', 'Multiply', 'WorldPosition', 'CameraVectorWS', 'VertexColor', 'ComponentMask'):
             setattr(unreal, 'MaterialExpression' + name, type(name, (Node,), {'kind': name}))
         texture = types.SimpleNamespace(blueprint_get_size_x=lambda: 16, blueprint_get_size_y=lambda: 512)
         sprites = {key: texture for key in ('block/sand', 'block/tnt_side', 'block/obsidian', 'block/water_still', 'block/lava_still')}
         first = realistic.setup_realistic_materials(unreal, sprites)
         self.assertEqual(len(first), 14)
         self.assertEqual(len(compiled), 14)
-        sample = next(node for node in nodes if node.kind == 'TextureSampleParameter2D')
-        uv = next(node for node in nodes if node.kind == 'TextureCoordinate')
+        sample = unreal.MaterialExpressionTextureSampleParameter2D()
+        uv = unreal.MaterialExpressionTextureCoordinate()
         self.assertFalse(wire(uv, '', sample, 'Coordinates'))
         self.assertTrue(wire(uv, '', sample, 'UVs'))
         self.assertTrue(all(m.properties['used_with_instanced_static_meshes'] for m in first))
         for kind in ('Sand', 'Tnt', 'Rock', 'Water', 'Lava', 'Fire', 'Smoke'):
             for style, shading in (('Simple', 'unlit'), ('Lit', 'lit')):
-                material = assets[f'/Game/Bridge/Realistic/M_Realistic{kind}_{style}_v1']
-                self.assertEqual(material.properties['shading_model'], shading)
+                material = assets[f'/Game/Bridge/Realistic/M_Realistic{kind}_{style}_v2']
+                self.assertEqual(material.properties['shading_model'], 'unlit' if kind in ('Fire','Smoke') else shading)
                 self.assertIn((id(material), 'MP_EMISSIVE_COLOR'), connections)
-        self.assertIn((id(assets['/Game/Bridge/Realistic/M_RealisticWater_Lit_v1']), 'MP_REFRACTION'), connections)
-        self.assertEqual(assets['/Game/Bridge/Realistic/M_RealisticWater_Lit_v1'].properties['translucency_lighting_mode'], 'surface')
-        self.assertTrue(assets['/Game/Bridge/Realistic/M_RealisticWater_Lit_v1'].properties['screen_space_reflections'])
-        self.assertTrue(any('Clock*8' in node.properties.get('code', '') for node in nodes))
+        self.assertIn((id(assets['/Game/Bridge/Realistic/M_RealisticWater_Lit_v2']), 'MP_REFRACTION'), connections)
+        self.assertEqual(assets['/Game/Bridge/Realistic/M_RealisticWater_Lit_v2'].properties['translucency_lighting_mode'], 'surface')
+        self.assertTrue(assets['/Game/Bridge/Realistic/M_RealisticWater_Lit_v2'].properties['screen_space_reflections'])
+        self.assertFalse(any(node.kind.startswith('TextureSample') for node in nodes))
+        for node in nodes:
+            if node.kind == 'ComponentMask':
+                self.assertIn(tuple(node.properties[key] for key in ('r','g','b','a')), ((True,True,True,False),(False,False,False,True)))
+        self.assertTrue(any('crust' in node.properties.get('code', '') for node in nodes))
+        self.assertTrue(any('fresnel' in node.properties.get('code', '') for node in nodes))
         self.assertEqual(realistic.setup_realistic_materials(unreal, sprites), first)
         self.assertEqual(len(compiled), 14)
 

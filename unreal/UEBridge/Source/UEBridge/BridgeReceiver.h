@@ -36,6 +36,7 @@ public:
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Native") bool NativePlayActive = false;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Native") bool NativeCreative = true;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Native") bool NativeLighting = false;
+    UPROPERTY(BlueprintReadOnly, Category="Bridge|Native") bool NativeShadows = false;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Native") FString NativeStatus = TEXT("not started");
     bool IsNativeReady() const;
     bool IsNativeSaving() const;

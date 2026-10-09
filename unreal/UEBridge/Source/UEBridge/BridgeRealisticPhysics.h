@@ -28,7 +28,8 @@ struct Key {
     bool operator<(const Key& b) const {return std::tie(x,y,z)<std::tie(b.x,b.y,b.z);}
     bool operator==(const Key& b) const {return x==b.x&&y==b.y&&z==b.z;}
 };
-inline Key cell(Vec p) {return {int(std::floor(p.x/CellSize)),int(std::floor(p.y/CellSize)),int(std::floor(p.z/CellSize))};}
+inline int cellAxis(double p) {const double q=p/CellSize,n=std::round(q);return int(std::abs(q-n)<1e-9?n:std::floor(q));}
+inline Key cell(Vec p) {return {cellAxis(p.x),cellAxis(p.y),cellAxis(p.z)};}
 inline Vec center(Key k) {return {(k.x+.5)*CellSize,(k.y+.5)*CellSize,(k.z+.5)*CellSize};}
 struct Hit {bool hit=false;double fraction=1;Vec normal{0,0,1};};
 struct Grain {Vec p,v;bool sleeping=false;};
@@ -43,6 +44,10 @@ public:
     std::map<Key,int> rocks;
     std::vector<Bomb> bombs;
     std::vector<Drop> drops;
+    Vec gridOrigin;
+    Key cell(Vec p) const {return BridgeRealistic::cell(p-gridOrigin);}
+    Vec center(Key k) const {return BridgeRealistic::center(k)+gridOrigin;}
+    Key legacyCell(Key k) const {return cell(BridgeRealistic::center(k));}
     std::uint64_t tick=0;
     std::uint32_t nextId=1;
     // Callbacks are runtime collision queries, never serialized.
@@ -59,6 +64,23 @@ public:
         for(const auto& p:drops) if(p.kind==kind) n+=p.amount;
         return n;
     }
+    bool placementOccupied(Vec p) const {
+        // Open faces allow touching neighbours; moving debris still occupies space.
+        const auto overlaps=[&](Vec q,Vec half) {
+            const Vec d=q-p;
+            return std::abs(d.x)<50+half.x-1e-6&&std::abs(d.y)<50+half.y-1e-6&&std::abs(d.z)<50+half.z-1e-6;
+        };
+        for(const auto& b:bombs) if(overlaps(b.p,{50,50,50})) return true;
+        for(const auto& g:grains) if(overlaps(g.p,{5.5,5.5,5.5})) return true;
+        for(const auto& r:rocks) if(overlaps(center(r.first),{12.5,12.5,12.5})) return true;
+        for(const auto& f:liquids) {
+            const double height=CellSize*f.second.amount/CellCapacity;
+            Vec q=center(f.first);q.z+=height*.5-CellSize*.5;
+            if(height>0&&overlaps(q,{12.5,12.5,height*.5})) return true;
+        }
+        for(const auto& d:drops) if(overlaps(d.p,{2,2,2})) return true;
+        return false;
+    }
     bool pour(Vec p,int kind) {
         if((kind!=Water&&kind!=Lava)||!validPosition(p)||liquids.size()+rocks.size()+64>MaxCells) return false;
         const auto origin=cell(p);std::vector<Key> cells;
@@ -69,6 +91,10 @@ public:
         }
         for(auto k:cells) liquids.emplace(k,Liquid{kind,CellCapacity});
         return true;
+    }
+    bool pourBlock(Vec cubeCenter,int kind) {
+        // Four 25 cm cells on each axis fill exactly the selected 1 m voxel.
+        return pour(cubeCenter+Vec{0,0,-50},kind);
     }
     // Recover exactly one bucket in a connected pool, preflight before mutation.
     bool collect(Vec p,int kind) {
@@ -93,7 +119,11 @@ public:
             Vec q=p+Vec{(x-3.5)*12.5,(y-3.5)*12.5,(z-3.5)*12.5};
             if(!validPosition(q)||rocks.count(cell(q))||(blocked&&blocked(q,5.5))) return false;
             for(const auto& g:grains) if((g.p-q).length()<10.9) return false;
-            batch.push_back({q,{},false});
+            // A symmetric vertical stack is a metastable column. Start grains
+            // with deterministic small horizontal perturbations like loose sand.
+            const unsigned seed=unsigned(x*73856093)^unsigned(y*19349663)^unsigned(z*83492791)^unsigned(nextId);
+            const double angle=(seed%6283)*.001,speed=35+(seed%45);
+            batch.push_back({q,{std::cos(angle)*speed,std::sin(angle)*speed,0},false});
         }
         grains.insert(grains.end(),batch.begin(),batch.end());return true;
     }
@@ -132,28 +162,42 @@ public:
     }
     void step() {
         ++tick;
+        const bool CheckGrains=tick%30==0||std::any_of(grains.begin(),grains.end(),[](const Grain& g){return !g.sleeping;});
+        if(CheckGrains) {
         std::map<Key,std::vector<std::size_t>> grid;
         for(std::size_t i=0;i<grains.size();++i) grid[cell(grains[i].p)].push_back(i);
         for(std::size_t i=0;i<grains.size();++i) {
             auto& g=grains[i];Vec prev=g.p;
             // Sleeping grains re-query support: removing a floor wakes a pile.
-            if(g.sleeping) {if((tick+i)%30!=0) continue;
+            if(g.sleeping) {if(tick%30!=0) continue;
                 Hit support=sweep?sweep(g.p,g.p+Vec{0,0,-1.5},5.5):Hit{};
                 if(support.hit) continue;
                 g.sleeping=false;}
             const auto fluid=liquids.find(cell(g.p));if(fluid!=liquids.end()) {g.v=g.v*.94;g.v.z+=Gravity*StepSeconds*.65;}
             g.v.z-=Gravity*StepSeconds;move(g.p,g.v,5.5,.08);
-            const Key k=cell(g.p);
+            const Key k=cell(g.p);bool Corrected=false;
             for(int x=-1;x<=1;++x) for(int y=-1;y<=1;++y) for(int z=-1;z<=1;++z) {
                 auto near=grid.find({k.x+x,k.y+y,k.z+z});if(near==grid.end()) continue;
                 for(auto j:near->second) if(j<i) {Vec d=g.p-grains[j].p;double distance=d.length();
-                    if(distance>1e-5&&distance<11) {Vec normal=d*(1/distance);g.p=g.p+normal*(11-distance);double speed=g.v.x*normal.x+g.v.y*normal.y+g.v.z*normal.z;if(speed<0) g.v=g.v-normal*speed;g.v=g.v*.9;}}
+                    if(distance>1e-5&&distance<11) {Corrected=true;Vec normal=d*(1/distance);g.p=g.p+normal*(11-distance);double speed=g.v.x*normal.x+g.v.y*normal.y+g.v.z*normal.z;if(speed<0) g.v=g.v-normal*speed;g.v=g.v*.9;}}
+            }
+            // Grain separation can push the lower grain into a floor after its
+            // gravity sweep. Constrain that correction to the terrain as well.
+            if(Corrected&&sweep) {
+                Hit constraint=sweep(prev,g.p,5.5);
+                if(constraint.hit) {
+                    g.p=prev+(g.p-prev)*std::clamp(constraint.fraction-1e-4,0.,1.);
+                    double vn=g.v.x*constraint.normal.x+g.v.y*constraint.normal.y+g.v.z*constraint.normal.z;
+                    if(vn<0) g.v=g.v-constraint.normal*vn;
+                }
             }
             if(!validPosition(g.p)) {g.p=prev;g.v={};}
             if((g.p-prev).length()<.015&&g.v.length()<2) g.sleeping=true;
         }
+        }
         std::vector<Blast> blasts;
-        for(auto& b:bombs) {b.v.z-=Gravity*StepSeconds;move(b.p,b.v,48,.25);b.v.x*=.98;b.v.y*=.98;
+        for(auto& b:bombs) {if(b.fuse<0) continue; // A placed TNT block stays on its voxel until ignited.
+            b.v.z-=Gravity*StepSeconds;move(b.p,b.v,48,.25);b.v.x*=.98;b.v.y*=.98;
             if(b.fuse>=0) {b.fuse=std::max(0.,b.fuse-StepSeconds);if(b.fuse<=1e-8) blasts.push_back({b.p,600});}}
         bombs.erase(std::remove_if(bombs.begin(),bombs.end(),[](const Bomb& b){return b.fuse>=0&&b.fuse<=1e-8;}),bombs.end());
         // Expired bombs removed before callbacks, so chain reactions cannot repeat them.

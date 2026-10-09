@@ -50,4 +50,9 @@ $duplicate = '{"Plugins":[{"Name":"Niagara","Enabled":false},{"Name":"Niagara","
 $rejected = $false
 try { Enable-UEBridgeRequiredPlugins -Descriptor $duplicate | Out-Null } catch { $rejected = $true }
 Assert-True $rejected 'Duplicate required plugin records were accepted'
+$fluids = '{"Plugins":[{"Name":"NiagaraFluids","Enabled":false,"Optional":true}]}' | ConvertFrom-Json
+Enable-UEBridgeRequiredPlugins -Descriptor $fluids -NiagaraFluidsAvailable $true | Out-Null
+$fluidPlugin = @($fluids.Plugins | Where-Object { $_.Name -eq 'NiagaraFluids' })
+Assert-True ($fluidPlugin.Count -eq 1 -and $fluidPlugin[0].Enabled -and $fluidPlugin[0].Optional) 'Installed Niagara Fluids was not merged safely'
+Assert-True (!(Enable-UEBridgeRequiredPlugins -Descriptor $fluids -NiagaraFluidsAvailable $true).Changed) 'Niagara Fluids merge was not idempotent'
 Write-Host 'Native build plugin merge fixtures passed; user settings preserved.'

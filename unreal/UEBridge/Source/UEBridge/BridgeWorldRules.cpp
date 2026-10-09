@@ -40,17 +40,17 @@ bool ABridgeWorld::ApplyNativeMutations(const TArray<FNativeMutation>& Changes) 
     }
     int64 NewShapes=Shapes;for(const auto& Cell:Draft) {if(Cell.Value.Num()>8192) return false;NewShapes+=Cell.Value.Num()-Stored[Cell.Key].Num();}
     if(NewShapes>4194304) return false;
-    for(auto& Cell:Draft) {Shapes+=Cell.Value.Num()-Stored[Cell.Key].Num();Stored[Cell.Key]=MoveTemp(Cell.Value);}
+    for(auto& Cell:Draft) {Shapes+=Cell.Value.Num()-Stored[Cell.Key].Num();Stored[Cell.Key]=MoveTemp(Cell.Value);IndexVisualCell(Cell.Key);}
     for(const auto& Change:Changes) {
         const FIntVector Cell=CellOf(Change.Block),Local=Change.Block-Cell*8;
-        WaterCells.FindOrAdd(Cell).Remove(uint16(Local.X+Local.Z*8+Local.Y*64));MarkEdited(Change.Block);
+        WaterCells.FindOrAdd(Cell).Remove(uint16(Local.X+Local.Z*8+Local.Y*64));MarkEdited(Change.Block,false);
     }
     for(const auto& Cell:Draft) RebuildCell(Cell.Key);
     for(const auto& Change:Changes) UpdateConnections(Change.Block);
     return true;
 }
 void ABridgeWorld::EnableNativeRules(int32 RandomTicks) {
-    NativeRules=true;NativeRandomTickSpeed=FMath::Clamp(RandomTicks,0,4096);GrassSections.Empty();GrassSectionCursor=0;
+    NativeRules=true;NativeRandomTickSpeed=FMath::Clamp(RandomTicks,0,4096);GrassSections.Empty();SortedGrassSections.Empty();GrassSectionCursor=0;
     for(const auto& Cell:Stored) for(const auto& Row:Cell.Value) if(Row.Role<=1) {
         const FIntVector V=OwnerOf(Row);
         if(Row.BlockId==TEXT("minecraft:grass_block")) GrassSections.Add(FIntVector(FMath::FloorToInt(V.X/16.),FMath::FloorToInt(V.Y/16.),FMath::FloorToInt(V.Z/16.)));
@@ -210,8 +210,11 @@ void ABridgeWorld::TickNativeRules(float DeltaSeconds) {
         for(const auto& Block:Due) UpdateNativeRule(Block,true);
         // Bounded propagation preserves pending work across ticks.
         for(int32 Work=0;Work<4096 && !RuleQueue.IsEmpty();++Work) {const FIntVector Block=*RuleQueue.CreateConstIterator();RuleQueue.Remove(Block);UpdateNativeRule(Block);}
-        TArray<FIntVector> Sections=GrassSections.Array();
-        Sections.Sort([](const FIntVector& A,const FIntVector& B){return A.X!=B.X ? A.X<B.X : A.Y!=B.Y ? A.Y<B.Y : A.Z<B.Z;});
+        if(SortedGrassSections.Num()!=GrassSections.Num()) {
+            SortedGrassSections=GrassSections.Array();
+            SortedGrassSections.Sort([](const FIntVector& A,const FIntVector& B){return A.X!=B.X ? A.X<B.X : A.Y!=B.Y ? A.Y<B.Y : A.Z<B.Z;});
+        }
+        const auto& Sections=SortedGrassSections;
         // Normal randomTickSpeed=3 visits every section of the standard export.
         // Large custom rates share a bounded budget round-robin across ticks.
         const int32 Visits=NativeRandomTickSpeed>0 ? FMath::Min(Sections.Num(),FMath::Max(1,8192/NativeRandomTickSpeed)) : 0;

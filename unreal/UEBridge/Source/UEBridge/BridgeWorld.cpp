@@ -19,13 +19,14 @@ void ABridgeWorld::Clear(uint64 Barrier) {
     for (auto& Pair:Cells) if (IsValid(Pair.Value)) { Pair.Value->Clear(); Pair.Value->Destroy(); }
     for(auto& Box:Boundary) if(Box) Box->DestroyComponent(); Boundary.Empty();
     for(auto& Fall:NativeFalls) if(Fall.Visual.IsValid()) Fall.Visual->Destroy();NativeFalls.Empty();RuleQueue.Empty();RuleDelayed.Empty();GrassSections.Empty();ComparatorPower.Empty();NativeRules=false;NativeRuleTick=0;NativeRuleClock=0;
-    Sealed=false;ImportId.Empty();Stored.Empty();ButtonRelease.Empty();ButtonTimerOwners.Empty();LastModelError.Empty();SurfaceReason=TEXT("not_sampled");
+    Sealed=false;ImportId.Empty();Stored.Empty();VisualRows.Empty();SortedGrassSections.Empty();ButtonRelease.Empty();ButtonTimerOwners.Empty();LastModelError.Empty();SurfaceReason=TEXT("not_sampled");
     Cells.Empty(); Counts.Empty(); Revisions.Empty(); Stages.Empty(); Shapes=0; Scoped=false; ScopeSequence=0; ClearBarrier=Barrier;
     OpaqueCells.Empty();RebuildQueue.Empty();LightQueue.Empty();EditedBlocks.Empty();EditedCellOwners.Empty();RemovedBlocks.Empty();SkyTops.Empty();WaterCells.Empty();BiomeTintCells.Empty();PhysicsCells.Empty();AdditionalCollisionPositions.Empty();HasCollisionCenter=false;
     if(Lighting) Lighting->Clear();Lighting.Reset();PendingLighting.Reset();LightSeedCells.Empty();LightSeedCursor=0;PendingLightInitialized=false;LightingRadius=LightingHeight=0;
 }
 void ABridgeWorld::EndPlay(const EEndPlayReason::Type Reason) { Clear(); Super::EndPlay(Reason); }
 void ABridgeWorld::Tick(float DeltaSeconds) {
+    const double TickStart=FPlatformTime::Seconds();
     Super::Tick(DeltaSeconds);if(NativeRules && Sealed && GetWorld() && !GetWorld()->IsPaused()) TickNativeRules(DeltaSeconds);if(NativeFluidsEnabled && Sealed && GetWorld() && !GetWorld()->IsPaused()) TickFluids(DeltaSeconds); const double Now=FPlatformTime::Seconds();
     for (auto It=Stages.CreateIterator();It;++It) if (Now>It.Value().Deadline) It.RemoveCurrent();
     if(GetWorld()) TickButtonTimers(GetWorld()->GetTimeSeconds());
@@ -60,6 +61,7 @@ void ABridgeWorld::Tick(float DeltaSeconds) {
         const FIntVector Cell=*LightQueue.CreateConstIterator();LightQueue.Remove(Cell);
         if(auto* Actor=Cells.Find(Cell)) if(IsValid(*Actor)) (*Actor)->Relight(Lighting.Get());
     }
+    TickMillis=TickMillis*.95+(FPlatformTime::Seconds()-TickStart)*1000*.05;
 }
 bool ABridgeWorld::Handle(const FBridgePacket& P,const FVector& Anchor,UMaterialInterface* Material,UBridgeBlockPalette* Palette) {
     if(Sealed && P.Kind!=EBridgeKind::WorldCell && P.Kind!=EBridgeKind::WorldScope) return true;
@@ -192,13 +194,15 @@ int32 ABridgeWorld::RemoveBlocksInSphere(FVector Position,float RemovalRadius) {
     if(!Sealed || !FMath::IsFinite(RemovalRadius) || RemovalRadius<=0 || RemovalRadius>5000) return 0;
     int32 Removed=0;
     for(auto& Pair:Stored) {
+        if(FVector::DistSquared(BlockCenter(Pair.Key*8+FIntVector(3,3,3)),Position)>FMath::Square(RemovalRadius+780)) continue;
         const int32 Before=Pair.Value.Num();
         TSet<FIntVector> Targets;for(const auto& B:Pair.Value) if(FVector::DistSquared(BlockCenter(OwnerOf(B)),Position)<=RemovalRadius*RemovalRadius) Targets.Add(OwnerOf(B));
         if(NativeBlockRemoving) for(auto It=Targets.CreateIterator();It;++It) if(!NativeBlockRemoving(*It)) It.RemoveCurrent();
         Pair.Value.RemoveAll([&](const FBridgeBlock& B){ return Targets.Contains(OwnerOf(B)); });
         const int32 Difference=Before-Pair.Value.Num(); if(!Difference) continue;
         Removed+=Difference; Shapes-=Difference;
-        for(const auto& Target:Targets) MarkEdited(Target);
+        IndexVisualCell(Pair.Key);
+        for(const auto& Target:Targets) MarkEdited(Target,false);
         // Refresh below also exposes neighbor faces across cell borders.
         Counts.Add(Pair.Key,Pair.Value.Num());RefreshLogicalCell(Pair.Key);QueueNeighbors(Pair.Key);RebuildCell(Pair.Key);
     }
@@ -403,7 +407,18 @@ void ABridgeWorld::QueueNeighbors(const FIntVector& Cell) {
     RebuildQueue.Add(Cell);for(const FIntVector& Delta:{FIntVector(1,0,0),FIntVector(-1,0,0),FIntVector(0,1,0),FIntVector(0,-1,0),FIntVector(0,0,1),FIntVector(0,0,-1)})
         if(Stored.Contains(Cell+Delta)) RebuildQueue.Add(Cell+Delta);
 }
+void ABridgeWorld::IndexVisualCell(const FIntVector& Cell) {
+    auto& Index=VisualRows.FindOrAdd(Cell);Index.clear();
+    const auto* Rows=Stored.Find(Cell);if(!Rows) return;
+    for(int32 Row=0;Row<Rows->Num();++Row) {
+        const auto& Shape=(*Rows)[Row];if(Shape.Role!=0 && Shape.Role!=1) continue;
+        const FIntVector Local=OwnerOf(Shape)-Cell*8;
+        if(Local.X<0||Local.X>=8||Local.Y<0||Local.Y>=8||Local.Z<0||Local.Z>=8) continue;
+        Index.rememberFirst(Local.X,Local.Y,Local.Z,Row);
+    }
+}
 void ABridgeWorld::RefreshLogicalCell(const FIntVector& Cell) {
+    IndexVisualCell(Cell);
     const auto* Rows=Stored.Find(Cell);if(!Rows) return;
     auto& Mask=OpaqueCells.FindOrAdd(Cell);FMemory::Memzero(Mask.Words,sizeof(Mask.Words));
     for(const auto& Block:*Rows) if(Block.Role==1 || Block.Role==0) {
@@ -436,7 +451,8 @@ void ABridgeWorld::BeginLightingRecenter() {
     for(const auto& Pair:SkyTops) if(Pair.Key.Y==PendingLightingCenter.Y+PendingLightingHeight && Pair.Value.Num()==64)
         for(int32 Z=0;Z<8;++Z) for(int32 X=0;X<8;++X) PendingLighting->SetSkyBoundary(Pair.Key.X*8+X,Pair.Key.Z*8+Z,Pair.Value[X+(Z<<3)]);
 }
-void ABridgeWorld::MarkEdited(const FIntVector& Block) {
+void ABridgeWorld::MarkEdited(const FIntVector& Block,bool Reindex) {
+    if(Reindex) IndexVisualCell(CellOf(Block));
     if(NativeCellChanged) NativeCellChanged(CellOf(Block));
     if(NativeRules) QueueNativeRule(Block);
     ++MutationSerial;if(NativeFluidsEnabled) QueueFluid(Block);
@@ -586,9 +602,10 @@ bool ABridgeWorld::BreakBlock(const FIntVector& Block) {
     UpdateConnections(Block);return true;
 }
 const FBridgeBlock* ABridgeWorld::FindVisual(const FIntVector& Block) const {
-    const auto* Data=Stored.Find(CellOf(Block)); if(!Data) return nullptr;
-    for(const auto& Shape:*Data) if(OwnerOf(Shape)==Block && (Shape.Role==1 || Shape.Role==0)) return &Shape;
-    return nullptr;
+    const FIntVector Cell=CellOf(Block),Local=Block-Cell*8;
+    const auto* Data=Stored.Find(Cell);const auto* Index=VisualRows.Find(Cell);if(!Data || !Index) return nullptr;
+    const int32 Row=Index->find(Local.X,Local.Y,Local.Z);
+    return Data->IsValidIndex(Row) ? &(*Data)[Row] : nullptr;
 }
 bool ABridgeWorld::AppendState(const FIntVector& Block,const FString& BlockId,int32 Color,const FString& Key,TArray<FBridgeBlock>& Out) const {
     if(!SavedPalette || SavedPalette->BlockstateDefinitions.IsEmpty()) {

@@ -1,3 +1,7 @@
+# UE 0.18.4 physics placement, sound and rendering update
+
+[UEBridge-update-0.18.4.zip](UEBridge-update-0.18.4.zip) / [導入・操作](../docs/UPGRADE_0.18.4.md) / [検証](../docs/AUDIT_0.18.4.md)。マス設置・音・影切替・専用の手続き型素材・CPU更新削減。0.18.1〜0.18.3修正も含む累積更新。MODは0.18.0のまま、再書き出し不要。`-Rebuild -Reimport` が必要です。Niagaraは対応テンプレート導入時に使用。Windows UE描画と実FPSは未検証です。
+
 # UE 0.18.3 material UV hotfix
 
 [UEBridge-update-0.18.3.zip](UEBridge-update-0.18.3.zip) / [導入手順](../docs/UPGRADE_0.18.3.md)。0.18.1・0.18.2修正を含む累積更新。MODは0.18.0を継続使用してください。

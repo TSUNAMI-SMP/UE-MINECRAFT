@@ -24,7 +24,7 @@ HELPERS = ('native_world_format.py', 'import_minecraft_textures.py', 'import_min
            'import_minecraft_items.py', 'import_minecraft_mobs.py', 'import_minecraft_player.py',
            'import_minecraft_ui.py', 'import_minecraft_sounds.py', 'setup_world_bridge.py',
            'bridge_lighting_materials.py', 'setup_vanilla_effects.py',
-           'setup_bridge_rendering.py', 'setup_native_explosion.py')
+           'setup_bridge_rendering.py', 'setup_native_explosion.py', 'setup_realistic_physics.py')
 REGISTRY_ID = re.compile(r'[a-z0-9_.-]+:[a-z0-9_./-]+\Z')
 
 

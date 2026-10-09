@@ -372,18 +372,22 @@ void ABridgeNativeHUD::DrawCrosshair() {
 
 void ABridgeNativeHUD::DrawPauseMenu() {
     Solid(0, 0, GuiWidth, GuiHeight, FLinearColor(0, 0, 0, .65f)); PauseButtons.Reset();
-    const FString Title = TEXT("ゲームメニュー"); Text(Title, (GuiWidth - TextWidth(Title)) / 2, GuiHeight / 2 - 115);
+    const FString Title = TEXT("ゲームメニュー"); Text(Title, (GuiWidth - TextWidth(Title)) / 2, GuiHeight / 2 - 108);
     const auto* Control = NativeController(); const auto* Receiver = Control ? Control->GetNativeReceiver() : nullptr;
     const FString Labels[] = {TEXT("ゲームに戻る"), TEXT("ワールドを保存"), TEXT("開始地点に戻る"),
         Receiver && Receiver->NativeLighting ? TEXT("照明: ON") : TEXT("照明: OFF"), TEXT("終了"),
         FString::Printf(TEXT("感度を下げる  %.0f%%"),Control ? Control->GetNativeSensitivity()*200 : 100),
-        TEXT("感度を上げる"),TEXT("視点を切り替える")};
+        TEXT("感度を上げる"),TEXT("視点を切り替える"),
+        Receiver&&Receiver->NativeRealisticVisuals()?TEXT("リアル表示: ON"):TEXT("リアル表示: OFF"),
+        FString::Printf(TEXT("品質: %s"),Receiver&&Receiver->NativeRealisticQuality()==0?TEXT("低"):Receiver&&Receiver->NativeRealisticQuality()==2?TEXT("高"):TEXT("中")),
+        Receiver&&Receiver->NativeRecording()?TEXT("動画の記録を停止"):TEXT("動画の記録を開始"),TEXT("動画の保存先を確認"),
+        TEXT("近距離の物理を削除"),TEXT("直前の削除を戻す")};
     for (int32 I = 0; I < UE_ARRAY_COUNT(Labels); ++I) {
-        const float X = GuiWidth / 2 - 100, Y = GuiHeight / 2 - 88 + I * 23;
-        FBox2D Bounds(FVector2D(X, Y) * GuiScale, FVector2D(X + 200, Y + 20) * GuiScale); PauseButtons.Add(Bounds);
-        const bool Hovered = Within(Bounds, Pointer); Solid(X, Y, 200, 20, Hovered ? FLinearColor(.5f, .5f, .65f) : FLinearColor(.3f, .3f, .3f));
-        Sprite(Hovered ? TEXT("widget/button_highlighted") : TEXT("widget/button"), X, Y, 200, 20);
-        Text(Labels[I], (GuiWidth - TextWidth(Labels[I])) / 2, Y + 6);
+        const float Width=FMath::Min(200.f,(GuiWidth-24)/2),X=GuiWidth/2-Width-5+(I/7)*(Width+10),Y=GuiHeight/2-88+(I%7)*23;
+        FBox2D Bounds(FVector2D(X, Y) * GuiScale, FVector2D(X + Width, Y + 20) * GuiScale); PauseButtons.Add(Bounds);
+        const bool Hovered = Within(Bounds, Pointer); Solid(X, Y, Width, 20, Hovered ? FLinearColor(.5f, .5f, .65f) : FLinearColor(.3f, .3f, .3f));
+        Sprite(Hovered ? TEXT("widget/button_highlighted") : TEXT("widget/button"), X, Y, Width, 20);
+        Text(Labels[I], X+(Width-TextWidth(Labels[I]))/2, Y + 6);
     }
 }
 
@@ -434,6 +438,17 @@ bool ABridgeNativeHUD::HandlePointer(FKey Button, FVector2D Position) {
             else if (I == 5) Control->SetNativeSensitivity(Control->GetNativeSensitivity()-.025f);
             else if (I == 6) Control->SetNativeSensitivity(Control->GetNativeSensitivity()+.025f);
             else if (I == 7) Control->CycleNativePerspective();
+            else if(I>=8) {
+                FString Command;
+                if(I==8) Command=Receiver->NativeRealisticVisuals()?TEXT("/realistic off"):TEXT("/realistic on");
+                if(I==9) {const TCHAR* Names[]={TEXT("low"),TEXT("medium"),TEXT("high")};Command=FString(TEXT("/realistic quality "))+Names[(Receiver->NativeRealisticQuality()+1)%3];}
+                if(I==10) Command=Receiver->NativeRecording()?TEXT("/record stop"):TEXT("/record start");
+                if(I==11) Command=TEXT("/record status");
+                if(I==12) Command=TEXT("/physics clear all 16");
+                if(I==13) Command=TEXT("/physics undo");
+                const FString Result=Receiver->NativeCommand(Command);ChatMessages.Add(Result);LastChatAt=GetWorld()->GetTimeSeconds();
+                if(I==11) Control->TogglePause();
+            }
             return true;
         }
         return true;

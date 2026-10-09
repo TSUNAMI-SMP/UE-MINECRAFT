@@ -19,6 +19,8 @@
 #include "BridgeNativeExplosion.h"
 #include "BridgeCombatMath.h"
 #include "BridgeSkyMath.h"
+#include "BridgeRealisticWorld.h"
+#include "BridgeCinematicCapture.h"
 #include "BridgeCharacterMovement.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -63,6 +65,10 @@ void ABridgeReceiver::BeginNativePlay() {
     NativeTearDownHandle=FWorldDelegates::OnWorldBeginTearDown.AddUObject(this,&ABridgeReceiver::PrepareNativeExit);
     PrimaryActorTick.bTickEvenWhenPaused=true;
     NativeStore=MakeShared<FBridgeNativeWorldStore>();
+    CinematicCapture=NewObject<UBridgeCinematicCapture>(this);CinematicCapture->RegisterComponent();
+    const FString ReplayWorld=CinematicCapture->ConfigureReplayFromCommandLine();
+    if(CinematicCapture->HasReplayError()) {NativeRestoreFailed=true;NativeStatus=CinematicCapture->GetStatus();return;}
+    if(!ReplayWorld.IsEmpty()) NativeWorldFile=ReplayWorld;
     SyncedWorld=GetWorld()->SpawnActor<ABridgeWorld>();
     if(!SyncedWorld || !TexturePalette || !NativeUiPalette || !PlayerAppearance) {
         NativeStatus=TEXT("Setup incomplete: run import_native_play.py for this export package");
@@ -70,7 +76,7 @@ void ABridgeReceiver::BeginNativePlay() {
             *GetNameSafe(TexturePalette),*GetNameSafe(NativeUiPalette),*GetNameSafe(PlayerAppearance),*GetNameSafe(MobPalette),*NativeStatus);
         return;
     }
-    if(!NativeStore->BeginLoad(NativeWorldFile,SyncedWorld,Anchor,PreviewMaterial,TexturePalette)) {
+    if(!NativeStore->BeginLoad(NativeWorldFile,SyncedWorld,Anchor,PreviewMaterial,TexturePalette,!IsNativeReplay())) {
         NativeStatus=NativeStore->GetError();return;
     }
     SourceOrigin=NativeStore->GetMetadata().Origin;
@@ -120,7 +126,7 @@ void ABridgeReceiver::BeginNativePlay() {
     Video->SetNativeSkyEnvironment(LatestInput.VanillaLight,NativeStore->GetMetadata().Dimension);
     NativeSetLighting(NativeLighting);
     NativeStatus=TEXT("Validating offline world...");
-    UE_LOG(LogTemp,Display,TEXT("Bridge 0.17.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
+    UE_LOG(LogTemp,Display,TEXT("Bridge 0.18.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
 }
 
 void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
@@ -193,7 +199,7 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
                     if(!Value.IsValid() || Value->Type!=EJson::Object) continue;FVector Position;
                     if(JsonVector(Value->AsObject(),TEXT("position"),Position)) SyncedWorld->EnsureCollisionForPosition(BridgeProtocol::ToUnreal(Position-SourceOrigin,Anchor));
                 }
-                ItemWorld->SetAuthority(true,Character);
+                ItemWorld->SetAuthority(!IsNativeReplay(),Character);
                 if(!ItemWorld->ImportNativeDrops(*Drops,Anchor,SourceOrigin,NativeDropItems)) {
                     NativeRestoreFailed=true;NativeStatus=TEXT("Saved dropped items are invalid; save preserved");return;
                 }
@@ -213,7 +219,7 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
                 }
             }
         }
-        SyncedWorld->EnableNativeFluids(Metadata.Dimension==TEXT("minecraft:the_nether"));
+        if(!IsNativeReplay()) SyncedWorld->EnableNativeFluids(Metadata.Dimension==TEXT("minecraft:the_nether"));
         SyncedWorld->NativeRuleDrop=[this](const FString& Id,const FVector& Position) {return SpawnNativeDrop(Id,1,Position,FVector::ZeroVector,.5f);};
         SyncedWorld->NativeBlockRemoving=[this](const FIntVector& Block) {return DropNativeContainer(Block);};
         SyncedWorld->NativePrimeTnt=[this](const FIntVector& Block) {IgniteNativeTnt(Block);};
@@ -259,14 +265,33 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
         };
         int32 RandomTicks=3;TSharedPtr<FJsonObject> Gameplay;
         if(NativeUiPalette && !NativeUiPalette->GameplayData.IsEmpty() && FJsonSerializer::Deserialize(TJsonReaderFactory<>::Create(NativeUiPalette->GameplayData),Gameplay) && Gameplay.IsValid()) {double N=3;if(Gameplay->TryGetNumberField(TEXT("randomTickSpeed"),N)) RandomTicks=FMath::Clamp(int32(N),0,4096);}
-        SyncedWorld->EnableNativeRules(RandomTicks);
+        if(!IsNativeReplay()) SyncedWorld->EnableNativeRules(RandomTicks);
         if(Metadata.RuntimeState.IsValid()) {const TArray<TSharedPtr<FJsonValue>>* Falling=nullptr;if(Metadata.RuntimeState->TryGetArrayField(TEXT("falling"),Falling) && !SyncedWorld->ImportNativeFalling(*Falling)) {NativeRestoreFailed=true;NativeStatus=TEXT("Saved falling blocks invalid; save preserved");return;}}
 
+        RealisticWorld=GetWorld()->SpawnActor<ABridgeRealisticWorld>();
+        if(!RealisticWorld) {NativeRestoreFailed=true;NativeStatus=TEXT("Realistic physics world unavailable; saved world retained");return;}
+        RealisticWorld->Initialize(SyncedWorld,NativeUiPalette);
+        if(MobWorld) MobWorld->WaterAt=[this](const FVector& Point){return IsValid(SyncedWorld) && (SyncedWorld->IsWaterAtUEPosition(Point) || (RealisticWorld && RealisticWorld->FluidAt(Point)==1));};
+        RealisticWorld->OnBlast=[this](const FVector& Position,float Radius){NativeRealisticBlast(Position,Radius);};
+        const TSharedPtr<FJsonObject>* PhysicalState=nullptr;
+        if(Metadata.RuntimeState.IsValid()&&Metadata.RuntimeState->TryGetObjectField(TEXT("realisticPhysics"),PhysicalState)&&!RealisticWorld->ImportState(*PhysicalState)) {
+            NativeRestoreFailed=true;NativeStatus=TEXT("Saved realistic physics is invalid; previous save preserved");RealisticWorld->SetActorTickEnabled(false);return;
+        }
+        RealisticWorld->AddTickPrerequisiteActor(this);
+        CinematicCapture->Initialize(this,RealisticWorld,SyncedWorld,NativeStore->GetMetadata().SaveFile,Session);
+        Video->SetNativeRealisticMode(RealisticWorld->VisualsEnabled());
         NativeInitialized=true;NativeLastAutosave=Now;
         UE_LOG(LogTemp,Display,TEXT("Bridge native terrain loaded: package=%s cells=%d spawn=%s save=%s"),
             *Metadata.PackageId,Metadata.Cells,*Metadata.Spawn.ToString(),*Metadata.SaveFile);
     }
     TerrainMovementReady=SyncedWorld->IsMovementReady(Character->GetMinecraftFeetPosition(),Character->GetVelocity());
+    if(IsNativeReplay()) {
+        UEControl=false;Character->SetAuthorityEnabled(false);
+        if(MobWorld) MobWorld->SetAuthority(false,Character);
+        if(ItemWorld) ItemWorld->SetAuthority(false,Character);
+        RealisticWorld->ReplayActive=true;
+        return;
+    }
     if(!GetWorld()->IsPaused()) TickNativeTime(DeltaSeconds);
     const bool Running=GetNativeHealth()>0 && TerrainMovementReady;
     UEControl=Running;Character->SetAuthorityEnabled(Running);
@@ -274,9 +299,11 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
     Character->ConfigureVisuals(PreviewMaterial,TexturePalette,LatestInput.HeldItem,LatestInput.HeldBlock,LatestInput.HeldColor,LatestInput.HeldModelKey);
     if(Running && !GetWorld()->IsPaused()) {
         Character->ApplyFlight(NativeCreative,LatestInput.Flying);
-        FVector Flow;const int32 Liquid=SyncedWorld->FluidAt(Character->GetMinecraftFeetPosition()+FVector(0,0,40),&Flow);
+        FVector Flow;int32 Liquid=SyncedWorld->FluidAt(Character->GetMinecraftFeetPosition()+FVector(0,0,40),&Flow);
+        if(RealisticWorld) if(const int32 Kind=RealisticWorld->FluidAt(Character->GetMinecraftFeetPosition()+FVector(0,0,40))) Liquid=Kind;
         if(auto* Movement=Cast<UBridgeCharacterMovement>(Character->GetCharacterMovement())) Movement->SetNativeFluid(Character->BridgeFlying ? 0 : Liquid,Flow);
-        const int32 EyeLiquid=SyncedWorld->FluidAt(Character->BridgeCamera->GetComponentLocation());
+        int32 EyeLiquid=SyncedWorld->FluidAt(Character->BridgeCamera->GetComponentLocation());
+        if(RealisticWorld) if(const int32 Kind=RealisticWorld->FluidAt(Character->BridgeCamera->GetComponentLocation())) EyeLiquid=Kind;
         Video->SetNativeSceneTint(EyeLiquid==1 ? FLinearColor(.35f,.65f,1.f) : EyeLiquid==2 ? FLinearColor(1.f,.3f,.05f) : FLinearColor::White);
         NativeEyeInWater=EyeLiquid==1;NativeSubmergedSeconds=NativeEyeInWater ? NativeSubmergedSeconds+DeltaSeconds : FMath::Max(0.,NativeSubmergedSeconds-DeltaSeconds*4);
         if(!NativeCreative && MobWorld && ((Liquid==2 && GetWorld()->GetTimeSeconds()-NativeLastFluidDamage>=.5) || (NativeSubmergedSeconds>=16 && GetWorld()->GetTimeSeconds()-NativeLastFluidDamage>=1))) {
@@ -298,6 +325,7 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
     if(ItemWorld) ItemWorld->SetAuthority(Running,Character);
     SyncedWorld->InteractionSound=[this](const FString& Type,const FString& Block,const FVector& Position){QueueFeedback(Type,Block,Position);};
     TArray<FVector> Extra;if(MobWorld) Extra.Append(MobWorld->CollisionAnchors());if(ItemWorld) Extra.Append(ItemWorld->CollisionAnchors());
+    if(RealisticWorld) Extra.Append(RealisticWorld->CollisionAnchors());
     SyncedWorld->UpdateCollisionCenters(Character->GetMinecraftFeetPosition(),Extra);
     if(LastLightActors<0 || Now-LastLightActors>=.1) {
         LastLightActors=Now;
@@ -367,6 +395,7 @@ float ABridgeReceiver::NativeAttackDamage() const {
     return float(BridgeCombatMath::damage(Weapon.damage,BridgeCombatMath::charge(GetWorld()->GetTimeSeconds()-NativeLastAttack,Weapon.speed,.5)));
 }
 void ABridgeReceiver::NativeAction(const FString& Action) {
+    if(IsNativeReplay()) return;
     if(NativePlayActive && Action==TEXT("ui_click")) {PlayNativeSound(TEXT("minecraft:ui.button.click"),FVector::ZeroVector,1,1,TEXT("master"));return;}
     if(Action==TEXT("use_cancel")) {
         NativeBowStart=-1;if(auto* Character=Cast<ABridgeCharacter>(TargetCharacter)) Character->SetNativeUse(false,0);return;
@@ -375,6 +404,32 @@ void ABridgeReceiver::NativeAction(const FString& Action) {
     auto* Character=Cast<ABridgeCharacter>(TargetCharacter);if(!Character) return;
     auto* PC=Controller(this);auto* Inventory=PC ? PC->GetNativeInventory() : nullptr;
     FVector Eye;FRotator Aim;Character->GetEyeAim(Eye,Aim);
+    if(Action==TEXT("place")&&RealisticWorld&&Inventory) {
+        const FString Item=LatestInput.HeldItem;
+        const bool PhysicalItem=Item.StartsWith(TEXT("uebridge:realistic_"));
+        const bool Collect=Item==TEXT("minecraft:bucket");
+        const bool Ignite=Item==TEXT("minecraft:flint_and_steel")||Item==TEXT("minecraft:fire_charge");
+        if(PhysicalItem||Collect||Ignite) {
+            if(!NativeCreative&&Inventory->Selected().IsEmpty()) return;
+            // Both sides of the transaction are restored if no inventory slot/drop
+            // can accept a bucket. Physics budgets never consume the held item.
+            const auto BeforePhysics=RealisticWorld->ExportState();const auto BeforeInventory=Inventory->ExportRuntimeState();FString Result;
+            if(RealisticWorld->Use(Item,Eye,Aim,Collect,Result)) {
+                if(NativeCreative&&Collect) Inventory->AssignHotbar(Result,Inventory->GetSelectedSlot(),1);
+                if(!NativeCreative&&Ignite&&Item==TEXT("minecraft:fire_charge")) Inventory->ConsumeSelected(1);
+                if(!NativeCreative&&!Ignite) {
+                    Inventory->ConsumeSelected(1);
+                    const FString ReturnItem=Collect?Result:Item.EndsWith(TEXT("_bucket"))?TEXT("minecraft:bucket"):FString();
+                    if(!ReturnItem.IsEmpty()) {
+                        if(Inventory->Selected().IsEmpty()) Inventory->AssignHotbar(ReturnItem,Inventory->GetSelectedSlot(),1);
+                        else if(!Inventory->AddStack(ReturnItem,1)) {Inventory->ImportRuntimeState(BeforeInventory);RealisticWorld->ImportState(BeforePhysics);LastAction=TEXT("No space for bucket; original liquid and items retained");return;}
+                    }
+                }
+                NativeSelect(Inventory->GetSelectedItemId());Character->SwingHand();LastAction=Result;return;
+            }
+            if(PhysicalItem) {LastAction=Result;return;}
+        }
+    }
     if(Action==TEXT("use_start") && LatestInput.HeldItem==TEXT("minecraft:bow")) {
         if(!NativeCreative && (!Inventory || Inventory->GetItemCount(TEXT("minecraft:arrow"))<=0)) {LastAction=TEXT("No arrows");return;}
         NativeBowStart=GetWorld()->GetTimeSeconds();Character->SetNativeUse(true,0);return;
@@ -540,11 +595,13 @@ bool ABridgeReceiver::NativeDrop(const FString& ItemId,int32 Count) {
 void ABridgeReceiver::NativeSetLighting(bool Enabled) {
     if(!NativePlayActive) return;NativeLighting=Enabled;
     Video->SetNativeRenderMode(Enabled);
+    if(RealisticWorld) Video->SetNativeRealisticMode(RealisticWorld->VisualsEnabled());
     FString Failure;if(!FBridgeLightingService::SetEnvironment(GetWorld(),LatestInput.VanillaLight,!Enabled,&Failure))
         UE_LOG(LogTemp,Error,TEXT("Bridge native lighting not ready: %s; rerun native import"),*Failure);
     LogDiagnostics(FPlatformTime::Seconds(),true);
 }
 bool ABridgeReceiver::NativeSave() {
+    if(IsNativeReplay()) return false;
     if(!NativeInitialized || NativeRestoreFailed || !NativeStore.IsValid() || !NativeStore->IsReady() || NativeStore->IsSaving() || !IsValid(TargetCharacter)) return false;
     auto* Character=Cast<ABridgeCharacter>(TargetCharacter);auto* PC=Controller(this);if(!Character || !PC || !PC->IsSavedInventoryValid()) return false;
     auto* Contents=PC->GetNativeInventory();
@@ -568,6 +625,7 @@ bool ABridgeReceiver::NativeSave() {
         Object->SetNumberField(TEXT("remainingSeconds"),FMath::Clamp(Fuse.Deadline-GetWorld()->GetTimeSeconds(),0.,4.));Fuses.Add(MakeShared<FJsonValueObject>(Object));
     }
     Runtime->SetArrayField(TEXT("fuses"),Fuses);Runtime->SetArrayField(TEXT("falling"),SyncedWorld->ExportNativeFalling());
+    if(RealisticWorld) Runtime->SetObjectField(TEXT("realisticPhysics"),RealisticWorld->ExportState());
     const bool Started=NativeStore->BeginSave(SyncedWorld,SourceOrigin+MinecraftDelta(Character->GetMinecraftFeetPosition()-Anchor),PC->GetControlRotation(),Runtime);
     return Started;
 }
@@ -581,6 +639,7 @@ void ABridgeReceiver::NativeRespawn() {
     TargetCharacter->SetActorLocation(Feet+FVector(0,0,TargetCharacter->GetCapsuleComponent()->GetScaledCapsuleHalfHeight()),false,nullptr,ETeleportType::TeleportPhysics);
 }
 void ABridgeReceiver::PrepareNativeExit(UWorld* World) {
+    if(IsNativeReplay()) {NativeExitPrepared=true;return;}
     if(World!=GetWorld() || NativeExitPrepared || !NativeStore.IsValid()) return;
     NativeExitPrepared=true;
     if(NativeInitialized && !NativeRestoreFailed) {
@@ -666,8 +725,31 @@ FString ABridgeReceiver::NativeCommand(const FString& Command) {
     FString Line=Command.TrimStartAndEnd();Line.RemoveFromStart(TEXT("/"));
     TArray<FString> Args;Line.ParseIntoArrayWS(Args);
     if(Args.IsEmpty()) return FString();
+    if(IsNativeReplay()) return TEXT("Offline rendering: gameplay/save commands are disabled");
+    if(Args[0]==TEXT("physics")&&RealisticWorld) return RealisticWorld->Command(Args,TargetCharacter->GetActorLocation());
+    if(Args[0]==TEXT("realistic")&&RealisticWorld) {
+        if(Args.Num()==2&&Args[1]==TEXT("items")) {
+            auto* PC=Controller(this);auto* Contents=PC?PC->GetNativeInventory():nullptr;if(!Contents) return TEXT("Inventory unavailable");
+            int Added=0;for(const FString& Item:{FString(TEXT("uebridge:realistic_sand")),FString(TEXT("uebridge:realistic_tnt")),FString(TEXT("uebridge:realistic_water_bucket")),FString(TEXT("uebridge:realistic_lava_bucket"))})
+                if(NativeUiPalette->FindItem(Item)) Added+=1-Contents->InsertStack(Item,1);
+            return FString::Printf(TEXT("Added %d realistic items. Missing items require MOD 0.18.0 and a fresh export/import."),Added);
+        }
+        bool Enabled=RealisticWorld->VisualsEnabled();int32 Quality=RealisticWorld->GetQuality();
+        if(Args.Num()==2&&(Args[1]==TEXT("on")||Args[1]==TEXT("off"))) Enabled=Args[1]==TEXT("on");
+        else if(Args.Num()==3&&Args[1]==TEXT("quality")&&(Args[2]==TEXT("low")||Args[2]==TEXT("medium")||Args[2]==TEXT("high"))) Quality=Args[2]==TEXT("low")?0:Args[2]==TEXT("high")?2:1;
+        else return TEXT("/realistic on|off | /realistic quality low|medium|high");
+        RealisticWorld->SetVisuals(Enabled,Quality);Video->SetNativeRealisticMode(Enabled);return Enabled?TEXT("Realistic visuals ON (physics unchanged)"):TEXT("Simple visuals (physics unchanged)");
+    }
+    if(Args[0]==TEXT("record")&&CinematicCapture) {
+        if(Args.Num()==2&&Args[1]==TEXT("start")) {
+            if(CinematicCapture->IsRecording()) return TEXT("Already recording");
+            if(NativeStore->IsSaving()&&!NativeStore->FlushSave(30000)) return TEXT("Recording refused: pending save failed");
+            if(!NativeSave()||!NativeStore->FlushSave(30000)) return TEXT("Recording refused: baseline save failed; previous save retained");
+        }
+        return CinematicCapture->Command(Args);
+    }
     auto Number=[](const FString& Value,double& Out) {return FDefaultValueHelper::ParseDouble(Value,Out) && FMath::IsFinite(Out) && Out>=0 && Out<=9007199254740991. && Out==FMath::FloorToDouble(Out);};
-    if(Args[0]==TEXT("help")) return TEXT("/time set day|noon|night|midnight|数値 /time add 数値 /time query daytime /gamerule doDaylightCycle true|false /weather clear|rain|thunder /gamemode creative|survival /give アイテム [個数] /save");
+    if(Args[0]==TEXT("help")) return TEXT("/time /gamerule /weather /gamemode /give /save /physics clear|undo|status /realistic on|off|quality /record start|stop|status");
     if(Args[0]==TEXT("time") && Args.Num()==3) {
         if(Args[1]==TEXT("query")) {
             if(Args[2]==TEXT("daytime")) return FString::Printf(TEXT("時刻: %.0f"),BridgeSkyMath::PositiveRemainder(NativeTimeOfDay,24000));

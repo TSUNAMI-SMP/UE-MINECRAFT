@@ -52,6 +52,10 @@ public:
     bool NativeSave();
     void NativeRespawn();
     FString NativeCommand(const FString& Command);
+    bool IsNativeReplay() const;
+    bool NativeRealisticVisuals() const;
+    int32 NativeRealisticQuality() const;
+    bool NativeRecording() const;
     double GetNativeTimeOfDay() const {return NativeTimeOfDay;}
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Bridge|Bow") bool SpawnBowProjectiles = true;
     UPROPERTY(BlueprintReadOnly, Category="Bridge|Diagnostics") bool Connected = false;
@@ -68,6 +72,7 @@ public:
     UFUNCTION(BlueprintImplementableEvent, Category="Bridge") void OnTntExplosion(FVector Position);
     UFUNCTION(BlueprintImplementableEvent, Category="Bridge") void OnBowFired(FVector Position, FVector Direction, float Pull);
 private:
+    friend class UBridgeCinematicCapture;
     class FSocket* Socket = nullptr;
     FString Session;
     FString InstanceId;
@@ -101,6 +106,9 @@ private:
     double PerformanceSeconds=0;int32 PerformanceFrames=0;
     FString LastAction=TEXT("ready");
     TSharedPtr<class FBridgeNativeWorldStore> NativeStore;
+    UPROPERTY() TObjectPtr<class ABridgeRealisticWorld> RealisticWorld;
+    UPROPERTY() TObjectPtr<class UBridgeCinematicCapture> CinematicCapture;
+    void NativeRealisticBlast(const FVector& Position,float Radius);
     bool NativeInitialized=false;
     bool NativeControllerConfigured=false,NativeRestoreFailed=false,NativeExitPrepared=false;
     FDelegateHandle NativeTearDownHandle;

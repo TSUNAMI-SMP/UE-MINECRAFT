@@ -43,6 +43,14 @@ class NativeUiValidation(unittest.TestCase):
         self.assertEqual(result["font"]["glyphs"][0]["drawWidth"], 1)
         self.assertEqual(result["items"][0]["source"], str(self.root / "icon.png"))
 
+    def test_ue_only_namespace_alias_retains_local_icon_and_model(self):
+        item=copy.deepcopy(self.manifest["items"][0])
+        item.update(id="uebridge:realistic_sand",name="リアリスティック砂",modelKey="minecraft:sand")
+        self.manifest["items"].append(item)
+        result=self.load()
+        self.assertEqual(result["items"][1]["modelKey"],"minecraft:sand")
+        self.assertEqual(result["items"][0]["source"],result["items"][1]["source"])
+
     def test_weapon_attributes_are_optional_but_must_be_paired_and_finite(self):
         item=self.manifest["items"][0]
         item.update(attackDamage=7,attackSpeed=1.6)

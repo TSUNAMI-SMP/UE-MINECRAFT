@@ -16,11 +16,15 @@ python tools/test_outline_math.py
 python tools/test_mob_spawn_math.py
 python tools/test_video_cadence.py
 python tools/test_video_mask.py
+python tools/test_realistic_physics.py -v
+python tools/test_realistic_materials.py -v
 python -m compileall -q tools bridge
 git diff --check
 ```
 
 PowerShellがPATHにある場合、Pythonのnative setupテストも実際のプラグイン設定関数を実行します。単独実行は `pwsh -NoProfile -File tools/test_native_build_plugins.ps1` です。既存のEngineAssociation・独自設定・プラグインmetadataの保持、有効化、再実行、重複拒否を確認します。PowerShellがない場合、この1件をスキップします。`pwsh -NoProfile -File tools/test_native_import_log.ps1` は取り込み失敗ログとPython更新の内容ハッシュを実行検証します。
+
+0.18.0の独立C++物理／AVI検証はC++17コンパイラー、Pillow、ffmpeg／ffprobeを使います。実装したヘッダーをコンパイルして体積保存・導火線・上限・削除を検証し、AVIの60fpsと全フレームのデコードを照合します。`pwsh -NoProfile -File tools/test_replay_manifest.ps1` は録画の識別子・容量・ハッシュとfps／無音条件を確認します。UE自体の描画検証にはWindowsのエンジンが必要です。
 
 今回の環境ではMicrosoftのDebian用PowerShell 7.4.19を公式リポジトリから取得し、公開されたSHA-256を照合して `/workspace/toolchains/powershell-7.4.19` へ展開しました。読み取り専用のホームへ書き込まないよう、XDGのcache・config・dataは `/workspace/toolchains/powershell-*` 配下へ設定しています。これはLinuxでの構文・設定関数の実行確認です。Windowsのエンジン検出・ビルド・ファイル選択・ゲーム起動は [NATIVE_PLAY.md](NATIVE_PLAY.md) の実機確認が必要です。
 

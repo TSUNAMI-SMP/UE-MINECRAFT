@@ -15,7 +15,7 @@
 
 namespace {
 constexpr int64 MaxFileBytes=512ll*1024*1024;
-constexpr int32 MaxLineBytes=2*1024*1024;
+constexpr int32 MaxLineBytes=16*1024*1024;
 constexpr int64 MaxRows=2097152;
 bool Number(const TSharedPtr<FJsonObject>& Object,const TCHAR* Key,double Low,double High,double& Value) {
     return Object.IsValid() && Object->TryGetNumberField(Key,Value) && FMath::IsFinite(Value) && Value>=Low && Value<=High;
@@ -141,7 +141,7 @@ bool FBridgeNativeWorldStore::ReadHeader(const FString& Text,FBridgeNativeWorldM
     const TSharedPtr<FJsonObject>* Runtime=nullptr;
     if(O->HasField(TEXT("runtimeState"))) {
         if(!O->TryGetObjectField(TEXT("runtimeState"),Runtime) || !Runtime || !Runtime->IsValid()) return false;
-        FString Encoded;FJsonSerializer::Serialize((*Runtime).ToSharedRef(),TJsonWriterFactory<TCHAR,TCondensedJsonPrintPolicy<TCHAR>>::Create(&Encoded));if(Encoded.Len()>262144) return false;
+        FString Encoded;FJsonSerializer::Serialize((*Runtime).ToSharedRef(),TJsonWriterFactory<TCHAR,TCondensedJsonPrintPolicy<TCHAR>>::Create(&Encoded));if(Encoded.Len()>4*1024*1024) return false;
         const auto& R=*Runtime;
         // Optional fields support earlier snapshots, but a present field of the
         // wrong type is corruption, never permission to replace it with defaults.
@@ -183,7 +183,7 @@ bool FBridgeNativeWorldStore::ReadHeader(const FString& Text,FBridgeNativeWorldM
     }
     return true;
 }
-bool FBridgeNativeWorldStore::BeginLoad(const FString& Requested,ABridgeWorld* World,const FVector& Anchor,UMaterialInterface* InMaterial,UBridgeBlockPalette* InPalette) {
+bool FBridgeNativeWorldStore::BeginLoad(const FString& Requested,ABridgeWorld* World,const FVector& Anchor,UMaterialInterface* InMaterial,UBridgeBlockPalette* InPalette,bool PreferSaved) {
     Cancel();Error.Empty();Metadata=FBridgeNativeWorldMetadata();Target=World;Material=InMaterial;Palette=InPalette;FeetAnchor=Anchor;
     if(!IsValid(World) || !IsValid(InPalette)) {Fail(TEXT("Offline play requires an imported block palette and a terrain world"));return false;}
     FString Path=FPaths::ConvertRelativePathToFull(Requested);FPaths::NormalizeFilename(Path);
@@ -202,7 +202,7 @@ bool FBridgeNativeWorldStore::BeginLoad(const FString& Requested,ABridgeWorld* W
     if(!ReadLine(Text,End) || End || !ReadHeader(Text,HeaderData)) {Fail(TEXT("Invalid offline world header"));return false;}
     HeaderData.Manifest=Metadata.Manifest;HeaderData.SourceFile=Path;
     HeaderData.SaveFile=FPaths::Combine(FPaths::ProjectSavedDir(),TEXT("NativeWorlds"),HeaderData.PackageId+TEXT(".ndjson"));Metadata=MoveTemp(HeaderData);
-    if(FPlatformFileManager::Get().GetPlatformFile().FileExists(*Metadata.SaveFile)) {
+    if(PreferSaved&&FPlatformFileManager::Get().GetPlatformFile().FileExists(*Metadata.SaveFile)) {
         ActiveFile=Metadata.SaveFile;if(!OpenReader(ActiveFile)) return false;
         FBridgeNativeWorldMetadata Saved;
         if(!ReadLine(Text,End) || End || !ReadHeader(Text,Saved) || Saved.PackageId!=Metadata.PackageId || Saved.Dimension!=Metadata.Dimension) {Fail(TEXT("Saved offline world header is invalid; save and source are preserved"));return false;}

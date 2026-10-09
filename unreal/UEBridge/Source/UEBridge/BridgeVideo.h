@@ -17,6 +17,8 @@ public:
     void SetRenderMode(bool Lighting,bool VanillaSky);
     /** Native terrain goes directly to the viewport; hands have an independent depth pass. */
     void SetNativeRenderMode(bool Lighting);
+    void SetNativeRealisticMode(bool Enabled);
+    void RefreshNativeReplayView();
     void RestoreNativeRenderMode();
     void SetNativeSkyPalette(class UBridgeNativeUiPalette* Palette);
     void SetNativeSkyEnvironment(const TSharedPtr<class FJsonObject>& Values,const FString& Dimension=TEXT("minecraft:overworld"));
@@ -56,6 +58,7 @@ private:
     UPROPERTY() TObjectPtr<class UTextureRenderTarget2D> Target;
     FVector MCOrigin=FVector::ZeroVector,Anchor=FVector::ZeroVector;
     bool LightingEnabled=true,VanillaSkyEnabled=false,ClientV3=false,ClientGpu=false;
+    bool NativeRealisticEnabled=false;
     TSharedPtr<struct FBridgeSharedTransport,ESPMode::ThreadSafe> SharedGpu;
     TArray<uint8> Acknowledgements;
     FLinearColor NativeSceneTint=FLinearColor::White;

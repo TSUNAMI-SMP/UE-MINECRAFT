@@ -38,6 +38,7 @@ public:
     void ConfigureOutline(class UMaterialInterface* Material);
     /** First-person primitives use an independent depth buffer, as the vanilla hand pass. */
     void GetNativeHandComponents(TArray<class UPrimitiveComponent*>& Out) const;
+    void SetReplayPerspective(int32 Perspective) {CameraPerspective=FMath::Clamp(Perspective,0,2);}
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Diagnostics") bool BridgeFlying=false;
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Diagnostics") FString HeldModelStatus=TEXT("empty");
     UPROPERTY(BlueprintReadOnly,Category="Bridge|Diagnostics") FString OffhandModelStatus=TEXT("empty");

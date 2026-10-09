@@ -1,5 +1,7 @@
 # Minecraft ↔ Unreal Engine bridge MVP
 
+**物理アイテム・60fps動画書き出し0.18.0：** [MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.18.0.jar) / [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.18.0.zip) / [一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UE-Minecraft-MVP-0.18.0.zip) / [導入・操作・削除・動画の手順](docs/UPGRADE_0.18.0.md) / [検証](docs/AUDIT_0.18.0.md)。**0.17.0を導入せず直接更新できます。** UE専用の砂・TNT・水／溶岩バケツ、表示ON/OFFと品質、物理の保存・種類／範囲別削除・取り消しを追加。短いシーンの記録を別プロセスで60fpsの無音AVIへ描画します。液体は有限量の格子計算、爆発はメッシュの火・煙で、Blender品質や実プレイ60fpsの保証ではありません。新しいMODでの書き出し、UE再ビルド・再取り込みが必要です。Windows UE 5.8.3実ビルド・GPU描画は未検証です。
+
 **UE単独の描画・クラフト・基本回路更新0.17.0：** [MOD](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.17.0.jar) / [UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.17.0.zip) / [一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UE-Minecraft-MVP-0.17.0.zip) / [更新手順と対応範囲](docs/UPGRADE_0.17.0.md) / [検証](docs/AUDIT_0.17.0.md)。一人称の手の合成、モブの服、防具・glint・素材アニメーション、クラフト・精錬・収納、ホッパー搬送、草・重力ブロック・基本レッドストーンを追加。Minecraftは書き出し後に終了できます。MOD交換・新しい書き出し・UE再ビルド・再取り込みが必要です。Windows UE実ビルド・描画は未検証で、全特殊機能とバニラ完全一致は未完成です。
 
 **地形読み込みのクラッシュ修正0.16.2：** [修正ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.16.2.zip) / [適用手順](docs/UPGRADE_0.16.2.md)。液体などの裏面追加時のTArray自己参照Assertionを修正。0.16.1も含みます。MODは0.16.0のまま、UEだけを再ビルドしてください。修正後のWindows実起動は未検証です。
@@ -19,7 +21,7 @@ Fabric **Minecraft Java 1.21.11 / Java 21** から地形・素材・スキン・
 書き出し、**Unreal Engine 5.8で直接プレイ** する実験用プロジェクトです。
 書き出し後はMinecraftを終了できます。UE映像をMinecraftへ送る従来の接続モードも残しています。
 
-**導入手順：** [Windows向け0.15.0導入ガイド](docs/INSTALL_0.15.0_JA.md)（初回導入・既存更新・native export・PowerShell・トラブル対処）
+**導入手順：** [Windows向け0.18.0導入・直接更新ガイド](docs/UPGRADE_0.18.0.md)（0.17.0未導入からの更新・初回導入・物理・動画・削除）。エンジンやC++環境の準備は [初回環境ガイド](docs/INSTALL_0.15.0_JA.md) を参照します。
 
 **バニラ参照変換・取り込み修正0.15.0：** Minecraft 1.21.11の実データと参照コードを使い、草ブロックの土面・バイオーム色・水、空と光、ItemGroups順・装備枠、攻撃音／無敵時間／ノックバック／死亡パーティクル、しゃがみ・飛行慣性・感度曲線、モブの20Hz制御を更新しました。元のMinecraftソースやバニラ素材は配布物へコピーしていません。[UE更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.15.0.zip) / [MOD 0.15.0](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/minecraft-ue-bridge-0.15.0.jar) / [一式ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UE-Minecraft-MVP-0.15.0.zip) / [更新手順](docs/UPGRADE_0.15.0.md) / [検証記録](docs/AUDIT_0.15.0.md)。全変更を反映するには0.15.0で新しいnative exportが必要です。今回のWindows UEコンパイル・描画・統合動作は未確認です。
 
@@ -82,10 +84,10 @@ UE5.8ビルド・描画はWindows実機での確認が必要です。
 
 ## 現在の状態
 
-- 0.17.0ではMinecraftを素材・地形・レシピの書き出しに使い、UEで直接入力・HUD描画・プレイ・保存します。地形はビューポートへ、一人称の手だけはローカルGPUで合成します。Minecraftへの圧縮・転送待ちは発生しません。UE自体の実FPSは実機で確認します。
+- 0.18.0ではMinecraftを素材・地形・レシピの書き出しに使い、UEで直接入力・HUD描画・プレイ・保存します。地形はビューポートへ、一人称の手だけはローカルGPUで合成します。4種類の物理アイテム、削除・取り消し、オフライン60fps動画を追加します。UE自体の実FPSは実機で確認します。
 - 1回の書き出しパッケージのハッシュ・素材・Paletteを検証し、専用nativeマップを作成します。既存UEレベルとMinecraftの元ワールドは保持します。
 - 地形・プレイヤー・インベントリ・モブ・投下物・着火済みTNTを同じUE保存ファイルへ記録します。書き出しは水平4～6チャンク・上下104ブロックの有限範囲です。
-- MODビルド、Java218件・bridge Python119件・native形式/UI54件・独立C++計算の検証が成功。[0.17.0検証記録](docs/AUDIT_0.17.0.md)を参照してください。UEモジュールビルド、実エディター取り込み、実描画、Windows入力・IME・性能は未確認です。[対応範囲と実機確認](docs/NATIVE_PLAY.md)を参照してください。
+- MODビルド、Java219件・bridge Python119件・native形式/UI55件・独立C++物理とAVIの検証が成功。[0.18.0検証記録](docs/AUDIT_0.18.0.md)を参照してください。UEモジュールビルド、実エディター取り込み、実描画、Windows入力・IME・性能は未確認です。[対応範囲と実機確認](docs/NATIVE_PLAY.md)を参照してください。
 
 ### 過去版の確認記録
 
@@ -127,6 +129,8 @@ tools/import_native_play.py        同じnative書き出しを検証・一括取
 tools/import_minecraft_ui.py       HUD・アイコン・フォントを取り込み
 tools/import_minecraft_sounds.py   ローカルで書き出した音を取り込み
 unreal/UEBridge/Play-Native.cmd     UE単独プレイの初回準備・起動・再開
+unreal/UEBridge/Render-Replay.cmd   保存したシーンを60fpsの無音AVIへ再描画
+tools/setup_realistic_physics.py  物理アイテムの生成マテリアル
 ```
 
 GitHubはファイルの保存場所です。Minecraft/UEそのものをGitHub内で起動するわけでは

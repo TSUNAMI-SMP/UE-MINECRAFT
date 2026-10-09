@@ -27,7 +27,7 @@ class UEBRIDGE_API FBridgeNativeWorldStore {
 public:
     FBridgeNativeWorldStore();
     ~FBridgeNativeWorldStore();
-    bool BeginLoad(const FString& ManifestOrWorldFile,ABridgeWorld* World,const FVector& Anchor,UMaterialInterface* Material,UBridgeBlockPalette* Palette);
+    bool BeginLoad(const FString& ManifestOrWorldFile,ABridgeWorld* World,const FVector& Anchor,UMaterialInterface* Material,UBridgeBlockPalette* Palette,bool PreferSaved=true);
     bool BeginSave(ABridgeWorld* World,const FVector& AbsoluteMinecraftFeet,const FRotator& ControlRotation,const TSharedPtr<FJsonObject>& RuntimeState=nullptr);
     void Tick(double BudgetMs=4);
     bool FlushSave(int32 MaxMilliseconds=5000);

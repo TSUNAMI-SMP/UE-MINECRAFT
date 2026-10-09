@@ -13,6 +13,12 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class NativeUiExportTest {
+    @Test public void realisticCatalogueAliasesReuseLocalModelsWithoutChangingVanillaItems() {
+        var items=new com.google.gson.JsonArray();
+        for(String id:List.of("sand","tnt","water_bucket","lava_bucket")) {var entry=new com.google.gson.JsonObject();entry.addProperty("id","minecraft:"+id);entry.addProperty("name",id);entry.addProperty("maxCount",64);entry.addProperty("modelKey","local-model-"+id);entry.addProperty("icon","items/"+id+".png");items.add(entry);}
+        NativeUiExport.addRealisticItems(items);assertEquals(8,items.size());NativeUiExport.addRealisticItems(items);assertEquals(8,items.size());
+        for(int i=0;i<4;i++) {var vanilla=items.get(i).getAsJsonObject();var alias=items.get(i+4).getAsJsonObject();assertEquals(64,vanilla.get("maxCount").getAsInt());assertTrue(alias.get("id").getAsString().startsWith("uebridge:realistic_"));assertEquals(vanilla.get("modelKey"),alias.get("modelKey"));assertEquals(vanilla.get("icon"),alias.get("icon"));assertEquals(i<2?64:1,alias.get("maxCount").getAsInt());}
+    }
     private static final List<String> PHASES=List.of("full_moon","waning_gibbous","third_quarter","waning_crescent",
             "new_moon","waxing_crescent","first_quarter","waxing_gibbous");
     private static class SelectedResources implements ResourceManager {

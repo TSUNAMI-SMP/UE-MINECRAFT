@@ -67,7 +67,7 @@ public:
     class FBridgeLightingService* GetLighting() const {return Lighting.Get();}
     int32 RenderedFaceCount() const;
     int32 RenderSectionCount() const;
-    int32 RebuildPending() const {return RebuildQueue.Num()+LightQueue.Num();}
+    int32 RebuildPending() const;
     bool ContainsUEPosition(const FVector& UEPosition) const;
     /** Conservative source query; older exports omit free fluid voxels. */
     void EnableNativeFluids(bool UltraWarm=false);
@@ -86,6 +86,11 @@ public:
     void GetNativeWaterCell(const FIntVector& Cell,TArray<uint16>& Water) const;
     bool GetNativeScope(FIntVector& OutCenter,int32& OutRadius,int32& OutHalfHeight,FVector& OutOrigin) const;
     uint64 GetMutationSerial() const { return MutationSerial; }
+    TFunction<void(const FIntVector&)> NativeCellChanged;
+    /** Read-only replay process only: replace recorded logical cells without drops/rules. */
+    bool ApplyReplayCell(const FIntVector& Cell,const TArray<FBridgeBlock>& Rows,const TArray<uint16>& Water,const TArray<uint8>& Sky);
+    /** Finish recorded cell edits before a paused offline frame is drawn. */
+    bool FlushReplayUpdates();
 private:
     UPROPERTY() TMap<FIntVector,TObjectPtr<class ABridgeBlockPreview>> Cells;
     TMap<FIntVector,int32> Counts;

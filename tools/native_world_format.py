@@ -16,7 +16,7 @@ import uuid
 from typing import BinaryIO, Iterable
 
 MAX_FILE_BYTES = 512 * 1024 * 1024
-MAX_LINE_BYTES = 2 * 1024 * 1024
+MAX_LINE_BYTES = 16 * 1024 * 1024
 MAX_ROWS = 2_097_152
 IDENTIFIER = re.compile(r"[a-z0-9_.\-/]+:[a-z0-9_.\-/]+\Z")
 STATE_KEY = re.compile(r"[a-z0-9_=,.\-]*\Z")
@@ -90,7 +90,7 @@ def validate_header(header):
             raise NativeWorldError("hasSky must be boolean")
     if "runtimeState" in header:
         runtime = header["runtimeState"]
-        if not isinstance(runtime, dict) or len(json.dumps(runtime, separators=(",", ":"))) > 262144:
+        if not isinstance(runtime, dict) or len(json.dumps(runtime, separators=(",", ":"))) > 4 * 1024 * 1024:
             raise NativeWorldError("Runtime state exceeds its data budget")
         if "inventory" in runtime and not isinstance(runtime["inventory"], dict):
             raise NativeWorldError("Saved inventory must be an object; defaults cannot replace corrupt inventory")

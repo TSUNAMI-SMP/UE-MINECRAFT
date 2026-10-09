@@ -190,6 +190,20 @@ void UBridgeVideo::SetNativeRenderMode(bool Lighting) {
     UpdateNativeSky();
     UE_LOG(LogTemp,Display,TEXT("Bridge native lighting: mode=%s sky=native sun=%.2f skyFactor=%.3f"),Lighting?TEXT("UE-lit"):TEXT("Minecraft lightmap"),NativeSunAngle,NativeSkyFactor);
 }
+void UBridgeVideo::SetNativeRealisticMode(bool Enabled) {
+    NativeRealisticEnabled=Enabled;
+    auto* Viewport=GetWorld()?GetWorld()->GetGameViewport():nullptr;if(!Viewport) return;
+    // Keep terrain's exported lightmap and hands intact, but allow PBR on the
+    // extension's lit materials. No expensive Lumen/ray tracing is forced on.
+    Viewport->EngineShowFlags.SetLighting(Enabled||LightingEnabled);
+    Viewport->EngineShowFlags.SetDynamicShadows(Enabled||LightingEnabled);
+    Viewport->EngineShowFlags.SetSpecular(Enabled);
+    Viewport->EngineShowFlags.SetReflectionEnvironment(Enabled);
+    Viewport->EngineShowFlags.SetScreenSpaceReflections(Enabled);
+    Viewport->EngineShowFlags.SetBloom(Enabled);
+    Viewport->EngineShowFlags.SetMotionBlur(false);
+    UpdateNativeSky();
+}
 void UBridgeVideo::RestoreNativeRenderMode() {
     for(const auto& Entry:NativeHandParts) if(auto* Part=Entry.Get()) Part->SetVisibleInSceneCaptureOnly(false);
     NativeHandParts.Reset();
@@ -335,7 +349,7 @@ void UBridgeVideo::UpdateNativeSky() {
     auto Light=[&](UDirectionalLightComponent* Component,const std::array<double,3>& Direction,bool Moonlight) {
         if(!Component) return;
         const float Elevation=float(FMath::Max(0.,Direction[2]));
-        Component->SetVisibility(LightingEnabled && NativeHasCelestials && Elevation>0);
+        Component->SetVisibility((LightingEnabled||NativeRealisticEnabled) && NativeHasCelestials && Elevation>0);
         Component->SetWorldRotation((-FVector(Direction[0],Direction[1],Direction[2])).Rotation());
         // Direct light supplies shadows; ambient/block light is supplied by the native lightmap material.
         Component->SetIntensity((Moonlight ? .12f : 1.8f)*Elevation*(1.f-NativeRain*.75f)*(Moonlight ? 1.f : NativeSkyFactor));
@@ -452,6 +466,7 @@ void UBridgeVideo::TickNativeHands() {
     NativeInverseHudMaterial->SetTextureParameterValue(TEXT("NativeHandsTexture"),NativeHandTarget);
     NativeInverseHudMaterial->SetScalarParameterValue(TEXT("NativeHandsEnabled"),1);
 }
+void UBridgeVideo::RefreshNativeReplayView() {UpdateNativeSky();TickNativeHands();}
 void UBridgeVideo::Start(int32 Port) {
     if (Listener || Port<1024 || Port>65535) return;
     ISocketSubsystem* S=ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM); if (!S) return;

@@ -32,6 +32,7 @@ public final class NativeUiExport {
         for(String type:List.of("smoke","crit","sweep_attack")) {JsonArray frames=new JsonArray();for(Identifier id:collectParticleFrames(client.getResourceManager(),resources,type)) frames.add(spriteKey(id));particleFrames.add("minecraft:"+type,frames);}
         manifest.add("particleFrames",particleFrames);
         for(int cp=32;cp<=126;cp++) characters.add(cp);
+        "リアリスティック砂水入りバケツ溶岩物理表示品質低中高動画記録停止削除元戻全体近距離".codePoints().forEach(characters::add);
         "時間サイクル時刻日数経過変更数値以上指定使い方値個追加未取り込対応コマンド一覧確認開始保存空照明天候雨粒雷待モード個数".codePoints().forEach(characters::add);
         "照明感度下上視点一人称後前所持品へ検索へアイテムを削除".codePoints().forEach(characters::add);
         "クリエイティブサバイバルインベントリ検索完了読み込み中設定戻る終了経験値保存再開操作アイテムゲームメニューワールド開始地点に所持品クラフトかまど石切り台燃料材料完成品チェストホッパードロッパーディスペンサー".codePoints().forEach(characters::add);
@@ -102,6 +103,9 @@ public final class NativeUiExport {
         if(!complete()) throw new IOException("UI export is still in progress");
         if(!sprites.has("hud/hotbar") || !sprites.has("hud/hotbar_selection") || !sprites.has("hud/crosshair")) throw new IOException("Required active-pack HUD sprites missing");
         manifest.add("gameplay",NativeGameplayExport.capture(client,gameplayBounds));
+        addRealisticItems(items);
+        for(var value:groups) {var group=value.getAsJsonObject();var order=group.getAsJsonArray("items");Set<String> present=new HashSet<>();for(var entry:order) present.add(entry.getAsString());
+            for(String source:List.of("sand","tnt","water_bucket","lava_bucket")) if(present.contains("minecraft:"+source)) order.add("uebridge:realistic_"+source);}
         manifest.add("sprites",sprites);manifest.add("items",items);manifest.add("excludedItems",excluded);
         // Remove icons excluded by the rasterizer so every imported category reference resolves.
         Set<String> exported=new HashSet<>();for(var item:items) exported.add(item.getAsJsonObject().get("id").getAsString());
@@ -114,7 +118,8 @@ public final class NativeUiExport {
     static List<String> additionalSprites() {
         // 1.21.11 split the moon atlas into individual celestial phase textures.
         // Query the active ResourceManager so selected packs remain authoritative.
-        return List.of("minecraft:textures/gui/container/inventory.png","minecraft:textures/gui/container/crafting_table.png",
+        return List.of("minecraft:textures/block/sand.png", "minecraft:textures/block/tnt_side.png", "minecraft:textures/block/obsidian.png", "minecraft:textures/block/water_still.png", "minecraft:textures/block/lava_still.png",
+                "minecraft:textures/gui/container/inventory.png","minecraft:textures/gui/container/crafting_table.png",
                 "minecraft:textures/gui/container/furnace.png","minecraft:textures/gui/container/blast_furnace.png","minecraft:textures/gui/container/smoker.png",
                 "minecraft:textures/gui/container/stonecutter.png","minecraft:textures/gui/container/generic_54.png","minecraft:textures/misc/enchanted_glint_item.png","minecraft:textures/gui/container/creative_inventory/tab_items.png",
                 "minecraft:textures/gui/container/creative_inventory/tab_item_search.png","minecraft:textures/gui/container/creative_inventory/tab_inventory.png","minecraft:textures/gui/container/creative_inventory/tabs.png",
@@ -124,6 +129,17 @@ public final class NativeUiExport {
                 "minecraft:textures/environment/celestial/moon/new_moon.png","minecraft:textures/environment/celestial/moon/waxing_crescent.png",
                 "minecraft:textures/environment/celestial/moon/first_quarter.png","minecraft:textures/environment/celestial/moon/waxing_gibbous.png",
                 "minecraft:textures/environment/sun.png","minecraft:textures/environment/moon_phases.png");
+    }
+    /** UE-only catalogue entries; Minecraft registries and gameplay stay unchanged. */
+    static void addRealisticItems(JsonArray items) {
+        String[][] definitions={{"sand","砂","64"},{"tnt","TNT","64"},{"water_bucket","水入りバケツ","1"},{"lava_bucket","溶岩入りバケツ","1"}};
+        Map<String,JsonObject> originals=new HashMap<>();for(var value:items) {var item=value.getAsJsonObject();originals.put(item.get("id").getAsString(),item);}
+        for(String[] entry:definitions) {
+            String id="uebridge:realistic_"+entry[0];if(originals.containsKey(id)) continue;
+            JsonObject source=originals.get("minecraft:"+entry[0]);if(source==null) continue;
+            JsonObject item=source.deepCopy();item.addProperty("id",id);item.addProperty("name","リアリスティック"+entry[1]);item.addProperty("maxCount",Integer.parseInt(entry[2]));
+            items.add(item);
+        }
     }
     static Map<Identifier,Resource> collectSprites(ResourceManager manager) {
         var result=new TreeMap<Identifier,Resource>(Comparator.comparing(Identifier::toString));

@@ -4,6 +4,7 @@ UE_LAUNCHERS = (
     "Build-UEBridge.cmd", "Build-UEBridge.ps1",
     "Launch-UEBridge-GPU.cmd", "Launch-UEBridge-GPU.ps1",
     "Play-Native.cmd", "Play-Native.ps1",
+    "Render-Replay.cmd", "Render-Replay.ps1",
 )
 
 UE_PYTHON_HELPERS = (
@@ -21,6 +22,7 @@ UE_PYTHON_HELPERS = (
     "import_minecraft_ui.py",
     "import_minecraft_sounds.py",
     "setup_native_explosion.py",
+    "setup_realistic_physics.py",
 )
 
 

@@ -394,6 +394,9 @@ bool ABridgeWorld::IsMovementReady(const FVector& UEFeet,const FVector& Velocity
 }
 bool ABridgeWorld::EnsureCollisionForPosition(const FVector& UEPosition) {
     if(!ContainsUEPosition(UEPosition) || !ContainsUEPosition(UEPosition-FVector(0,0,100))) return false;
+    // Thousands of grains can query the same loaded cell in one step. Avoid
+    // rebuilding the collision-anchor set for every sphere sweep.
+    if(NearCollision(CellOf(SourceVoxelAt(UEPosition))) && NearCollision(CellOf(SourceVoxelAt(UEPosition-FVector(0,0,100))))) return true;
     TArray<FVector> Extra=AdditionalCollisionPositions;Extra.Add(UEPosition);UpdateCollisionCenters(PrimaryCollisionPosition,Extra);return true;
 }
 void ABridgeWorld::QueueNeighbors(const FIntVector& Cell) {
@@ -434,6 +437,7 @@ void ABridgeWorld::BeginLightingRecenter() {
         for(int32 Z=0;Z<8;++Z) for(int32 X=0;X<8;++X) PendingLighting->SetSkyBoundary(Pair.Key.X*8+X,Pair.Key.Z*8+Z,Pair.Value[X+(Z<<3)]);
 }
 void ABridgeWorld::MarkEdited(const FIntVector& Block) {
+    if(NativeCellChanged) NativeCellChanged(CellOf(Block));
     if(NativeRules) QueueNativeRule(Block);
     ++MutationSerial;if(NativeFluidsEnabled) QueueFluid(Block);
     const auto* Rows=Stored.Find(CellOf(Block));TArray<FBridgeBlock> Edited;
@@ -441,6 +445,33 @@ void ABridgeWorld::MarkEdited(const FIntVector& Block) {
     if(Edited.IsEmpty()) {EditedBlocks.Remove(Block);if(auto* Owners=EditedCellOwners.Find(CellOf(Block))) Owners->Remove(Block);RemovedBlocks.Add(Block);ClearOpaqueVoxel(Block);if(Lighting) Lighting->ClearVoxel(Block);if(PendingLighting) PendingLighting->ClearVoxel(Block);}
     else {RemovedBlocks.Remove(Block);EditedBlocks.Add(Block,MoveTemp(Edited));EditedCellOwners.FindOrAdd(CellOf(Block)).Add(Block);RefreshLogicalCell(CellOf(Block));}
     RefreshButtonTimersForCell(CellOf(Block));QueueNeighbors(CellOf(Block));
+}
+bool ABridgeWorld::ApplyReplayCell(const FIntVector& Cell,const TArray<FBridgeBlock>& Rows,const TArray<uint16>& Water,const TArray<uint8>& Sky) {
+    if(!Sealed||!Inside(Cell)||Rows.Num()>8192||Water.Num()>512||(Sky.Num()!=0&&Sky.Num()!=64)) return false;
+    for(const auto& Row:Rows) if(Row.BlockId.IsEmpty()||!Row.HasSourceBlock||CellOf(Row.SourceBlock)!=Cell) return false;
+    if(const auto* Previous=Stored.Find(Cell)) for(const auto& Row:*Previous) {
+        if(Lighting) Lighting->ClearVoxel(OwnerOf(Row));if(PendingLighting) PendingLighting->ClearVoxel(OwnerOf(Row));
+    }
+    Shapes-=Counts.FindRef(Cell);Shapes+=Rows.Num();Counts.Add(Cell,Rows.Num());Stored.Add(Cell,Rows);WaterCells.Add(Cell,Water);SkyTops.Add(Cell,Sky);
+    RefreshLogicalCell(Cell);QueueNeighbors(Cell);return true;
+}
+int32 ABridgeWorld::RebuildPending() const {
+    return RebuildQueue.Num()+LightQueue.Num()+(Lighting && Lighting->Pending()>0 ? 1 : 0)+(PendingLighting ? 1 : 0);
+}
+bool ABridgeWorld::FlushReplayUpdates() {
+    // Replay initializes the complete baseline before pausing. Subsequent
+    // observations contain an atomic group of cells; no live rules or drops run.
+    if(PendingLighting) return false;
+    if(Lighting) {
+        for(int32 Pass=0;Pass<64 && Lighting->Pending()>0;++Pass) Lighting->Tick(1000000);
+        if(Lighting->Pending()>0) return false;
+        LightQueue.Append(Lighting->ConsumeChangedCells());
+    }
+    TArray<FIntVector> Changed=RebuildQueue.Array();RebuildQueue.Empty();
+    Changed.Sort([](const FIntVector& A,const FIntVector& B){return A.Y!=B.Y ? A.Y<B.Y : A.Z!=B.Z ? A.Z<B.Z : A.X<B.X;});
+    for(const auto& Cell:Changed) if(Stored.Contains(Cell) && Inside(Cell)) RebuildCell(Cell);
+    for(const auto& Cell:LightQueue) if(auto* Actor=Cells.Find(Cell)) if(IsValid(*Actor)) (*Actor)->Relight(Lighting.Get());
+    LightQueue.Empty();return true;
 }
 void ABridgeWorld::RefreshButtonTimersForCell(const FIntVector& Cell) {
     TSet<FIntVector> Powered;

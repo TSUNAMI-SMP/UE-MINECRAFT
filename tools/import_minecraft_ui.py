@@ -310,6 +310,8 @@ def import_minecraft_ui(filename):
     if not isinstance(palette, palette_class):
         raise RuntimeError("Cannot create Minecraft native UI palette")
     from import_minecraft_textures import _lighting_functions
+    from setup_realistic_physics import setup_realistic_materials
+    setup_realistic_materials(unreal, sprites)
     glint_material=_lighting_functions(unreal)["ensure_native_icon_glint_material"](unreal,assets,unreal.MaterialEditingLibrary)
     for field, value in dict(icon_glint_material=glint_material, particle_frames_data=json.dumps(manifest["particleFrames"], separators=(",", ":")), gameplay_data=json.dumps(manifest["gameplay"], ensure_ascii=False, separators=(",", ":")), sprites=sprites, items=items, groups=groups, death_poof_frames=[sprites[key] for key in manifest["deathPoofFrames"]], font_atlas=font_texture, glyphs=glyphs, language=manifest.get("language", ""), export_id=manifest.get("exportId", digest[:20])).items():
         palette.set_editor_property(field, value)

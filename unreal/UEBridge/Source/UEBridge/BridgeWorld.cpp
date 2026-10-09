@@ -364,6 +364,10 @@ bool ABridgeWorld::Aim(const FVector& Start,const FRotator& Rotation,float Reach
 }
 void ABridgeWorld::RebuildCell(const FIntVector& CellKey) {
     if(!Stored.Contains(CellKey)) return;
+    // Grass/dirt changes keep the same full-cube collision. Coalesce their
+    // visual rebuilds in the existing per-frame terrain queue.
+    if(DeferringGrassVisuals) {RebuildQueue.Add(CellKey);return;}
+    RebuildQueue.Remove(CellKey);
     auto& Actor=Cells.FindOrAdd(CellKey);
     if(!IsValid(Actor)) Actor=GetWorld()->SpawnActor<ABridgeBlockPreview>();
     if(Actor) {

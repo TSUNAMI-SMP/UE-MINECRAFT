@@ -214,48 +214,75 @@ bool ABridgeWorld::StartNativeFall(const FIntVector& Block,const FString& Id,con
 }
 void ABridgeWorld::TickNativeRules(float DeltaSeconds) {
     NativeRuleClock+=FMath::Max(0.f,DeltaSeconds);int32 Steps=0;
-    // Share the propagation budget across all catch-up ticks. Pending blocks
-    // survive the budget; delayed events and falling physics retain 20 Hz.
+    // Share every work budget across catch-up ticks. Pending events survive;
+    // falling motion retains 20 Hz while failed item spawns retry less often.
+    RuleDelayedMillis=RulePropagationMillis=RuleGrassMillis=RuleFallingMillis=0;
+    BridgeWorkQueue::FrameBudget DelayedBudget(.0015,128),GrassBudget(.0015,8192),FallingTransitions(.0015,8);
+    int32 GrassChanges=0;
     double PropagationSeconds=0;
     int32 PropagationWork=0;
     while(NativeRuleClock>=.05f && ++Steps<=20) {
         NativeRuleClock-=.05f;++NativeRuleTick;
-        TArray<FIntVector> Due;for(auto It=RuleDelayed.CreateIterator();It;++It) if(It.Value()<=NativeRuleTick) {Due.Add(It.Key());It.RemoveCurrent();}
-        Due.Sort([](const FIntVector& A,const FIntVector& B){return A.X!=B.X ? A.X<B.X : A.Y!=B.Y ? A.Y<B.Y : A.Z<B.Z;});
-        for(const auto& Block:Due) UpdateNativeRule(Block,true);
+        if(DelayedBudget.Available()) {
+            const double Start=FPlatformTime::Seconds();
+            TArray<FIntVector> Due;for(const auto& Pair:RuleDelayed) if(Pair.Value<=NativeRuleTick) Due.Add(Pair.Key);
+            // Oldest event first; leave unprocessed events in the map so the
+            // deadline never drops a repeater pulse, hopper or failed item drop.
+            Due.Sort([this](const FIntVector& A,const FIntVector& B){const int64 TA=RuleDelayed.FindChecked(A),TB=RuleDelayed.FindChecked(B);return TA!=TB ? TA<TB : A.X!=B.X ? A.X<B.X : A.Y!=B.Y ? A.Y<B.Y : A.Z<B.Z;});
+            const double Deadline=Start+DelayedBudget.SecondsLeft();
+            DelayedBudget.ChargeTime(FPlatformTime::Seconds()-Start);
+            bool Processed=false;
+            for(const auto& Block:Due) {
+                // Guarantee progress even if a large due-map scan used the budget.
+                if(Processed && (!DelayedBudget.Available() || FPlatformTime::Seconds()>=Deadline)) break;
+                const double WorkStart=FPlatformTime::Seconds();
+                RuleDelayed.Remove(Block);UpdateNativeRule(Block,true);Processed=true;
+                DelayedBudget.Charge(FPlatformTime::Seconds()-WorkStart);
+            }
+            const double Spent=FPlatformTime::Seconds()-Start;RuleDelayedMillis+=Spent;
+        }
         // Bounded propagation preserves pending work across ticks.
         const double PropagationStart=FPlatformTime::Seconds();
         const double PropagationDeadline=PropagationStart+FMath::Max(0.,.002-PropagationSeconds);
         while(PropagationWork<256 && !RuleQueue.IsEmpty() && FPlatformTime::Seconds()<PropagationDeadline) {
             const FIntVector Block=RuleQueue.Pop();++PropagationWork;UpdateNativeRule(Block);
         }
-        PropagationSeconds+=FPlatformTime::Seconds()-PropagationStart;
+        PropagationSeconds+=FPlatformTime::Seconds()-PropagationStart;RulePropagationMillis=PropagationSeconds;
+        const double GrassStart=FPlatformTime::Seconds();
+        const double GrassDeadline=GrassStart+GrassBudget.SecondsLeft();
+        DeferringGrassVisuals=true;
         if(SortedGrassSections.Num()!=GrassSections.Num()) {
             SortedGrassSections=GrassSections.Array();
             SortedGrassSections.Sort([](const FIntVector& A,const FIntVector& B){return A.X!=B.X ? A.X<B.X : A.Y!=B.Y ? A.Y<B.Y : A.Z<B.Z;});
         }
         const auto& Sections=SortedGrassSections;
-        // Normal randomTickSpeed=3 visits every section of the standard export.
-        // Large custom rates share a bounded budget round-robin across ticks.
+        // Resume sections round-robin when the frame budget is exhausted.
+        // Limit terrain-changing random ticks; logical changes are immediate.
         const int32 Visits=NativeRandomTickSpeed>0 ? FMath::Min(Sections.Num(),FMath::Max(1,8192/NativeRandomTickSpeed)) : 0;
-        for(int32 SectionIndex=0;SectionIndex<Visits;++SectionIndex) {
+        int32 Visited=0;
+        for(int32 SectionIndex=0;SectionIndex<Visits && GrassBudget.Available() && FPlatformTime::Seconds()<GrassDeadline && GrassChanges<1;++SectionIndex) {
+        ++Visited;
         const auto& Section=Sections[(GrassSectionCursor+SectionIndex)%Sections.Num()];
-        for(int32 Attempt=0;Attempt<NativeRandomTickSpeed;++Attempt) {
+        for(int32 Attempt=0;Attempt<NativeRandomTickSpeed && GrassBudget.Available() && FPlatformTime::Seconds()<GrassDeadline && GrassChanges<1;++Attempt) {
+            GrassBudget.Charge(0);
             const FIntVector Block=Section*16+FIntVector(RuleRandom.RandRange(0,15),RuleRandom.RandRange(0,15),RuleRandom.RandRange(0,15));
             FString Id,State;if(!GetBlockState(Block,Id,State) || Id!=TEXT("minecraft:grass_block")) continue;
             const FIntVector Above=Block+FIntVector(0,1,0);if(!Revisions.Contains(CellOf(Above))) continue;
             FString Top,TopState;GetBlockState(Above,Top,TopState);
             const bool Snow=Top==TEXT("minecraft:snow") && Props(TopState).FindRef(TEXT("layers"))==TEXT("1");
-            if(!Snow && (IsOpaqueVoxel(Above) || Top==TEXT("minecraft:water") && TopState==TEXT("level=0"))) {SetNativeBlockState(Block,TEXT("minecraft:dirt"),SavedPalette ? SavedPalette->DefaultState(TEXT("minecraft:dirt")) : FString());continue;}
+            if(!Snow && (IsOpaqueVoxel(Above) || Top==TEXT("minecraft:water") && TopState==TEXT("level=0"))) {if(SetNativeBlockState(Block,TEXT("minecraft:dirt"),SavedPalette ? SavedPalette->DefaultState(TEXT("minecraft:dirt")) : FString())) ++GrassChanges;continue;}
             const FLinearColor Light=Lighting ? Lighting->Sample(Above) : FLinearColor(1,0,1,1);
             if(FMath::Max(FMath::RoundToInt(Light.R*15)-NativeSkyDarkness,FMath::RoundToInt(Light.G*15))<9) continue;
-            for(int32 I=0;I<4;++I) {const FIntVector Target=Block+FIntVector(RuleRandom.RandRange(-1,1),RuleRandom.RandRange(-3,1),RuleRandom.RandRange(-1,1));
+            for(int32 I=0;I<4 && GrassChanges<1;++I) {const FIntVector Target=Block+FIntVector(RuleRandom.RandRange(-1,1),RuleRandom.RandRange(-3,1),RuleRandom.RandRange(-1,1));
                 FString Dirt,DirtState,Over,OverState;if(!GetBlockState(Target,Dirt,DirtState) || Dirt!=TEXT("minecraft:dirt") || !Revisions.Contains(CellOf(Target+FIntVector(0,1,0)))) continue;
                 GetBlockState(Target+FIntVector(0,1,0),Over,OverState);
-                if(!IsOpaqueVoxel(Target+FIntVector(0,1,0)) && Over!=TEXT("minecraft:water") && Over!=TEXT("minecraft:lava")) SetNativeBlockState(Target,TEXT("minecraft:grass_block"),Over==TEXT("minecraft:snow") || Over==TEXT("minecraft:snow_block") ? TEXT("snowy=true") : TEXT("snowy=false"));
+                if(!IsOpaqueVoxel(Target+FIntVector(0,1,0)) && Over!=TEXT("minecraft:water") && Over!=TEXT("minecraft:lava")) if(SetNativeBlockState(Target,TEXT("minecraft:grass_block"),Over==TEXT("minecraft:snow") || Over==TEXT("minecraft:snow_block") ? TEXT("snowy=true") : TEXT("snowy=false"))) ++GrassChanges;
             }
         }}
-        if(!Sections.IsEmpty()) GrassSectionCursor=(GrassSectionCursor+Visits)%Sections.Num();
+        DeferringGrassVisuals=false;
+        const double GrassSpent=FPlatformTime::Seconds()-GrassStart;GrassBudget.ChargeTime(GrassSpent);RuleGrassMillis+=GrassSpent;
+        if(!Sections.IsEmpty()) GrassSectionCursor=(GrassSectionCursor+Visited)%Sections.Num();
+        const double FallingStart=FPlatformTime::Seconds();
         for(int32 I=NativeFalls.Num()-1;I>=0;--I) {auto& Fall=NativeFalls[I];++Fall.Age;Fall.Previous=Fall.Position;Fall.Velocity.Z-=80;
             EnsureCollisionForPosition(Fall.Position);FHitResult Hit;FCollisionQueryParams Query(SCENE_QUERY_STAT(NativeFalling),false,this);
             const FVector Delta=Fall.Velocity*.05f;
@@ -264,6 +291,8 @@ void ABridgeWorld::TickNativeRules(float DeltaSeconds) {
             const FIntVector Target=SourceVoxelAt(Fall.Position-FVector(0,0,45));FString Id,State;GetBlockState(Target,Id,State);
             bool Harden=Fall.Id.EndsWith(TEXT("_concrete_powder")) && (Id==TEXT("minecraft:water") || IsWaterAtUEPosition(Fall.Position));
             if((Collided && Hit.Normal.Z>.6f) || Harden || Fall.Age>600 || !ContainsUEPosition(Fall.Position)) {
+                if(NativeRuleTick<Fall.RetryDropTick || !FallingTransitions.Available()) {Fall.Velocity=FVector::ZeroVector;continue;}
+                const double TransitionStart=FPlatformTime::Seconds();
                 if(Harden) {Fall.Id.LeftChopInline(7);Fall.State=SavedPalette ? SavedPalette->DefaultState(Fall.Id) : FString();}
                 const FIntVector Land=Collided ? SourceVoxelAt(Hit.ImpactPoint+FVector(0,0,1)) : Target;FString Existing,ExistingState;GetBlockState(Land,Existing,ExistingState);
                 const bool Replaceable=Existing.IsEmpty() || Existing==TEXT("minecraft:water") || Existing==TEXT("minecraft:lava") || Plant(Existing);
@@ -271,11 +300,14 @@ void ABridgeWorld::TickNativeRules(float DeltaSeconds) {
                 if(!Placed && (!NativeRuleDrop || !NativeRuleDrop(Fall.Id,Fall.Position))) {
                     // Retry with its inventory quantity still owned by this entity.
                     if(!ContainsUEPosition(Fall.Position)) Fall.Position=Fall.Previous;
-                    Fall.Velocity=FVector::ZeroVector;Fall.Age=FMath::Min(Fall.Age,600);continue;
+                    Fall.Velocity=FVector::ZeroVector;Fall.Age=FMath::Min(Fall.Age,600);Fall.RetryDropTick=NativeRuleTick+20;
+                    FallingTransitions.Charge(FPlatformTime::Seconds()-TransitionStart);continue;
                 }
+                FallingTransitions.Charge(FPlatformTime::Seconds()-TransitionStart);
                 if(Fall.Visual.IsValid()) Fall.Visual->Destroy();NativeFalls.RemoveAtSwap(I);
             }
         }
+        RuleFallingMillis+=FPlatformTime::Seconds()-FallingStart;
     }
     const float Alpha=FMath::Clamp(NativeRuleClock/.05f,0.f,1.f);for(auto& Fall:NativeFalls) if(Fall.Visual.IsValid()) Fall.Visual->SetActorLocation(FMath::Lerp(Fall.Previous,Fall.Position,Alpha));
 }
@@ -303,4 +335,12 @@ bool ABridgeWorld::ImportNativeFalling(const TArray<TSharedPtr<FJsonValue>>& Val
         if(!Visual->HasContent()) {for(auto& Other:Draft) if(Other.Visual.IsValid()) Other.Visual->Destroy();return false;}
     }
     NativeFalls=MoveTemp(Draft);return true;
+}
+
+TArray<FVector> ABridgeWorld::NativeFallingCollisionAnchors() const {
+    TArray<FVector> Out;Out.Reserve(NativeFalls.Num());for(const auto& Fall:NativeFalls) Out.Add(Fall.Position);return Out;
+}
+FString ABridgeWorld::NativeRuleStatistics() const {
+    return FString::Printf(TEXT("delayedMs=%.2f propagationMs=%.2f grassMs=%.2f fallingMs=%.2f delayedRules=%d fallingBlocks=%d"),
+        RuleDelayedMillis*1000,RulePropagationMillis*1000,RuleGrassMillis*1000,RuleFallingMillis*1000,RuleDelayed.Num(),NativeFalls.Num());
 }

@@ -1,5 +1,7 @@
 # Minecraft ↔ Unreal Engine bridge MVP
 
+**FPS・キー競合更新0.18.6：** [更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.18.6.zip) / [導入](docs/UPGRADE_0.18.6.md) / [検証](docs/AUDIT_0.18.6.md)。ログで約80msを使っていた規則処理の遅延・草・落下経路に負荷対策を追加し、F3・F5がUEの描画モード切替へ届く競合を修正。MODは0.18.0のまま、0.18.4／0.18.5からは再書き出し・再取り込み不要、`-Rebuild` 必須。UE実機のFPS・ビルドは未検証です。
+
 **FPS優先更新0.18.5：** [更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.18.5.zip) / [導入](docs/UPGRADE_0.18.5.md) / [検証](docs/AUDIT_0.18.5.md)。0.16.2以降に追加された手持ちの毎フレームSceneCapture、不要な規則照会と更新キューを修正。MODは0.18.0のまま、0.18.4からは再書き出し・再取り込み不要、`-Rebuild` が必要です。実FPSはWindows UEでの確認が必要です。
 
 **物理表示・マス設置・音のUE更新0.18.4：** [更新ZIP](https://github.com/TSUNAMI-SMP/UE-MINECRAFT/raw/refs/heads/ue-native-play-0.15.0/downloads/UEBridge-update-0.18.4.zip) / [導入・操作](docs/UPGRADE_0.18.4.md) / [検証](docs/AUDIT_0.18.4.md)。MODは0.18.0のまま、再書き出し不要。マスへの配置・音・影切替・専用の手続き型素材・CPU更新削減を追加。UE再ビルド・再取り込みが必要です。Niagaraは対応テンプレートの導入時に使用。Windows UE描画と実FPSは未検証、撮影用の完全な流体物理は未実装です。

@@ -294,6 +294,15 @@ bool ABridgeNativePlayerController::InputKey(const FInputKeyEventArgs& Params) {
             else RawMouseY+=Params.AmountDepressed;
         }
     }
+    // UPlayerInput executes development view-mode bindings inside Super.
+    // Consume all event types before that path, including while a menu owns focus.
+    if(IsValid(NativeReceiver) && NativeReceiver->NativePlayActive && (Params.Key==EKeys::F3 || Params.Key==EKeys::F5)) {
+        if(Params.Event==IE_Pressed && !bChatOpen && Focused()) {
+            if(Params.Key==EKeys::F3) {if(auto* Hud=Cast<ABridgeNativeHUD>(GetHUD())) Hud->HandleKey(Params.Key);}
+            else if(!bInventoryOpen && !bPauseOpen) CycleNativePerspective();
+        }
+        return true;
+    }
     const bool Result=Super::InputKey(Params);
     // Slate owns chat text and pointer events; inventory shortcuts must not
     // consume numeric keys or clicks while the command field has focus.

@@ -47,6 +47,8 @@ public:
     double NativeRulePeakMillis() const {return RulePeakMillis;}
     void ResetNativePerformancePeaks() {RulePeakMillis=0;}
     int32 PendingNativeRules() const {return int32(RuleQueue.Num());}
+    FString NativeRuleStatistics() const;
+    TArray<FVector> NativeFallingCollisionAnchors() const;
     bool GetBlockState(const FIntVector& SourceVoxel,FString& BlockId,FString& StateKey) const;
     FString GetModelError() const { return LastModelError; }
     TFunction<void(const FString& Type,const FString& Block,const FVector& Position)> InteractionSound;
@@ -148,7 +150,8 @@ private:
     TMap<FIntVector,TArray<uint8>> SkyTops;
     TMap<FIntVector,TArray<FIntVector>> BiomeTintCells;
     TMap<FIntVector,TArray<uint16>> WaterCells;
-    bool NativeRules=false;
+    bool NativeRules=false,DeferringGrassVisuals=false;
+    double RuleDelayedMillis=0,RulePropagationMillis=0,RuleGrassMillis=0,RuleFallingMillis=0;
     int32 NativeRandomTickSpeed=3,NativeSkyDarkness=0;
     int32 GrassSectionCursor=0;
     float NativeRuleClock=0;
@@ -160,7 +163,7 @@ private:
     TMap<FIntVector,int64> RuleDelayed;
     TMap<FIntVector,int32> ComparatorPower;
     FRandomStream RuleRandom{173931};
-    struct FNativeFall {FIntVector Source;FString Id,State;int32 Tint=0xffffff;FVector Position,Previous,Velocity=FVector::ZeroVector;TWeakObjectPtr<class ABridgeBlockPreview> Visual;int32 Age=0;};
+    struct FNativeFall {FIntVector Source;FString Id,State;int32 Tint=0xffffff;FVector Position,Previous,Velocity=FVector::ZeroVector;TWeakObjectPtr<class ABridgeBlockPreview> Visual;int32 Age=0;int64 RetryDropTick=0;};
     TArray<FNativeFall> NativeFalls;
     void TickNativeRules(float DeltaSeconds);
     void QueueNativeRule(const FIntVector& Block);

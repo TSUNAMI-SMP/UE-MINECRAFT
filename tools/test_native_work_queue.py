@@ -25,6 +25,19 @@ int main() {
     for(int pass=0;pass<20;++pass) {
         assert(q.Add(42));assert(!q.Add(42));assert(q.Pop()==42);
     }
+    // All 20 catch-up ticks share the frame budget. Pending work survives
+    // exhaustion and can run in the next frame, including a requeued failure.
+    BridgeWorkQueue::FrameBudget budget(.002,128);
+    int processed=0;
+    for(int tick=0;tick<20;++tick) while(budget.Available()) {
+        budget.Charge(.0005);++processed;
+    }
+    assert(processed==4);
+    BridgeWorkQueue::FrameBudget countBudget(1.,8);
+    for(int tick=0;tick<20;++tick) while(countBudget.Available()) countBudget.Charge(0);
+    assert(!countBudget.Available());
+    BridgeWorkQueue::FrameBudget scanBudget(.002,128);
+    scanBudget.ChargeTime(.003);assert(!scanBudget.Available());
     q.Add(99);q.Empty();assert(q.IsEmpty()&&q.Num()==0);
     assert(q.Add(99));assert(q.Pop()==99);
 }

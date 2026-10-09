@@ -156,9 +156,10 @@ void UBridgeVideo::SetNativeRenderMode(bool Lighting) {
     Viewport->EngineShowFlags.SetAntiAliasing(false);
     Viewport->EngineShowFlags.SetEyeAdaptation(false);
     Viewport->EngineShowFlags.SetTonemapper(false);
-    Viewport->EngineShowFlags.SetSpecular(false);
+    Viewport->EngineShowFlags.SetSpecular(NativeWaterEnabled || NativeRealisticEnabled);
     Viewport->EngineShowFlags.SetGlobalIllumination(false);
-    Viewport->EngineShowFlags.SetReflectionEnvironment(false);
+    Viewport->EngineShowFlags.SetReflectionEnvironment(NativeWaterEnabled || NativeRealisticEnabled);
+    Viewport->EngineShowFlags.SetScreenSpaceReflections(NativeWaterEnabled || NativeRealisticEnabled);
     Viewport->EngineShowFlags.SetSkyLighting(false);
     // Retain the final scene pass for the vanilla inverse crosshair blend, while
     // exposure, tone curves and UE atmosphere remain explicitly disabled.
@@ -204,12 +205,22 @@ void UBridgeVideo::SetNativeRealisticMode(bool Enabled) {
     Viewport->EngineShowFlags.SetLighting(Enabled||LightingEnabled);
     Viewport->EngineShowFlags.SetDynamicShadows(NativeShadowEnabled);
     Viewport->EngineShowFlags.SetAmbientOcclusion(false);
-    Viewport->EngineShowFlags.SetSpecular(Enabled);
-    Viewport->EngineShowFlags.SetReflectionEnvironment(Enabled);
-    Viewport->EngineShowFlags.SetScreenSpaceReflections(Enabled);
+    Viewport->EngineShowFlags.SetSpecular(Enabled || NativeWaterEnabled);
+    Viewport->EngineShowFlags.SetReflectionEnvironment(Enabled || NativeWaterEnabled);
+    Viewport->EngineShowFlags.SetScreenSpaceReflections(Enabled || NativeWaterEnabled);
     Viewport->EngineShowFlags.SetBloom(Enabled);
     Viewport->EngineShowFlags.SetMotionBlur(false);
     UpdateNativeSky();
+}
+void UBridgeVideo::SetNativeWaterMode(bool Enabled) {
+    auto* Viewport=GetWorld()?GetWorld()->GetGameViewport():nullptr;if(!Viewport || !SavedNativeFlags) return;
+    if(NativeWaterEnabled==Enabled) return;
+    NativeWaterEnabled=Enabled;
+    // The dedicated liquid uses its own asset materials. Standard terrain,
+    // shadow policy and the global realistic-material toggle remain fixed.
+    Viewport->EngineShowFlags.SetSpecular(Enabled || NativeRealisticEnabled);
+    Viewport->EngineShowFlags.SetReflectionEnvironment(Enabled || NativeRealisticEnabled);
+    Viewport->EngineShowFlags.SetScreenSpaceReflections(Enabled || NativeRealisticEnabled);
 }
 void UBridgeVideo::SetNativeShadows(bool Enabled) {
     NativeShadowEnabled=Enabled;
@@ -225,7 +236,7 @@ void UBridgeVideo::RestoreNativeRenderMode() {
     }
     NativeInverseHudCamera.Reset();NativeInverseHudMaterial=nullptr;
     if(SavedNativeFlags) if(auto* Viewport=NativeViewport.Get()) Viewport->EngineShowFlags=*SavedNativeFlags;
-    SavedNativeFlags.Reset();NativeViewport.Reset();
+    SavedNativeFlags.Reset();NativeViewport.Reset();NativeWaterEnabled=false;
     for(const auto& Pair:NativeHiddenSky) if(auto* Part=Pair.Key.Get()) Part->SetHiddenInGame(Pair.Value);
     NativeHiddenSky.Empty();
     for(const auto& Pair:NativeHiddenLights) if(auto* Light=Pair.Key.Get()) Light->SetVisibility(Pair.Value);

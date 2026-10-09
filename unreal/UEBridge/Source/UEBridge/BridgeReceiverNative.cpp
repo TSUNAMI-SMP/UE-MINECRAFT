@@ -59,7 +59,7 @@ float ABridgeReceiver::GetNativeHealth() const {return IsValid(MobWorld) ? MobWo
 bool ABridgeReceiver::IsNativeSaving() const {return NativePlayActive && NativeStore.IsValid() && NativeStore->IsSaving();}
 
 void ABridgeReceiver::BeginNativePlay() {
-    NativeLighting=false;
+    NativeLighting=true;NativeShadows=false;
     NativeTimeOfDay=6000;NativeWorldTime=0;NativeTimeAccumulator=0;NativeDaylightCycle=true;NativeSubmergedSeconds=0;NativeEyeInWater=false;NativeLastFluidDamage=-100;
     NativePlayActive=true;NativeInitialized=false;Connected=false;Anchor=FVector::ZeroVector;
     NativeTearDownHandle=FWorldDelegates::OnWorldBeginTearDown.AddUObject(this,&ABridgeReceiver::PrepareNativeExit);
@@ -100,12 +100,7 @@ void ABridgeReceiver::BeginNativePlay() {
     }
     LatestInput.Creative=NativeCreative;
     if(const auto& Runtime=NativeStore->GetMetadata().RuntimeState; Runtime.IsValid()) {
-        // Earlier saves persisted UE lighting as the implicit default. Migrate
-        // those saves to vanilla; preserve deliberate choices from this release.
-        double LightingPreference=0;
-        if(Runtime->TryGetNumberField(TEXT("lightingPreferenceVersion"),LightingPreference) && LightingPreference>=2)
-            Runtime->TryGetBoolField(TEXT("lighting"),NativeLighting);
-        Runtime->TryGetBoolField(TEXT("shadows"),NativeShadows);
+        // Normal-play presentation is fixed, independent of old save toggles.
         FVector Respawn;if(JsonVector(Runtime,TEXT("respawn"),Respawn)) NativeRespawnPosition=Respawn;
         if(EnsureMobWorld()) {double Health;if(Runtime->TryGetNumberField(TEXT("health"),Health)) MobWorld->PlayerHealth=FMath::Clamp(float(Health),0.f,20.f);}
     }
@@ -127,7 +122,7 @@ void ABridgeReceiver::BeginNativePlay() {
     Video->SetNativeSkyEnvironment(LatestInput.VanillaLight,NativeStore->GetMetadata().Dimension);
     NativeSetLighting(NativeLighting);
     NativeStatus=TEXT("Validating offline world...");
-    UE_LOG(LogTemp,Display,TEXT("Bridge UE 0.18.6 / MOD 0.18.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
+    UE_LOG(LogTemp,Display,TEXT("Bridge UE 0.19.0 / MOD 0.18.0 native start: package=%s file=%s input=UE render=UE videoTransfer=bypassed"),*Session,*NativeWorldFile);
 }
 
 void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
@@ -286,6 +281,7 @@ void ABridgeReceiver::TickNativePlay(float DeltaSeconds) {
         UE_LOG(LogTemp,Display,TEXT("Bridge native terrain loaded: package=%s cells=%d spawn=%s save=%s"),
             *Metadata.PackageId,Metadata.Cells,*Metadata.Spawn.ToString(),*Metadata.SaveFile);
     }
+    Video->SetNativeWaterMode(RealisticWorld && RealisticWorld->HasActiveWater());
     TerrainMovementReady=SyncedWorld->IsMovementReady(Character->GetMinecraftFeetPosition(),Character->GetVelocity());
     if(IsNativeReplay()) {
         UEControl=false;Character->SetAuthorityEnabled(false);
@@ -410,6 +406,7 @@ void ABridgeReceiver::NativeAction(const FString& Action) {
     if(Action==TEXT("place")&&RealisticWorld&&Inventory) {
         const FString Item=LatestInput.HeldItem;
         const bool PhysicalItem=Item.StartsWith(TEXT("uebridge:realistic_"));
+        if(Item==TEXT("uebridge:realistic_water_bucket") && CinematicCapture && CinematicCapture->IsRecording()) {LastAction=TEXT("Stop recording before placing Niagara water");return;}
         const bool Collect=Item==TEXT("minecraft:bucket");
         const bool Ignite=Item==TEXT("minecraft:flint_and_steel")||Item==TEXT("minecraft:fire_charge");
         if(PhysicalItem||Collect||Ignite) {
@@ -602,7 +599,7 @@ bool ABridgeReceiver::NativeDrop(const FString& ItemId,int32 Count) {
     return SpawnNativeDrop(ItemId,Count,Eye-FVector(0,0,30),Aim.Vector()*600+FVector(FMath::Cos(Angle)*Scatter,FMath::Sin(Angle)*Scatter,200),2.f);
 }
 void ABridgeReceiver::NativeSetLighting(bool Enabled) {
-    if(!NativePlayActive) return;NativeLighting=Enabled;
+    if(!NativePlayActive) return;Enabled=true;NativeLighting=true;NativeShadows=false;
     Video->SetNativeRenderMode(Enabled);Video->SetNativeShadows(NativeShadows);
     if(RealisticWorld) Video->SetNativeRealisticMode(RealisticWorld->VisualsEnabled());
     FString Failure;if(!FBridgeLightingService::SetEnvironment(GetWorld(),LatestInput.VanillaLight,!Enabled,&Failure))
@@ -620,7 +617,7 @@ bool ABridgeReceiver::NativeSave() {
         UE_LOG(LogTemp,Error,TEXT("Bridge native save refused: %s"),*NativeStatus);return false;
     }
     auto Runtime=MakeShared<FJsonObject>();Runtime->SetNumberField(TEXT("health"),GetNativeHealth());Runtime->SetBoolField(TEXT("lighting"),NativeLighting);
-    Runtime->SetNumberField(TEXT("lightingPreferenceVersion"),2);Runtime->SetBoolField(TEXT("shadows"),NativeShadows);
+    Runtime->SetNumberField(TEXT("lightingPreferenceVersion"),3);Runtime->SetBoolField(TEXT("shadows"),NativeShadows);
     Runtime->SetArrayField(TEXT("respawn"),JsonVector(NativeRespawnPosition));Runtime->SetBoolField(TEXT("flying"),LatestInput.Flying);Runtime->SetNumberField(TEXT("perspective"),LatestInput.Perspective);
     Runtime->SetObjectField(TEXT("inventory"),Inventory);
     Runtime->SetNumberField(TEXT("timeOfDay"),NativeTimeOfDay);Runtime->SetNumberField(TEXT("worldTime"),NativeWorldTime);Runtime->SetBoolField(TEXT("daylightCycle"),NativeDaylightCycle);Runtime->SetBoolField(TEXT("creative"),NativeCreative);
@@ -744,11 +741,7 @@ FString ABridgeReceiver::NativeCommand(const FString& Command) {
         LogDiagnostics(FPlatformTime::Seconds(),true);
         return FString::Printf(TEXT("worldTickMs=%.2f %s (full report in UEBridge.log)"),SyncedWorld?SyncedWorld->NativeTickMillis():0,RealisticWorld?*RealisticWorld->Statistics():TEXT("no physics"));
     }
-    if(Args[0]==TEXT("shadows")) {
-        if(Args.Num()!=2||(Args[1]!=TEXT("on")&&Args[1]!=TEXT("off"))) return TEXT("/shadows on|off");
-        NativeShadows=Args[1]==TEXT("on");Video->SetNativeShadows(NativeShadows);
-        return NativeShadows?TEXT("Dynamic shadows ON"):TEXT("Dynamic shadows OFF; native lightmap retained");
-    }
+    if(Args[0]==TEXT("shadows")) return TEXT("通常プレイの影はOFFに固定されています");
     if(Args[0]==TEXT("physics")&&RealisticWorld) return RealisticWorld->Command(Args,TargetCharacter->GetActorLocation());
     if(Args[0]==TEXT("realistic")&&RealisticWorld) {
         if(Args.Num()==2&&Args[1]==TEXT("items")) {
@@ -757,14 +750,15 @@ FString ABridgeReceiver::NativeCommand(const FString& Command) {
                 if(NativeUiPalette->FindItem(Item)) Added+=1-Contents->InsertStack(Item,1);
             return FString::Printf(TEXT("Added %d realistic items. Missing items require MOD 0.18.0 and a fresh export/import."),Added);
         }
-        bool Enabled=RealisticWorld->VisualsEnabled();int32 Quality=RealisticWorld->GetQuality();
-        if(Args.Num()==2&&(Args[1]==TEXT("on")||Args[1]==TEXT("off"))) Enabled=Args[1]==TEXT("on");
+        int32 Quality=RealisticWorld->GetQuality();
+        if(Args.Num()==2&&(Args[1]==TEXT("on")||Args[1]==TEXT("off"))) return TEXT("通常プレイのリアル表示切替はOFFに固定されています。専用の水はNiagaraで描画します");
         else if(Args.Num()==3&&Args[1]==TEXT("quality")&&(Args[2]==TEXT("low")||Args[2]==TEXT("medium")||Args[2]==TEXT("high"))) Quality=Args[2]==TEXT("low")?0:Args[2]==TEXT("high")?2:1;
-        else return TEXT("/realistic on|off | /realistic quality low|medium|high");
-        RealisticWorld->SetVisuals(Enabled,Quality);Video->SetNativeRealisticMode(Enabled);return Enabled?TEXT("Realistic visuals ON (physics unchanged)"):TEXT("Simple visuals (physics unchanged)");
+        else return TEXT("/realistic items | /realistic quality low|medium|high");
+        RealisticWorld->SetVisuals(false,Quality);Video->SetNativeRealisticMode(false);return TEXT("Physical quality updated");
     }
     if(Args[0]==TEXT("record")&&CinematicCapture) {
         if(Args.Num()==2&&Args[1]==TEXT("start")) {
+            if(RealisticWorld && RealisticWorld->WaterSourceCount()>0) return TEXT("Niagara GPU water is not supported by offline recording; clear water sources first");
             if(CinematicCapture->IsRecording()) return TEXT("Already recording");
             if(NativeStore->IsSaving()&&!NativeStore->FlushSave(30000)) return TEXT("Recording refused: pending save failed");
             if(!NativeSave()||!NativeStore->FlushSave(30000)) return TEXT("Recording refused: baseline save failed; previous save retained");
@@ -772,7 +766,7 @@ FString ABridgeReceiver::NativeCommand(const FString& Command) {
         return CinematicCapture->Command(Args);
     }
     auto Number=[](const FString& Value,double& Out) {return FDefaultValueHelper::ParseDouble(Value,Out) && FMath::IsFinite(Out) && Out>=0 && Out<=9007199254740991. && Out==FMath::FloorToDouble(Out);};
-    if(Args[0]==TEXT("help")) return TEXT("/time /gamerule /weather /gamemode /give /save /shadows on|off /physics clear|undo|status /realistic on|off|quality /record start|stop|status");
+    if(Args[0]==TEXT("help")) return TEXT("/time /gamerule /weather /gamemode /give /save /physics clear|undo|status /realistic items|quality /record start|stop|status");
     if(Args[0]==TEXT("time") && Args.Num()==3) {
         if(Args[1]==TEXT("query")) {
             if(Args[2]==TEXT("daytime")) return FString::Printf(TEXT("時刻: %.0f"),BridgeSkyMath::PositiveRemainder(NativeTimeOfDay,24000));

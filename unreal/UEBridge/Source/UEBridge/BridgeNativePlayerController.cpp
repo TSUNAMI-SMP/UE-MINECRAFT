@@ -385,7 +385,6 @@ void ABridgeNativePlayerController::Tick(float DeltaSeconds) {
         if(auto* ChatHud=Cast<ABridgeNativeHUD>(GetHUD())) ChatHud->ShowChat(Pressed(TEXT("key.command")) ? TEXT("/") : TEXT(""));
         return;
     }
-    if(!bInventoryOpen && !bPauseOpen && Focused() && WasInputKeyJustPressed(EKeys::F6)) {NativeReceiver->NativeSetLighting(!NativeReceiver->NativeLighting);return;}
     // Restore failures stop gameplay but retain Escape and pause-menu access.
     // Saving remains guarded by the receiver's valid-inventory check.
     if(bPauseOpen) {RouteMenuInput();StopNativeInput();return;}

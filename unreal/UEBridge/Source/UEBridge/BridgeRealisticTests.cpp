@@ -29,7 +29,12 @@ bool FBridgeRealisticPersistenceTest::RunTest(const FString&) {
     TestFalse(TEXT("Invalid final row rejects entire snapshot"),Target->ImportState(Bad));
     TestEqual(TEXT("Failed restore keeps volume"),Target->Physics.volume(Water),std::int64_t(1100));
     TestEqual(TEXT("Failed restore keeps fuse"),Target->Physics.bombs[0].fuse,2.5);
-    auto Legacy=Source->ExportState();Legacy->RemoveField(TEXT("gridOrigin"));
+    auto BadSources=Source->ExportState();TArray<TSharedPtr<FJsonValue>> TooManySources;
+    for(int I=0;I<3;++I) {auto Row=MakeShared<FJsonObject>();Row->SetArrayField(TEXT("p"),TArray<TSharedPtr<FJsonValue>>{MakeShared<FJsonValueNumber>(I*2000),MakeShared<FJsonValueNumber>(0),MakeShared<FJsonValueNumber>(0)});TooManySources.Add(MakeShared<FJsonValueObject>(Row));}
+    BadSources->SetArrayField(TEXT("niagaraWaterSources"),TooManySources);
+    TestFalse(TEXT("Excess water sources reject the entire snapshot"),Target->ImportState(BadSources));
+    TestEqual(TEXT("Rejected water snapshot preserves existing liquid"),Target->Physics.volume(Water),std::int64_t(1100));
+    auto Legacy=Source->ExportState();Legacy->RemoveField(TEXT("gridOrigin"));Legacy->RemoveField(TEXT("niagaraWaterSources"));
     TestTrue(TEXT("Legacy zero-origin state rebases"),Target->ImportState(Legacy));
     TestEqual(TEXT("Legacy migration retains water including drops"),Target->Physics.volume(Water),std::int64_t(1100));
     TestEqual(TEXT("Legacy migration uses terrain grid"),Target->Physics.gridOrigin.y,17.25);

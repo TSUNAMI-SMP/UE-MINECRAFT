@@ -12,6 +12,9 @@ class UEBRIDGE_API ABridgeRealisticWorld : public AActor {
 public:
     ABridgeRealisticWorld();
     virtual void Tick(float DeltaSeconds) override;
+    virtual void EndPlay(const EEndPlayReason::Type Reason) override;
+    int32 WaterSourceCount() const {return WaterSources.Num();}
+    bool HasActiveWater() const;
     void Initialize(class ABridgeWorld* Terrain,class UBridgeNativeUiPalette* Resources);
     bool Use(const FString& Item,const FVector& Eye,const FRotator& Aim,bool Collect,FString& Result);
     void SetVisuals(bool Enabled,int32 Quality);
@@ -30,7 +33,14 @@ public:
     TFunction<void(const FVector&,float)> OnBlast;
     TFunction<void(const FString&,const FVector&,float,float)> OnSound;
 private:
-    bool Realistic=true;
+    struct FWaterSource {FVector Position;TWeakObjectPtr<class ABridgeNiagaraWater> Effect;};
+    TArray<FWaterSource> WaterSources;
+    UPROPERTY() TObjectPtr<class UNiagaraSystem> WaterTemplate;
+    FString WaterError;
+    bool AddWaterSource(const FVector& Position,FString& Error);
+    void TickWaterSources();
+    bool WaterDomainInside(const FVector& Position) const;
+    bool Realistic=false;
     bool HadMovingPhysics=true;
     int32 QualityLevel=1;
     double Accumulator=0,VisualClock=0;

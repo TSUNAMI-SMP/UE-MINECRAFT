@@ -18,6 +18,7 @@ public:
     /** Native terrain goes directly to the viewport; hands have an independent depth pass. */
     void SetNativeRenderMode(bool Lighting);
     void SetNativeRealisticMode(bool Enabled);
+    void SetNativeWaterMode(bool Enabled);
     void SetNativeShadows(bool Enabled);
     void RefreshNativeReplayView();
     void RestoreNativeRenderMode();
@@ -59,7 +60,7 @@ private:
     UPROPERTY() TObjectPtr<class UTextureRenderTarget2D> Target;
     FVector MCOrigin=FVector::ZeroVector,Anchor=FVector::ZeroVector;
     bool LightingEnabled=true,VanillaSkyEnabled=false,ClientV3=false,ClientGpu=false;
-    bool NativeRealisticEnabled=false;
+    bool NativeRealisticEnabled=false,NativeWaterEnabled=false;
     bool NativeShadowEnabled=false;
     TSharedPtr<struct FBridgeSharedTransport,ESPMode::ThreadSafe> SharedGpu;
     TArray<uint8> Acknowledgements;

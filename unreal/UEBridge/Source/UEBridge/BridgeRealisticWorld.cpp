@@ -1,4 +1,8 @@
 #include "BridgeRealisticWorld.h"
+#include "BridgeNiagaraWater.h"
+#include "NiagaraSystem.h"
+#include "BridgeWaterSourceMath.h"
+#include "GameFramework/PlayerController.h"
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
 #include "BridgeWorld.h"
@@ -44,6 +48,8 @@ ABridgeRealisticWorld::ABridgeRealisticWorld() {
 }
 void ABridgeRealisticWorld::Initialize(ABridgeWorld* InTerrain,UBridgeNativeUiPalette* InResources) {
     Terrain=InTerrain;Resources=InResources;
+    WaterTemplate=ABridgeNiagaraWater::LoadTemplate(WaterError);
+    if(!WaterTemplate) UE_LOG(LogTemp,Warning,TEXT("Bridge Niagara water unavailable: %s"),*WaterError);
     if(Terrain) {
         const FVector Corner=Terrain->BlockCenter(FIntVector::ZeroValue)-FVector(50);
         Physics.gridOrigin={FMath::Fmod(FMath::Fmod(Corner.X,25.)+25.,25.),FMath::Fmod(FMath::Fmod(Corner.Y,25.)+25.,25.),FMath::Fmod(FMath::Fmod(Corner.Z,25.)+25.,25.)};
@@ -105,6 +111,15 @@ bool ABridgeRealisticWorld::Use(const FString& Item,const FVector& Eye,const FRo
         if(Physics.ignite(V(Eye),V(Direction),Limit+70)) {LastUsePosition=H.ImpactPoint;UndoClear.Reset();Result=TEXT("Realistic TNT ignited");return true;}return false;
     }
     if(Collect) {
+        // Collect the persistent source, never turn an arbitrary GPU particle
+        // into another bucket. This prevents unlimited inventory duplication.
+        for(int32 I=0;I<WaterSources.Num();++I) {
+            const FVector Offset=WaterSources[I].Position-Eye;const double D=FVector::DotProduct(Offset,Direction);
+            if(D<0 || D>Limit || (Offset-Direction*D).Size()>65) continue;
+            LastUsePosition=WaterSources[I].Position;
+            if(WaterSources[I].Effect.IsValid()) WaterSources[I].Effect->Destroy();WaterSources.RemoveAt(I);
+            UndoClear.Reset();Result=TEXT("uebridge:realistic_water_bucket");return true;
+        }
         for(double D=0;D<=Limit;D+=8) {Vec P=V(Eye+Direction*D);const int Kind=FluidAt(U(P));
             if(Kind!=0&&Physics.collect(P,Kind)) {LastUsePosition=U(P);UndoClear.Reset();Result=Kind==Water?TEXT("uebridge:realistic_water_bucket"):TEXT("uebridge:realistic_lava_bucket");RenderNow();return true;}}
         return false;
@@ -131,7 +146,10 @@ bool ABridgeRealisticWorld::Use(const FString& Item,const FVector& Eye,const FRo
     bool Added=false;
     if(Item==TEXT("uebridge:realistic_sand")) Added=Physics.addSand(V(Point));
     else if(Item==TEXT("uebridge:realistic_tnt")) Added=Physics.addTnt(V(Point));
-    else if(Item==TEXT("uebridge:realistic_water_bucket")) Added=Physics.pourBlock(V(Point),Water);
+    else if(Item==TEXT("uebridge:realistic_water_bucket")) {
+        if(!AddWaterSource(Point,Result)) return false;
+        UndoClear.Reset();Result=TEXT("Continuous Niagara water source placed");return true;
+    }
     else if(Item==TEXT("uebridge:realistic_lava_bucket")) Added=Physics.pourBlock(V(Point),Lava);
     Result=Added?TEXT("Realistic physics placed"):TEXT("No space or physics budget reached; item retained");
     if(Added) {UndoClear.Reset();RenderNow();}return Added;
@@ -145,11 +163,13 @@ TArray<FVector> ABridgeRealisticWorld::CollisionAnchors() const {
     TArray<FVector> Result;TSet<FIntVector> Seen;
     auto Add=[&](Vec P) {const FVector Position=U(P);const FIntVector Cell(FMath::FloorToInt(Position.X/800),FMath::FloorToInt(Position.Y/800),FMath::FloorToInt(Position.Z/800));
         if(Result.Num()<128 && !Seen.Contains(Cell)) {Seen.Add(Cell);Result.Add(Position);}};
+    for(const auto& Source:WaterSources) Add(V(Source.Position));
     for(const auto& B:Physics.bombs) Add(B.p);for(const auto& G:Physics.grains) Add(G.p);for(const auto& D:Physics.drops) Add(D.p);
     return Result;
 }
 void ABridgeRealisticWorld::Tick(float DeltaSeconds) {
     Super::Tick(DeltaSeconds);if(ReplayActive||!Terrain||!Terrain->IsSealed()) return;
+    TickWaterSources();
     if(Physics.grains.empty()&&Physics.liquids.empty()&&Physics.bombs.empty()&&Physics.drops.empty()) {
         Accumulator=0;SolverMillis=RenderMillis=0;return; // Static rocks need no solver or collision-query rebuild.
     }
@@ -231,7 +251,7 @@ void ABridgeRealisticWorld::RenderNow(double Clock) {
     BuildFluid(Water,WaterMesh,Clock);BuildFluid(Lava,LavaMesh,Clock);
     RenderMillis=RenderMillis*.95+(FPlatformTime::Seconds()-RenderStart)*1000*.05;
 }
-FString ABridgeRealisticWorld::Statistics() const {return FString::Printf(TEXT("Sand=%d fluidCells=%d TNT=%d droplets=%d water=%.3f lava=%.3f buckets solverMs=%.2f physicalMeshMs=%.2f"),int32(Physics.grains.size()),int32(Physics.liquids.size()),int32(Physics.bombs.size()),int32(Physics.drops.size()),double(Physics.volume(Water))/BucketVolume,double(Physics.volume(Lava))/BucketVolume,SolverMillis,RenderMillis);}
+FString ABridgeRealisticWorld::Statistics() const {return FString::Printf(TEXT("Sand=%d fluidCells=%d TNT=%d droplets=%d water=%.3f lava=%.3f buckets solverMs=%.2f physicalMeshMs=%.2f NiagaraWaterSources=%d/2 waterAsset=%s waterStatus=%s"),int32(Physics.grains.size()),int32(Physics.liquids.size()),int32(Physics.bombs.size()),int32(Physics.drops.size()),double(Physics.volume(Water))/BucketVolume,double(Physics.volume(Lava))/BucketVolume,SolverMillis,RenderMillis,WaterSources.Num(),*GetNameSafe(WaterTemplate),*WaterError);}
 FString ABridgeRealisticWorld::Command(const TArray<FString>& Args,const FVector& Player) {
     if(Args.Num()==2&&Args[1]==TEXT("status")) return Statistics();
     if(Args.Num()==2&&Args[1]==TEXT("undo")) {
@@ -249,7 +269,12 @@ FString ABridgeRealisticWorld::Command(const TArray<FString>& Args,const FVector
             else if(!FDefaultValueHelper::ParseDouble(Args[3],Radius)||!FMath::IsFinite(Radius)||Radius<=0||Radius>512) return TEXT("Radius: 1..512 blocks, or all");
             else Radius*=100;
         }
-        UndoClear=ExportState();const int Count=Physics.clear(Kind,V(Player),Radius);RenderNow();
+        UndoClear=ExportState();int Count=Physics.clear(Kind,V(Player),Radius);
+        if(Kind==-1 || Kind==1) for(int32 I=WaterSources.Num()-1;I>=0;--I) {
+            if(Radius>=0 && FVector::DistSquared(WaterSources[I].Position,Player)>Radius*Radius) continue;
+            if(WaterSources[I].Effect.IsValid()) WaterSources[I].Effect->Destroy();WaterSources.RemoveAt(I);++Count;
+        }
+        RenderNow();
         return FString::Printf(TEXT("Removed %d physical objects/cells; /physics undo restores the pre-clear state (until restart). Normal terrain is untouched."),Count);
     }
     return TEXT("/physics status | /physics clear [sand|water|lava|tnt|rock|all] [radiusBlocks|all] | /physics undo");
@@ -264,10 +289,23 @@ TSharedPtr<FJsonObject> ABridgeRealisticWorld::ExportState() const {
     for(const auto& R:Physics.rocks) {auto O=MakeShared<FJsonObject>();O->SetArrayField(TEXT("p"),Position({double(R.first.x),double(R.first.y),double(R.first.z)}));O->SetNumberField(TEXT("amount"),R.second);Rocks.Add(MakeShared<FJsonValueObject>(O));}
     for(const auto& B:Physics.bombs) {auto O=Motion(B.p,B.v);O->SetNumberField(TEXT("id"),B.id);O->SetNumberField(TEXT("fuse"),B.fuse);Bombs.Add(MakeShared<FJsonValueObject>(O));}
     for(const auto& D:Physics.drops) {auto O=Motion(D.p,D.v);O->SetNumberField(TEXT("kind"),D.kind);O->SetNumberField(TEXT("amount"),D.amount);Drops.Add(MakeShared<FJsonValueObject>(O));}
+    TArray<TSharedPtr<FJsonValue>> Sources;
+    for(const auto& Source:WaterSources) {auto O=MakeShared<FJsonObject>();O->SetArrayField(TEXT("p"),Position(V(Source.Position)));Sources.Add(MakeShared<FJsonValueObject>(O));}
+    Out->SetArrayField(TEXT("niagaraWaterSources"),Sources);
     Out->SetArrayField(TEXT("gridOrigin"),Position(Physics.gridOrigin));Out->SetArrayField(TEXT("sand"),Grains);Out->SetArrayField(TEXT("liquids"),Fluids);Out->SetArrayField(TEXT("rocks"),Rocks);Out->SetArrayField(TEXT("tnt"),Bombs);Out->SetArrayField(TEXT("drops"),Drops);return Out;
 }
 bool ABridgeRealisticWorld::ImportState(const TSharedPtr<FJsonObject>& State) {
     if(!State.IsValid()) return false;Simulation Next;
+    TArray<FVector> NextSources;std::vector<BridgeWaterSource::Point> CheckedSources;
+    if(State->HasField(TEXT("niagaraWaterSources"))) {
+        const TArray<TSharedPtr<FJsonValue>>* Sources=nullptr;
+        if(!State->TryGetArrayField(TEXT("niagaraWaterSources"),Sources) || Sources->Num()>int32(BridgeWaterSource::MaxSources)) return false;
+        for(const auto& Row:*Sources) {
+            Vec P;if(!Row.IsValid() || Row->Type!=EJson::Object || !ReadVec(Row->AsObject(),TEXT("p"),P)
+                || !BridgeWaterSource::CanAdd(CheckedSources,{P.x,P.y,P.z}) || !WaterDomainInside(U(P))) return false;
+            CheckedSources.push_back({P.x,P.y,P.z});NextSources.Add(U(P));
+        }
+    }
     const bool LegacyGrid=!State->HasField(TEXT("gridOrigin"));
     Next.gridOrigin=Physics.gridOrigin;
     if(!LegacyGrid&&(!ReadVec(State,TEXT("gridOrigin"),Next.gridOrigin)||Next.gridOrigin.x<0||Next.gridOrigin.x>=25||Next.gridOrigin.y<0||Next.gridOrigin.y>=25||Next.gridOrigin.z<0||Next.gridOrigin.z>=25)) return false;int64 N;bool Visuals;int64 Quality;
@@ -302,6 +340,57 @@ bool ABridgeRealisticWorld::ImportState(const TSharedPtr<FJsonObject>& State) {
     if(Next.rocks.size()+Next.liquids.size()>MaxCells) return false;
     for(const auto& R:Next.rocks) if(Next.liquids.count(R.first)) return false;
     Next.blocked=Physics.blocked;Next.inside=Physics.inside;Next.sweep=Physics.sweep;Next.exposure=Physics.exposure;Next.exploded=Physics.exploded;
+    // Validation above is transactional. Preserve matching emitters on repeated
+    // snapshots; source positions are saved, transient GPU particle state is not.
+    TArray<FWaterSource> Restored;
+    for(const auto& P:NextSources) {
+        FWaterSource Source;Source.Position=P;
+        for(auto& Existing:WaterSources) if(Existing.Position.Equals(P,.001)) {Source.Effect=Existing.Effect;Existing.Effect.Reset();break;}
+        Restored.Add(Source);
+    }
+    for(auto& Existing:WaterSources) if(Existing.Effect.IsValid()) Existing.Effect->Destroy();
+    WaterSources=MoveTemp(Restored);
     Physics=std::move(Next);Accumulator=0;FluidSignatures[0]=FluidSignatures[1]=0;
-    if(Realistic!=Visuals||QualityLevel!=Quality) SetVisuals(Visuals,int32(Quality));else RenderNow();return true;
+    const bool RestoredVisuals=ReplayActive && Visuals;
+    if(Realistic!=RestoredVisuals||QualityLevel!=Quality) SetVisuals(RestoredVisuals,int32(Quality));else RenderNow();return true;
+}
+
+bool ABridgeRealisticWorld::WaterDomainInside(const FVector& P) const {
+    if(!Terrain || P.ContainsNaN()) return false;
+    const FVector Center=P;
+    for(int X:{-1,1}) for(int Y:{-1,1}) for(int Z:{-1,1})
+        if(!Terrain->ContainsUEPosition(Center+FVector(X*500,Y*500,Z*400))) return false;
+    return true;
+}
+bool ABridgeRealisticWorld::AddWaterSource(const FVector& P,FString& Error) {
+    if(!WaterTemplate) {Error=WaterError;return false;}
+    std::vector<BridgeWaterSource::Point> Sources;
+    for(const auto& Source:WaterSources) Sources.push_back({Source.Position.X,Source.Position.Y,Source.Position.Z});
+    if(!BridgeWaterSource::CanAdd(Sources,{P.X,P.Y,P.Z})) {Error=TEXT("Water source limit (2) reached or domains overlap; bucket retained");return false;}
+    if(!WaterDomainInside(P)) {Error=TEXT("Water domain must fit inside the exported terrain; bucket retained");return false;}
+    auto* Effect=GetWorld()->SpawnActor<ABridgeNiagaraWater>();
+    if(!Effect || !Effect->Initialize(WaterTemplate,P,Error)) {if(Effect) Effect->Destroy();return false;}
+    FWaterSource Source;Source.Position=P;Source.Effect=Effect;WaterSources.Add(Source);Effect->SetRunning(true);return true;
+}
+void ABridgeRealisticWorld::TickWaterSources() {
+    FVector Player=FVector::ZeroVector;bool HasPlayer=false;
+    if(auto* PC=GetWorld()->GetFirstPlayerController()) if(auto* Pawn=PC->GetPawn()) {Player=Pawn->GetActorLocation();HasPlayer=true;}
+    for(auto& Source:WaterSources) {
+        const bool Near=HasPlayer && BridgeWaterSource::Near({Player.X,Player.Y,Player.Z},
+            {Source.Position.X,Source.Position.Y,Source.Position.Z},BridgeWaterSource::Range);
+        if(Near && !Source.Effect.IsValid() && WaterTemplate) {
+            auto* Effect=GetWorld()->SpawnActor<ABridgeNiagaraWater>();FString Error;
+            if(Effect && Effect->Initialize(WaterTemplate,Source.Position,Error)) Source.Effect=Effect;
+            else {if(Effect) Effect->Destroy();WaterError=Error;}
+        }
+        if(Source.Effect.IsValid()) Source.Effect->SetRunning(Near);
+    }
+}
+bool ABridgeRealisticWorld::HasActiveWater() const {
+    for(const auto& Source:WaterSources) if(Source.Effect.IsValid() && Source.Effect->IsRunning()) return true;
+    return false;
+}
+void ABridgeRealisticWorld::EndPlay(const EEndPlayReason::Type Reason) {
+    for(auto& Source:WaterSources) if(Source.Effect.IsValid()) Source.Effect->Destroy();
+    WaterSources.Empty();Super::EndPlay(Reason);
 }

@@ -67,6 +67,37 @@ def setup_realistic_niagara(unreal):
     return None
 
 
+
+def setup_realistic_water(unreal):
+    """Clone only the free continuous 3D FLIP hose, preserving artist edits.
+
+    Pool/gas/example systems are not substitutes for a continuous water source.
+    Runtime checks the exposed domain controls before allowing a bucket use.
+    """
+    destination = '/Game/Bridge/Realistic/NS_RealisticWater'
+    assets = unreal.EditorAssetLibrary
+    if assets.does_asset_exist(destination):
+        system = unreal.load_asset(destination)
+        if not isinstance(system, unreal.NiagaraSystem):
+            raise RuntimeError('Realistic water path is occupied by a non-Niagara asset')
+        unreal.log('Niagara water: keeping local asset ' + destination)
+        return system
+    registry = unreal.AssetRegistryHelpers.get_asset_registry()
+    candidates = [a for a in registry.get_assets_by_path('/NiagaraFluids', recursive=True)
+                  if str(a.asset_name).lower() == 'grid3d_flip_hose']
+    candidates.sort(key=lambda a: a.get_asset().get_path_name())
+    for candidate in candidates:
+        source = candidate.get_asset()
+        if not isinstance(source, unreal.NiagaraSystem):
+            continue
+        system = assets.duplicate_asset(source.get_path_name(), destination)
+        if isinstance(system, unreal.NiagaraSystem) and assets.save_loaded_asset(system, False):
+            unreal.log('Niagara water template: ' + source.get_path_name())
+            return system
+        raise RuntimeError('Cannot save the local Niagara FLIP hose')
+    unreal.log_warning('Grid3D_FLIP_Hose was not found. Water buckets remain unused; no procedural water substitute is created. See NIAGARA_WATER.md for adding the free Niagara Fluids template.')
+    return None
+
 def setup_realistic_materials(unreal, sprites):
     # sprites intentionally unused: real items must not use Minecraft textures.
     assets, editing = unreal.EditorAssetLibrary, unreal.MaterialEditingLibrary
@@ -148,4 +179,5 @@ def setup_realistic_materials(unreal, sprites):
                 raise RuntimeError('Cannot save realistic material ' + name)
             created.append(material)
     setup_realistic_niagara(unreal)
+    setup_realistic_water(unreal)
     return created

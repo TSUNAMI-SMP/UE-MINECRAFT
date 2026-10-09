@@ -60,7 +60,7 @@ try {
     if (!(Test-Path $buildCommand)) { throw "Build.bat was not found in this Unreal Engine installation." }
     $niagaraFluids = (Test-Path -LiteralPath (Join-Path $EngineRoot 'Engine\Plugins\FX\NiagaraFluids\NiagaraFluids.uplugin')) -or (Test-Path -LiteralPath (Join-Path $EngineRoot 'Engine\Plugins\Experimental\NiagaraFluids\NiagaraFluids.uplugin'))
     $merged = Enable-UEBridgeRequiredPlugins -Descriptor $descriptor -NiagaraFluidsAvailable $niagaraFluids
-    if (!$niagaraFluids) { Write-Host 'Niagara Fluids templates are not installed. The procedural explosion fallback will be available.' }
+    if (!$niagaraFluids) { Write-Host 'Niagara Fluids templates are not installed. Niagara water placement is unavailable; explosion retains its existing fallback.' }
     if ($merged.Changed) {
         $identity = [Guid]::NewGuid().ToString('N')
         $backup = "$project.before-native-0.12.0-$identity"

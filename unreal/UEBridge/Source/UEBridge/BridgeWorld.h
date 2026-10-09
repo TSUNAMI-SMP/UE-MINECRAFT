@@ -139,6 +139,7 @@ private:
     TMap<FIntVector,BridgeVoxelIndex::Cell> VisualRows;
     void IndexVisualCell(const FIntVector& Cell);
     TSet<FIntVector> RebuildQueue,LightQueue;
+    bool InitialRelightQueued=false;
     FIntVector CollisionCenter=FIntVector::ZeroValue;
     bool HasCollisionCenter=false;
     TSet<FIntVector> PhysicsCells;

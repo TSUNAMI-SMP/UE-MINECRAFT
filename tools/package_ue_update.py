@@ -39,6 +39,9 @@ with zipfile.ZipFile(output, "x", zipfile.ZIP_DEFLATED) as archive:
     native_instructions = root / "docs/NATIVE_PLAY.md"
     if native_instructions.is_file():
         archive.write(native_instructions, "NATIVE_PLAY.md")
+    water_instructions = root / "docs/NIAGARA_WATER.md"
+    if water_instructions.is_file():
+        archive.write(water_instructions, "NIAGARA_WATER.md")
     audit = root / f"docs/AUDIT_{version}.md"
     if audit.is_file():
         archive.write(audit, audit.name)

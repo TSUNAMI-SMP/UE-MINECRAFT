@@ -41,5 +41,31 @@ class NiagaraSetup(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'non-Niagara'):setup.setup_realistic_niagara(unreal)
         self.assertFalse(copies)
 
+    def test_water_missing_never_uses_pool_or_gas_fallback(self):
+        templates=[types.SimpleNamespace(asset_name=n,get_asset=lambda:System())
+                   for n in ('Grid3D_FLIP_Pool','Grid3D_Gas_Explosion','UnrelatedHose')]
+        unreal,warnings,copies,_=self.make(templates=templates)
+        self.assertIsNone(setup.setup_realistic_water(unreal))
+        self.assertFalse(copies)
+        self.assertIn('Water buckets remain unused',warnings[0])
+
+    def test_only_continuous_flip_hose_is_cloned_for_water(self):
+        template=types.SimpleNamespace(asset_name='Grid3D_FLIP_Hose',get_asset=lambda:System())
+        unreal,_,copies,saved=self.make(templates=[template])
+        self.assertIsInstance(setup.setup_realistic_water(unreal),System)
+        self.assertEqual(copies,[('/NiagaraFluids/Template.Template','/Game/Bridge/Realistic/NS_RealisticWater')])
+        self.assertEqual(len(saved),1)
+
+    def test_custom_water_asset_is_preserved(self):
+        system=System();unreal,_,copies,_=self.make(system)
+        self.assertIs(setup.setup_realistic_water(unreal),system)
+        self.assertFalse(copies)
+
+    def test_foreign_water_asset_is_rejected(self):
+        unreal,_,copies,_=self.make(existing=object())
+        with self.assertRaisesRegex(RuntimeError,'non-Niagara'):
+            setup.setup_realistic_water(unreal)
+        self.assertFalse(copies)
+
 
 if __name__ == '__main__':unittest.main()

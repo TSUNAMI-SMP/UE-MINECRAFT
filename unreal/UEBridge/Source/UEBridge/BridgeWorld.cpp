@@ -19,7 +19,7 @@ void ABridgeWorld::Clear(uint64 Barrier) {
     for (auto& Pair:Cells) if (IsValid(Pair.Value)) { Pair.Value->Clear(); Pair.Value->Destroy(); }
     for(auto& Box:Boundary) if(Box) Box->DestroyComponent(); Boundary.Empty();
     for(auto& Fall:NativeFalls) if(Fall.Visual.IsValid()) Fall.Visual->Destroy();NativeFalls.Empty();RuleQueue.Empty();RuleDelayed.Empty();GrassSections.Empty();ComparatorPower.Empty();NativeRules=false;NativeRuleTick=0;NativeRuleClock=0;
-    Sealed=false;ImportId.Empty();Stored.Empty();VisualRows.Empty();SortedGrassSections.Empty();ButtonRelease.Empty();ButtonTimerOwners.Empty();LastModelError.Empty();SurfaceReason=TEXT("not_sampled");
+    Sealed=false;InitialRelightQueued=false;ImportId.Empty();Stored.Empty();VisualRows.Empty();SortedGrassSections.Empty();ButtonRelease.Empty();ButtonTimerOwners.Empty();LastModelError.Empty();SurfaceReason=TEXT("not_sampled");
     Cells.Empty(); Counts.Empty(); Revisions.Empty(); Stages.Empty(); Shapes=0; Scoped=false; ScopeSequence=0; ClearBarrier=Barrier;
     OpaqueCells.Empty();RebuildQueue.Empty();LightQueue.Empty();EditedBlocks.Empty();EditedCellOwners.Empty();RemovedBlocks.Empty();SkyTops.Empty();WaterCells.Empty();BiomeTintCells.Empty();PhysicsCells.Empty();AdditionalCollisionPositions.Empty();HasCollisionCenter=false;
     if(Lighting) Lighting->Clear();Lighting.Reset();PendingLighting.Reset();LightSeedCells.Empty();LightSeedCursor=0;PendingLightInitialized=false;LightingRadius=LightingHeight=0;
@@ -56,15 +56,22 @@ void ABridgeWorld::Tick(float DeltaSeconds) {
             }
         }
     }
-    // Native cells are rebuilt locally, spread across frames; collision changes from edits are immediate.
+    // Imported meshes can precede field initialization. Seeded light may equal
+    // its final value, so propagation alone does not mark every mesh dirty.
+    if(Sealed && Lighting && !InitialRelightQueued && Lighting->Pending()==0) {
+        for(const auto& Pair:Cells) LightQueue.Add(Pair.Key);
+        InitialRelightQueued=true;
+    }
+    // Relighting has its own budget; a large terrain backlog cannot starve it.
+    const double RelightDeadline=FPlatformTime::Seconds()+.002;
+    for(int32 Work=0;Work<8 && !LightQueue.IsEmpty() && FPlatformTime::Seconds()<RelightDeadline;++Work) {
+        const FIntVector Cell=*LightQueue.CreateConstIterator();LightQueue.Remove(Cell);
+        if(auto* Actor=Cells.Find(Cell)) if(IsValid(*Actor)) (*Actor)->Relight(Lighting.Get());
+    }
     const double RebuildDeadline=FPlatformTime::Seconds()+.004;
     for(int32 Work=0;Work<4 && !RebuildQueue.IsEmpty() && FPlatformTime::Seconds()<RebuildDeadline;++Work) {
         const FIntVector Cell=*RebuildQueue.CreateConstIterator();RebuildQueue.Remove(Cell);
         if(Stored.Contains(Cell) && Inside(Cell)) RebuildCell(Cell);
-    }
-    for(int32 Work=0;Work<8 && !LightQueue.IsEmpty() && FPlatformTime::Seconds()<RebuildDeadline;++Work) {
-        const FIntVector Cell=*LightQueue.CreateConstIterator();LightQueue.Remove(Cell);
-        if(auto* Actor=Cells.Find(Cell)) if(IsValid(*Actor)) (*Actor)->Relight(Lighting.Get());
     }
     TickMillis=TickMillis*.95+(FPlatformTime::Seconds()-TickStart)*1000*.05;
 }
@@ -371,6 +378,8 @@ void ABridgeWorld::RebuildCell(const FIntVector& CellKey) {
     auto& Actor=Cells.FindOrAdd(CellKey);
     if(!IsValid(Actor)) Actor=GetWorld()->SpawnActor<ABridgeBlockPreview>();
     if(Actor) {
+        // Niagara Fluids rigid-mesh collision templates use this actor tag.
+        Actor->Tags.AddUnique(TEXT("collider"));
         Actor->Replace(Stored.FindChecked(CellKey),ImportAnchor,SavedMaterial,SavedPalette,NearCollision(CellKey),[this](const FIntVector& P){return IsOpaqueVoxel(P);},Lighting.Get(),true,
             [this](const FIntVector& Voxel,const FString& Id,int32 Index){return RenderTintAt(Voxel,Id,Index);},
             [this](const FIntVector& Voxel,FString& Id,FString& State){return GetBlockState(Voxel,Id,State);});
